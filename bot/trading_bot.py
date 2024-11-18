@@ -130,12 +130,17 @@ class TradingBot:
             logging.info(f"Fetching candles for {symbol} from {start_time} to {end_time}")
             
             try:
-                # Use get_candles instead of get_product_candles
+                # Format timestamps as ISO 8601 strings
+                start_iso = start_time.isoformat()
+                end_iso = end_time.isoformat()
+                
+                # Get daily candles for the last 30 days
                 candles = self.client.get_candles(
                     product_id=product_id,
-                    start=int(start_time.timestamp()),
-                    end=int(end_time.timestamp()),
-                    granularity=86400  # Daily candles
+                    start=start_iso,
+                    end=end_iso,
+                    granularity="ONE_DAY",  # Using string enum for granularity
+                    limit=300  # Maximum number of candles
                 )
                 
                 if not candles:
@@ -288,19 +293,20 @@ class TradingBot:
             
             if action == 'BUY':
                 # Check USD balance
-                usd_account = next((acc for acc in accounts.data if acc['currency'] == 'USD'), None)
+                usd_account = next((acc for acc in accounts.data if acc.currency == 'USD'), None)
                 if not usd_account:
                     return False
-                return float(usd_account['balance']['amount']) >= self.trade_amount
+                return float(usd_account.available_balance.value) >= self.trade_amount
             else:
                 # Check crypto balance
-                crypto_account = next((acc for acc in accounts.data if acc['currency'] == symbol), None)
+                crypto_account = next((acc for acc in accounts.data if acc.currency == symbol), None)
                 if not crypto_account:
                     return False
                     
-                price_data = self.client.get_spot_price(currency_pair=f'{symbol}-USD')
-                current_price = float(price_data['amount'])
-                return float(crypto_account['balance']['amount']) * current_price >= self.trade_amount
+                # Get current price using get_product instead of get_spot_price
+                product = self.client.get_product(f"{symbol}-USD")
+                current_price = float(product.price)
+                return float(crypto_account.available_balance.value) * current_price >= self.trade_amount
                 
         except Exception as e:
             logging.error(f"Error checking balance: {str(e)}")
