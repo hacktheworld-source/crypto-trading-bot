@@ -22,18 +22,10 @@ class TradingBot:
             # Debug logging
             logging.info("Starting bot initialization...")
             
-            # Log raw API key (be careful with this in production)
-            api_key_raw = os.environ['COINBASE_API_KEY']
-            logging.info(f"Raw API key: {api_key_raw}")
-            
-            # Parse the API key JSON
-            api_key_data = json.loads(os.environ['COINBASE_API_KEY'])
-            self.api_key = api_key_data['name'].split('/')[-1]
-            logging.info(f"Parsed API key ID: {self.api_key}")
-            
-            # Get private key from environment
+            # Get API credentials directly
+            self.api_key = os.environ['COINBASE_API_KEY']  # Just use the key ID directly
             self.api_secret = os.environ['COINBASE_API_SECRET']
-            logging.info("API secret loaded")
+            logging.info("API credentials loaded")
             
             # Initialize client
             logging.info("Initializing Coinbase client...")
