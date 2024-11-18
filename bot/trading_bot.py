@@ -122,33 +122,58 @@ class TradingBot:
     def _get_historical_prices(self, symbol: str, start: datetime, end: datetime) -> pd.Series:
         try:
             product_id = f"{symbol}-USD"
+            all_prices = []
+            current_start = start
             
-            # Ensure timestamps are in UTC and formatted correctly with millisecond precision
-            start_iso = start.astimezone().isoformat(timespec='milliseconds').replace('+00:00', 'Z')
-            end_iso = end.astimezone().isoformat(timespec='milliseconds').replace('+00:00', 'Z')
+            # Use 5-minute candles (300 seconds) for better granularity
+            granularity = 300  # 5 minutes
             
-            logging.info(f"Fetching candles for {symbol} from {start_iso} to {end_iso}")
+            while current_start < end:
+                # Calculate the maximum time range we can request without exceeding 300 candles
+                max_duration = granularity * 300  # 300 candles * granularity
+                current_end = min(current_start + timedelta(seconds=max_duration), end)
+                
+                logging.info(f"Fetching candles for {symbol} from {current_start} to {current_end}")
+                
+                try:
+                    candles = self.client.get_product_candles(
+                        product_id=product_id,
+                        start=int(current_start.timestamp()),
+                        end=int(current_end.timestamp()),
+                        granularity=granularity
+                    )
+                    
+                    if candles:
+                        # Extract closing prices from candles
+                        for candle in candles:
+                            all_prices.append({
+                                'timestamp': datetime.fromtimestamp(candle.start),
+                                'price': float(candle.close)
+                            })
+                    
+                    # Move the window forward
+                    current_start = current_end
+                    
+                    # Small delay to avoid rate limiting
+                    time.sleep(0.2)
+                    
+                except Exception as e:
+                    logging.error(f"Error fetching candle batch: {str(e)}")
+                    # Continue to next batch instead of failing completely
+                    current_start = current_end
+                    continue
             
-            # Get historical candles
-            candles = self.client.get_candles(
-                product_id=product_id,
-                start=start_iso,
-                end=end_iso,
-                granularity='ONE_DAY'
-            )
+            if not all_prices:
+                raise Exception(f"No price data received for {symbol}")
             
-            # Convert candles to pandas Series
-            if not candles:
-                raise Exception(f"No candle data received for {symbol}")
+            # Convert to pandas Series
+            df = pd.DataFrame(all_prices)
+            prices = pd.Series(df['price'].values, index=df['timestamp'])
+            prices = prices.sort_index()
             
-            prices = pd.Series(
-                [float(candle.close) for candle in reversed(candles)],
-                index=[candle.start for candle in reversed(candles)]
-            )
-            
-            logging.info(f"Fetched {len(prices)} candles for {symbol}")
+            logging.info(f"Fetched {len(prices)} price points for {symbol}")
             return prices
-            
+                
         except Exception as e:
             logging.error(f"Error fetching historical prices for {symbol}: {str(e)}")
             raise
