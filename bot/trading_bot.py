@@ -17,18 +17,33 @@ logging.basicConfig(
 
 class TradingBot:
     def __init__(self):
-        self.api_key = os.environ['COINBASE_API_KEY']
-        self.api_secret = os.environ['COINBASE_API_SECRET']
-        self.client = Client(self.api_key, self.api_secret)
-        self.watched_coins = set()
-        self.trading_interval = 300  # 5 minutes
-        self.rsi_period = 14
-        self.rsi_overbought = 70
-        self.rsi_oversold = 30
-        self.trading_active = False
-        self.trade_amount = 100  # Default trade amount in USD
-        self.trade_history = []
-        self.load_config()
+        try:
+            # Parse the API key JSON
+            api_key_data = json.loads(os.environ['COINBASE_API_KEY'])
+            self.api_key = api_key_data['name'].split('/')[-1]  # Get the last part of the name as API key
+            
+            # Get private key from environment
+            private_key_data = os.environ['COINBASE_API_SECRET']
+            # Extract the key part between BEGIN and END markers
+            private_key = private_key_data.split('-----BEGIN EC PRIVATE KEY-----\n')[1].split('\n-----END EC PRIVATE KEY-----')[0]
+            self.api_secret = private_key
+            
+            self.client = Client(self.api_key, self.api_secret)
+            
+            # Rest of initialization stays the same
+            self.watched_coins = set()
+            self.trading_interval = 300  # 5 minutes
+            self.rsi_period = 14
+            self.rsi_overbought = 70
+            self.rsi_oversold = 30
+            self.trading_active = False
+            self.trade_amount = 100  # Default trade amount in USD
+            self.trade_history = []
+            self.load_config()
+            
+        except Exception as e:
+            logging.error(f"Failed to initialize trading bot: {str(e)}")
+            raise Exception(f"Bot initialization failed: {str(e)}")
         
     def start_trading_loop(self):
         if not self.trading_active:
@@ -288,11 +303,20 @@ class TradingBot:
 
     def test_api_connection(self):
         try:
-            # Test API connection by getting BTC price
-            btc_price = self.client.get_spot_price(currency_pair='BTC-USD')
-            # Test account access
-            accounts = self.client.get_accounts()
-            return float(btc_price.amount)
+            # First, test authentication
+            auth_test = self.client.get_accounts()
+            logging.info("Authentication successful")
+            
+            # Then test price fetching
+            try:
+                btc_price = self.client.get_spot_price(currency_pair='BTC-USD')
+                price = float(btc_price.amount)
+                logging.info(f"Successfully fetched BTC price: ${price}")
+                return price
+            except Exception as e:
+                logging.error(f"Price fetch failed: {str(e)}")
+                raise Exception(f"Could not fetch price: {str(e)}")
+            
         except Exception as e:
-            logging.error(f"API Connection test failed: {str(e)}")
-            raise Exception(f"Could not connect to Coinbase API: {str(e)}")
+            logging.error(f"Authentication failed: {str(e)}")
+            raise Exception(f"Authentication failed - Please check your API keys: {str(e)}")

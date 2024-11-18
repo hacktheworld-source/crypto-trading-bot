@@ -70,8 +70,19 @@ class CommandHandler:
         
     def test_api(self):
         try:
-            # Test basic API functionality
             btc_price = self.trading_bot.test_api_connection()
-            return f"✅ Coinbase API connection successful!\nCurrent BTC price: ${btc_price}"
+            return (
+                "✅ Coinbase API Test Results:\n"
+                "- Authentication: Success\n"
+                "- Price Fetch: Success\n"
+                f"- Current BTC price: ${btc_price:,.2f}"
+            )
         except Exception as e:
-            return f"❌ Coinbase API Error: {str(e)}"
+            return (
+                "❌ Coinbase API Test Failed\n\n"
+                f"Error Details: {str(e)}\n\n"
+                "Please verify:\n"
+                "1. API Key is correct\n"
+                "2. API Secret is correct\n"
+                "3. API Keys have correct permissions"
+            )
