@@ -125,8 +125,8 @@ class TradingBot:
             all_prices = []
             current_start = start
             
-            # Use 5-minute candles (300 seconds) for better granularity
-            granularity = 300  # 5 minutes
+            # Use 1-day granularity for monthly RSI
+            granularity = 86400  # 24 hours in seconds
             
             while current_start < end:
                 # Calculate the maximum time range we can request without exceeding 300 candles
@@ -136,11 +136,12 @@ class TradingBot:
                 logging.info(f"Fetching candles for {symbol} from {current_start} to {current_end}")
                 
                 try:
-                    candles = self.client.get_product_candles(
+                    # Use get_candles_by_granularity instead of get_product_candles
+                    candles = self.client.get_candles_by_granularity(
                         product_id=product_id,
+                        granularity=granularity,
                         start=int(current_start.timestamp()),
-                        end=int(current_end.timestamp()),
-                        granularity=granularity
+                        end=int(current_end.timestamp())
                     )
                     
                     if candles:
