@@ -19,14 +19,26 @@ logging.basicConfig(
 class TradingBot:
     def __init__(self):
         try:
+            # Debug logging
+            logging.info("Starting bot initialization...")
+            
+            # Log raw API key (be careful with this in production)
+            api_key_raw = os.environ['COINBASE_API_KEY']
+            logging.info(f"Raw API key: {api_key_raw}")
+            
             # Parse the API key JSON
             api_key_data = json.loads(os.environ['COINBASE_API_KEY'])
-            self.api_key = api_key_data['name'].split('/')[-1]  # Get the last part of the name as API key
+            self.api_key = api_key_data['name'].split('/')[-1]
+            logging.info(f"Parsed API key ID: {self.api_key}")
             
-            # Get private key from environment - use it directly
+            # Get private key from environment
             self.api_secret = os.environ['COINBASE_API_SECRET']
+            logging.info("API secret loaded")
             
+            # Initialize client
+            logging.info("Initializing Coinbase client...")
             self.client = Client(self.api_key, self.api_secret)
+            logging.info("Coinbase client initialized")
             
             # Rest of initialization stays the same
             self.watched_coins = set()
