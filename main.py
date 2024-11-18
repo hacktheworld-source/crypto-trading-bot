@@ -1,12 +1,9 @@
 import os
-from dotenv import load_dotenv
 from bot.trading_bot import TradingBot
 from bot.command_handler import CommandHandler
 from discord.ext import commands
 import discord
 from keep_alive import keep_alive
-
-load_dotenv()
 
 # Initialize Discord bot
 bot = commands.Bot(command_prefix='!', intents=discord.Intents.all())

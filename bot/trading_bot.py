@@ -17,8 +17,8 @@ logging.basicConfig(
 
 class TradingBot:
     def __init__(self):
-        self.api_key = os.getenv('COINBASE_API_KEY')
-        self.api_secret = os.getenv('COINBASE_API_SECRET')
+        self.api_key = os.environ['COINBASE_API_KEY']
+        self.api_secret = os.environ['COINBASE_API_SECRET']
         self.client = Client(self.api_key, self.api_secret)
         self.watched_coins = set()
         self.trading_interval = 300  # 5 minutes
