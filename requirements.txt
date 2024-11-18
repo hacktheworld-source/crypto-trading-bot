@@ -1,6 +1,6 @@
 discord.py
 python-dotenv
-coinbase-python
+coinbase-advanced-py
 pandas
 numpy
 flask

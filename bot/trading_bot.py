@@ -5,7 +5,7 @@ import logging
 import pandas as pd
 from datetime import datetime, timedelta
 import json
-from coinbase.wallet.client import Client
+from coinbase.rest import RESTClient
 from typing import Dict, Any, Optional, List
 
 # Set up logging
@@ -26,17 +26,11 @@ class TradingBot:
             if 'COINBASE_API_SECRET' not in os.environ:
                 raise Exception("COINBASE_API_SECRET not found in environment variables")
             
-            # Get and log the credentials (careful with logging sensitive info in production)
-            self.api_key = os.environ['COINBASE_API_KEY'].strip()
-            self.api_secret = os.environ['COINBASE_API_SECRET'].strip()
-            
-            logging.info(f"API Key length: {len(self.api_key)}")
-            logging.info(f"API Secret length: {len(self.api_secret)}")
-            logging.info(f"First 4 chars of API Key: {self.api_key[:4]}")
-            
-            # Initialize client
-            logging.info("Attempting to initialize Coinbase client...")
-            self.client = Client(self.api_key, self.api_secret)
+            # Initialize the new REST client
+            self.client = RESTClient(
+                api_key=os.environ['COINBASE_API_KEY'].strip(),
+                api_secret=os.environ['COINBASE_API_SECRET'].strip()
+            )
             logging.info("Coinbase client initialized successfully")
             
             # Rest of initialization stays the same
@@ -117,13 +111,20 @@ class TradingBot:
     
     def _get_historical_prices(self, symbol: str, start: datetime, end: datetime) -> pd.Series:
         try:
-            currency_pair = f"{symbol}-USD"
-            price_data = self.client.get_buy_price(currency_pair=currency_pair)
-            price = float(price_data.get('amount', 0))
+            # Get candles using the new API
+            product_id = f"{symbol}-USD"
+            candles = self.client.get_product_candles(
+                product_id=product_id,
+                start=start.isoformat(),
+                end=end.isoformat(),
+                granularity=300  # 5-minute intervals
+            )
             
-            dates = pd.date_range(start=start, end=end, freq='5min')
-            prices = pd.Series(price, index=dates)
-            
+            # Convert candles to pandas Series
+            prices = pd.Series(
+                [float(candle.close) for candle in candles],
+                index=[candle.start for candle in candles]
+            )
             return prices
             
         except Exception as e:
@@ -132,17 +133,21 @@ class TradingBot:
             
     def _place_buy_order(self, symbol: str) -> None:
         try:
-            payment_methods = self.client.get_payment_methods()
-            if not payment_methods:
-                raise Exception("No payment methods available")
-                
-            payment_method_id = payment_methods[0].get('id')
-            if not payment_method_id:
-                raise Exception("Invalid payment method")
-                
-            self.client.buy(self.trade_amount,
-                          currency=symbol,
-                          payment_method=payment_method_id)
+            product_id = f"{symbol}-USD"
+            
+            # Get current price
+            ticker = self.client.get_product_ticker(product_id)
+            current_price = float(ticker.price)
+            
+            # Calculate quantity based on trade amount
+            quantity = self.trade_amount / current_price
+            
+            # Place market buy order
+            order = self.client.create_market_order(
+                product_id=product_id,
+                side='BUY',
+                funds=str(self.trade_amount)  # Amount in USD
+            )
             
             self.trade_history.append({
                 'timestamp': datetime.now(),
@@ -156,27 +161,30 @@ class TradingBot:
             logging.error(f"Error placing buy order for {symbol}: {str(e)}")
             raise
             
-    def _place_sell_order(self, symbol):
+    def _place_sell_order(self, symbol: str) -> None:
         try:
-            # Get accounts
+            product_id = f"{symbol}-USD"
+            
+            # Get current holdings
             accounts = self.client.get_accounts()
-            account = next((acc for acc in accounts.data if acc['currency'] == symbol), None)
+            account = next((acc for acc in accounts if acc.currency == symbol), None)
             
             if not account:
                 raise Exception(f"No account found for {symbol}")
                 
-            # Place sell order
-            self.client.sell(self.trade_amount,
-                           currency=symbol,
-                           payment_method=account['id'])
+            # Place market sell order
+            order = self.client.create_market_order(
+                product_id=product_id,
+                side='SELL',
+                funds=str(self.trade_amount)  # Amount in USD
+            )
             
-            trade_info = {
+            self.trade_history.append({
                 'timestamp': datetime.now(),
                 'action': 'SELL',
                 'symbol': symbol,
                 'amount_usd': self.trade_amount
-            }
-            self.trade_history.append(trade_info)
+            })
             logging.info(f"Sell order placed for {symbol}: ${self.trade_amount}")
             
         except Exception as e:
@@ -297,20 +305,16 @@ class TradingBot:
 
     def test_api_connection(self):
         try:
-            # First, test authentication
-            auth_test = self.client.get_accounts()
+            # Test authentication by getting accounts
+            accounts = self.client.get_accounts()
             logging.info("Authentication successful")
             
-            # Then test price fetching
-            try:
-                btc_price = self.client.get_spot_price(currency_pair='BTC-USD')
-                price = float(btc_price.amount)
-                logging.info(f"Successfully fetched BTC price: ${price}")
-                return price
-            except Exception as e:
-                logging.error(f"Price fetch failed: {str(e)}")
-                raise Exception(f"Could not fetch price: {str(e)}")
+            # Test price fetching
+            btc_ticker = self.client.get_product_ticker('BTC-USD')
+            price = float(btc_ticker.price)
+            logging.info(f"Successfully fetched BTC price: ${price}")
+            return price
             
         except Exception as e:
-            logging.error(f"Authentication failed: {str(e)}")
-            raise Exception(f"Authentication failed - Please check your API keys: {str(e)}")
+            logging.error(f"API test failed: {str(e)}")
+            raise Exception(f"API test failed: {str(e)}")
