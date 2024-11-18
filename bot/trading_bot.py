@@ -328,31 +328,34 @@ class TradingBot:
             balances = {}
             total_usd_value = 0.0
 
-            for account in accounts:
-                # Check if account has a balance
-                if hasattr(account, 'balance') and float(account.balance) > 0:
-                    symbol = account.currency
-                    balance = float(account.balance)
-                    
-                    if symbol == 'USD':
-                        usd_value = balance
-                    else:
-                        # Get current price for non-USD assets
-                        try:
-                            product = self.client.get_product(f"{symbol}-USD")
-                            price = float(product.price)
-                            usd_value = balance * price
-                        except:
-                            logging.warning(f"Could not get price for {symbol}, skipping...")
-                            continue
-                    
-                    if usd_value > 0:
-                        balances[symbol] = {
-                            'balance': balance,
-                            'usd_value': usd_value
-                        }
-                        total_usd_value += usd_value
-                        logging.info(f"Added {symbol} balance: {balance} (${usd_value:.2f})")
+            # The accounts response has a 'data' attribute containing the list of accounts
+            if hasattr(accounts, 'data'):
+                for account in accounts.data:
+                    # Get the available balance
+                    available = getattr(account, 'available_balance', None)
+                    if available and float(available.value) > 0:
+                        symbol = account.currency
+                        balance = float(available.value)
+                        
+                        if symbol == 'USD':
+                            usd_value = balance
+                        else:
+                            # Get current price for non-USD assets
+                            try:
+                                product = self.client.get_product(f"{symbol}-USD")
+                                price = float(product.price)
+                                usd_value = balance * price
+                            except:
+                                logging.warning(f"Could not get price for {symbol}, skipping...")
+                                continue
+                        
+                        if usd_value > 0:
+                            balances[symbol] = {
+                                'balance': balance,
+                                'usd_value': usd_value
+                            }
+                            total_usd_value += usd_value
+                            logging.info(f"Added {symbol} balance: {balance} (${usd_value:.2f})")
 
             logging.info(f"Total portfolio value: ${total_usd_value:.2f}")
             return {
