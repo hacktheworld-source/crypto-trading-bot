@@ -130,8 +130,8 @@ class TradingBot:
             logging.info(f"Fetching candles for {symbol} from {start_time} to {end_time}")
             
             try:
-                # Get daily candles for the last 30 days
-                candles = self.client.get_product_candles(
+                # Use get_candles instead of get_product_candles
+                candles = self.client.get_candles(
                     product_id=product_id,
                     start=int(start_time.timestamp()),
                     end=int(end_time.timestamp()),
