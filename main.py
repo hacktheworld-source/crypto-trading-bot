@@ -94,8 +94,8 @@ async def test_api(ctx):
     await ctx.send(response)
 
 # Command to get help
-@bot.command(name='help')
-async def help(ctx):
+@bot.command(name='commands')
+async def show_commands(ctx):
     response = command_handler.get_help()
     await ctx.send(response)
 

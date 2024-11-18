@@ -117,6 +117,6 @@ class CommandHandler:
         help_text += "\n!history       - View last 10 trades"
         help_text += "\n!testapi       - Test Coinbase API connection"
         help_text += "\n!ping          - Test if bot is responsive"
-        help_text += "\n!help          - Show this help message"
+        help_text += "\n!commands      - Show this help message"
         help_text += "```"
         return help_text
