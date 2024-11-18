@@ -123,17 +123,24 @@ class TradingBot:
         try:
             product_id = f"{symbol}-USD"
             
-            # Get historical candles using get_candles instead of get_product_candles
-            # For monthly view, use 1-day candles
+            # Convert datetime to ISO 8601 string format
+            start_iso = start.isoformat() + 'Z'  # Add Z to indicate UTC
+            end_iso = end.isoformat() + 'Z'
+            
+            logging.info(f"Fetching candles for {symbol} from {start_iso} to {end_iso}")
+            
+            # Get historical candles
             candles = self.client.get_candles(
                 product_id=product_id,
-                start=start - timedelta(days=30),  # Get 30 days of data
-                end=end,
-                granularity='ONE_DAY'  # Daily candles for monthly view
+                start=start_iso,
+                end=end_iso,
+                granularity='ONE_DAY'
             )
             
             # Convert candles to pandas Series
-            # Note: Candle data comes in reverse chronological order
+            if not candles:
+                raise Exception(f"No candle data received for {symbol}")
+            
             prices = pd.Series(
                 [float(candle.close) for candle in reversed(candles)],
                 index=[candle.start for candle in reversed(candles)]
