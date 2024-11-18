@@ -95,35 +95,51 @@ class TradingBot:
             self._place_sell_order(symbol)
             
     def calculate_rsi(self, symbol: str) -> float:
-        end = datetime.now()
-        start = end - timedelta(days=1)
-        prices = self._get_historical_prices(symbol, start, end)
-        
-        # Calculate RSI
-        delta = prices.diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=self.rsi_period).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=self.rsi_period).mean()
-        
-        rs = gain / loss
-        rsi = 100 - (100 / (1 + rs))
-        
-        return float(rsi.iloc[-1]) if not pd.isna(rsi.iloc[-1]) else 50.0
+        try:
+            end = datetime.now()
+            start = end - timedelta(days=30)  # Get 30 days of data for monthly RSI
+            prices = self._get_historical_prices(symbol, start, end)
+            
+            if len(prices) < self.rsi_period:
+                raise Exception(f"Not enough data points for RSI calculation. Need {self.rsi_period}, got {len(prices)}")
+            
+            # Calculate RSI
+            delta = prices.diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=self.rsi_period).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=self.rsi_period).mean()
+            
+            rs = gain / loss
+            rsi = 100 - (100 / (1 + rs))
+            
+            current_rsi = float(rsi.iloc[-1])
+            logging.info(f"Calculated RSI for {symbol}: {current_rsi:.2f}")
+            return current_rsi if not pd.isna(current_rsi) else 50.0
+            
+        except Exception as e:
+            logging.error(f"Error calculating RSI for {symbol}: {str(e)}")
+            raise
     
     def _get_historical_prices(self, symbol: str, start: datetime, end: datetime) -> pd.Series:
         try:
             product_id = f"{symbol}-USD"
-            candles = self.client.get_product_candles(
+            
+            # Get historical candles using get_candles instead of get_product_candles
+            # For monthly view, use 1-day candles
+            candles = self.client.get_candles(
                 product_id=product_id,
-                start=start.isoformat(),
-                end=end.isoformat(),
-                granularity=300  # 5-minute intervals
+                start=start - timedelta(days=30),  # Get 30 days of data
+                end=end,
+                granularity='ONE_DAY'  # Daily candles for monthly view
             )
             
             # Convert candles to pandas Series
+            # Note: Candle data comes in reverse chronological order
             prices = pd.Series(
-                [float(candle.close) for candle in candles],
-                index=[candle.start for candle in candles]
+                [float(candle.close) for candle in reversed(candles)],
+                index=[candle.start for candle in reversed(candles)]
             )
+            
+            logging.info(f"Fetched {len(prices)} candles for {symbol}")
             return prices
             
         except Exception as e:
