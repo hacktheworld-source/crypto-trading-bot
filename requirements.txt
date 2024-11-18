@@ -1,5 +1,7 @@
 discord.py
 python-dotenv
-coinbase
+coinbase-python
 pandas
-numpy 
+numpy
+flask
+requests 
