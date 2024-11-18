@@ -135,14 +135,15 @@ class TradingBot:
                 end_unix = int(end_time.timestamp())
                 
                 # Get daily candles for the last 30 days
-                candles = self.client.get_candles(
+                response = self.client.get_candles(
                     product_id=product_id,
                     start=start_unix,
                     end=end_unix,
-                    granularity="ONE_DAY",  # Using string enum for granularity
-                    limit=300  # Maximum number of candles
+                    granularity="ONE_DAY"  # Using string enum for granularity
                 )
                 
+                # Convert response to list and check if we have data
+                candles = response.candles if hasattr(response, 'candles') else []
                 if not candles:
                     raise Exception(f"No candle data received for {symbol}")
                 
@@ -152,7 +153,7 @@ class TradingBot:
                     index=[datetime.fromtimestamp(candle.start) for candle in reversed(candles)]
                 )
                 
-                logging.info(f"Fetched {len(prices)} daily candles for {symbol}")
+                logging.info(f"Fetched {len(candles)} daily candles for {symbol}")
                 return prices
                     
             except Exception as e:
