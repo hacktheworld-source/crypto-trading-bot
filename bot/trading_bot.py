@@ -123,9 +123,9 @@ class TradingBot:
         try:
             product_id = f"{symbol}-USD"
             
-            # Convert datetime to ISO 8601 string format
-            start_iso = start.isoformat() + 'Z'  # Add Z to indicate UTC
-            end_iso = end.isoformat() + 'Z'
+            # Ensure timestamps are in UTC and formatted correctly with millisecond precision
+            start_iso = start.astimezone().isoformat(timespec='milliseconds').replace('+00:00', 'Z')
+            end_iso = end.astimezone().isoformat(timespec='milliseconds').replace('+00:00', 'Z')
             
             logging.info(f"Fetching candles for {symbol} from {start_iso} to {end_iso}")
             
