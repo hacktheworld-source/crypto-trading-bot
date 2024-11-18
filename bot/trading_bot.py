@@ -23,11 +23,8 @@ class TradingBot:
             api_key_data = json.loads(os.environ['COINBASE_API_KEY'])
             self.api_key = api_key_data['name'].split('/')[-1]  # Get the last part of the name as API key
             
-            # Get private key from environment
-            private_key_data = os.environ['COINBASE_API_SECRET']
-            # Extract the key part between BEGIN and END markers
-            private_key = private_key_data.split('-----BEGIN EC PRIVATE KEY-----\n')[1].split('\n-----END EC PRIVATE KEY-----')[0]
-            self.api_secret = private_key
+            # Get private key from environment - use it directly
+            self.api_secret = os.environ['COINBASE_API_SECRET']
             
             self.client = Client(self.api_key, self.api_secret)
             
