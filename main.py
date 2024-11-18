@@ -93,6 +93,12 @@ async def test_api(ctx):
     response = command_handler.test_api()
     await ctx.send(response)
 
+# Command to get help
+@bot.command(name='help')
+async def help(ctx):
+    response = command_handler.get_help()
+    await ctx.send(response)
+
 # Run the bot
 keep_alive()
 bot.run(os.getenv('DISCORD_TOKEN')) 

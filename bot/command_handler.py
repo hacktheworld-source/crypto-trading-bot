@@ -94,3 +94,29 @@ class CommandHandler:
                 "2. API Secret is correct\n"
                 "3. API Keys have correct permissions"
             )
+        
+    def get_help(self):
+        help_text = "Available Commands:\n```"
+        help_text += "\nTrading Commands:"
+        help_text += "\n!start         - Start the trading bot"
+        help_text += "\n!stop          - Stop the trading bot"
+        help_text += "\n!status        - Show bot status and portfolio value"
+        
+        help_text += "\n\nCoin Management:"
+        help_text += "\n!addcoin BTC   - Add a coin to watchlist"
+        help_text += "\n!removecoin BTC - Remove a coin from watchlist"
+        help_text += "\n!listcoins     - Show all watched coins"
+        help_text += "\n!rsi BTC       - Get current RSI for a coin"
+        
+        help_text += "\n\nConfiguration:"
+        help_text += "\n!setamount 100 - Set trade amount in USD"
+        help_text += "\n!setrsi 30 70  - Set RSI thresholds (oversold overbought)"
+        help_text += "\n!setinterval 5 - Set check interval in minutes"
+        
+        help_text += "\n\nInformation:"
+        help_text += "\n!history       - View last 10 trades"
+        help_text += "\n!testapi       - Test Coinbase API connection"
+        help_text += "\n!ping          - Test if bot is responsive"
+        help_text += "\n!help          - Show this help message"
+        help_text += "```"
+        return help_text
