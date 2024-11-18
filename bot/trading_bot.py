@@ -111,7 +111,6 @@ class TradingBot:
     
     def _get_historical_prices(self, symbol: str, start: datetime, end: datetime) -> pd.Series:
         try:
-            # Get candles using the new API
             product_id = f"{symbol}-USD"
             candles = self.client.get_product_candles(
                 product_id=product_id,
@@ -136,17 +135,21 @@ class TradingBot:
             product_id = f"{symbol}-USD"
             
             # Get current price
-            ticker = self.client.get_product_ticker(product_id)
-            current_price = float(ticker.price)
+            product = self.client.get_product(product_id)
+            current_price = float(product.price)
             
             # Calculate quantity based on trade amount
             quantity = self.trade_amount / current_price
             
             # Place market buy order
-            order = self.client.create_market_order(
+            order = self.client.create_order(
                 product_id=product_id,
                 side='BUY',
-                funds=str(self.trade_amount)  # Amount in USD
+                order_configuration={
+                    'market_market_ioc': {
+                        'quote_size': str(self.trade_amount)  # Amount in USD
+                    }
+                }
             )
             
             self.trade_history.append({
@@ -173,10 +176,14 @@ class TradingBot:
                 raise Exception(f"No account found for {symbol}")
                 
             # Place market sell order
-            order = self.client.create_market_order(
+            order = self.client.create_order(
                 product_id=product_id,
                 side='SELL',
-                funds=str(self.trade_amount)  # Amount in USD
+                order_configuration={
+                    'market_market_ioc': {
+                        'quote_size': str(self.trade_amount)  # Amount in USD
+                    }
+                }
             )
             
             self.trade_history.append({
@@ -233,7 +240,7 @@ class TradingBot:
         try:
             # Verify the coin exists by attempting to get its price
             product_id = f"{symbol}-USD"
-            self.client.get_product_historic_rates(product_id, start=datetime.now().isoformat(), end=datetime.now().isoformat())
+            self.client.get_product(product_id)
             self.watched_coins.add(symbol)
             logging.info(f"Added {symbol} to watchlist")
             return True
@@ -305,13 +312,9 @@ class TradingBot:
 
     def test_api_connection(self):
         try:
-            # Test authentication by getting accounts
-            accounts = self.client.get_accounts()
-            logging.info("Authentication successful")
-            
-            # Test price fetching
-            btc_ticker = self.client.get_product_ticker('BTC-USD')
-            price = float(btc_ticker.price)
+            # Test authentication by getting BTC price
+            btc_product = self.client.get_product('BTC-USD')
+            price = float(btc_product.price)
             logging.info(f"Successfully fetched BTC price: ${price}")
             return price
             
