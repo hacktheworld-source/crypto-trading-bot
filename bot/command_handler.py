@@ -59,12 +59,20 @@ class CommandHandler:
         
     def get_status(self):
         bot = self.trading_bot
+        balance_info = bot.get_account_balance()
+        
         status = "Bot Status:\n```"
         status += f"Trading Active: {bot.trading_active}\n"
         status += f"Watched Coins: {', '.join(bot.watched_coins) if bot.watched_coins else 'None'}\n"
         status += f"Trade Amount: ${bot.trade_amount}\n"
         status += f"RSI Settings: Oversold={bot.rsi_oversold}, Overbought={bot.rsi_overbought}\n"
-        status += f"Check Interval: {bot.trading_interval//60} minutes\n"
+        status += f"Check Interval: {bot.trading_interval//60} minutes\n\n"
+        
+        # Add balance information
+        status += "Account Balances:\n"
+        for symbol, data in balance_info['balances'].items():
+            status += f"{symbol}: {data['balance']:.8f} (${data['usd_value']:.2f})\n"
+        status += f"\nTotal Portfolio Value: ${balance_info['total_usd_value']:.2f}\n"
         status += "```"
         return status
         

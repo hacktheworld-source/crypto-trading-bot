@@ -321,3 +321,40 @@ class TradingBot:
         except Exception as e:
             logging.error(f"API test failed: {str(e)}")
             raise Exception(f"API test failed: {str(e)}")
+
+    def get_account_balance(self) -> Dict[str, float]:
+        try:
+            accounts = self.client.get_accounts()
+            balances = {}
+            total_usd_value = 0.0
+
+            for account in accounts:
+                if float(account.available_balance.value) > 0:
+                    symbol = account.currency
+                    balance = float(account.available_balance.value)
+                    
+                    if symbol == 'USD':
+                        usd_value = balance
+                    else:
+                        # Get current price for non-USD assets
+                        try:
+                            product = self.client.get_product(f"{symbol}-USD")
+                            price = float(product.price)
+                            usd_value = balance * price
+                        except:
+                            usd_value = 0.0
+                    
+                    if usd_value > 0:
+                        balances[symbol] = {
+                            'balance': balance,
+                            'usd_value': usd_value
+                        }
+                        total_usd_value += usd_value
+
+            return {
+                'balances': balances,
+                'total_usd_value': total_usd_value
+            }
+        except Exception as e:
+            logging.error(f"Error getting account balance: {str(e)}")
+            return {'balances': {}, 'total_usd_value': 0.0}
