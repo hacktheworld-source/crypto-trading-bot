@@ -329,9 +329,10 @@ class TradingBot:
             total_usd_value = 0.0
 
             for account in accounts:
-                if float(account.available_balance.value) > 0:
+                # Check if account has a balance
+                if hasattr(account, 'balance') and float(account.balance) > 0:
                     symbol = account.currency
-                    balance = float(account.available_balance.value)
+                    balance = float(account.balance)
                     
                     if symbol == 'USD':
                         usd_value = balance
@@ -342,7 +343,8 @@ class TradingBot:
                             price = float(product.price)
                             usd_value = balance * price
                         except:
-                            usd_value = 0.0
+                            logging.warning(f"Could not get price for {symbol}, skipping...")
+                            continue
                     
                     if usd_value > 0:
                         balances[symbol] = {
@@ -350,7 +352,9 @@ class TradingBot:
                             'usd_value': usd_value
                         }
                         total_usd_value += usd_value
+                        logging.info(f"Added {symbol} balance: {balance} (${usd_value:.2f})")
 
+            logging.info(f"Total portfolio value: ${total_usd_value:.2f}")
             return {
                 'balances': balances,
                 'total_usd_value': total_usd_value
