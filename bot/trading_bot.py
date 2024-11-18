@@ -19,13 +19,27 @@ class TradingBot:
     def __init__(self):
         try:
             logging.info("Starting bot initialization...")
-            self.api_key = os.environ['COINBASE_API_KEY']
-            self.api_secret = os.environ['COINBASE_API_SECRET']
-            logging.info("API credentials loaded")
             
+            # Check if environment variables exist
+            if 'COINBASE_API_KEY' not in os.environ:
+                raise Exception("COINBASE_API_KEY not found in environment variables")
+            if 'COINBASE_API_SECRET' not in os.environ:
+                raise Exception("COINBASE_API_SECRET not found in environment variables")
+            
+            # Get and log the credentials (careful with logging sensitive info in production)
+            self.api_key = os.environ['COINBASE_API_KEY'].strip()
+            self.api_secret = os.environ['COINBASE_API_SECRET'].strip()
+            
+            logging.info(f"API Key length: {len(self.api_key)}")
+            logging.info(f"API Secret length: {len(self.api_secret)}")
+            logging.info(f"First 4 chars of API Key: {self.api_key[:4]}")
+            
+            # Initialize client
+            logging.info("Attempting to initialize Coinbase client...")
             self.client = Client(self.api_key, self.api_secret)
-            logging.info("Coinbase client initialized")
+            logging.info("Coinbase client initialized successfully")
             
+            # Rest of initialization stays the same
             self.watched_coins: set = set()
             self.trading_interval: int = 300
             self.rsi_period: int = 14
