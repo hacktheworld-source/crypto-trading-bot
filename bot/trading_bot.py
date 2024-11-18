@@ -285,3 +285,14 @@ class TradingBot:
             logging.info("No configuration file found, using defaults")
         except Exception as e:
             logging.error(f"Error loading configuration: {str(e)}")
+
+    def test_api_connection(self):
+        try:
+            # Test API connection by getting BTC price
+            btc_price = self.client.get_spot_price(currency_pair='BTC-USD')
+            # Test account access
+            accounts = self.client.get_accounts()
+            return float(btc_price.amount)
+        except Exception as e:
+            logging.error(f"API Connection test failed: {str(e)}")
+            raise Exception(f"Could not connect to Coinbase API: {str(e)}")

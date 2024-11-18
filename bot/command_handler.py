@@ -67,3 +67,11 @@ class CommandHandler:
         status += f"Check Interval: {bot.trading_interval//60} minutes\n"
         status += "```"
         return status
+        
+    def test_api(self):
+        try:
+            # Test basic API functionality
+            btc_price = self.trading_bot.test_api_connection()
+            return f"✅ Coinbase API connection successful!\nCurrent BTC price: ${btc_price}"
+        except Exception as e:
+            return f"❌ Coinbase API Error: {str(e)}"

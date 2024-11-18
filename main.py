@@ -82,6 +82,17 @@ async def get_status(ctx):
     response = command_handler.get_status()
     await ctx.send(response)
 
+# Command to test the bot's response
+@bot.command(name='ping')
+async def ping(ctx):
+    await ctx.send('Pong! Bot is working!')
+
+# Command to test the Coinbase API connection
+@bot.command(name='testapi')
+async def test_api(ctx):
+    response = command_handler.test_api()
+    await ctx.send(response)
+
 # Run the bot
 keep_alive()
 bot.run(os.getenv('DISCORD_TOKEN')) 
