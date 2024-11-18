@@ -3,11 +3,10 @@ import time
 import threading
 import logging
 import pandas as pd
-import numpy as np
 from datetime import datetime, timedelta
 import json
-import requests
 from coinbase.wallet.client import Client
+from typing import Dict, Any, Optional, List
 
 # Set up logging
 logging.basicConfig(
@@ -19,28 +18,22 @@ logging.basicConfig(
 class TradingBot:
     def __init__(self):
         try:
-            # Debug logging
             logging.info("Starting bot initialization...")
-            
-            # Get API credentials directly
-            self.api_key = os.environ['COINBASE_API_KEY']  # Just use the key ID directly
+            self.api_key = os.environ['COINBASE_API_KEY']
             self.api_secret = os.environ['COINBASE_API_SECRET']
             logging.info("API credentials loaded")
             
-            # Initialize client
-            logging.info("Initializing Coinbase client...")
             self.client = Client(self.api_key, self.api_secret)
             logging.info("Coinbase client initialized")
             
-            # Rest of initialization stays the same
-            self.watched_coins = set()
-            self.trading_interval = 300  # 5 minutes
-            self.rsi_period = 14
-            self.rsi_overbought = 70
-            self.rsi_oversold = 30
-            self.trading_active = False
-            self.trade_amount = 100  # Default trade amount in USD
-            self.trade_history = []
+            self.watched_coins: set = set()
+            self.trading_interval: int = 300
+            self.rsi_period: int = 14
+            self.rsi_overbought: float = 70.0
+            self.rsi_oversold: float = 30.0
+            self.trading_active: bool = False
+            self.trade_amount: float = 100.0
+            self.trade_history: List[Dict[str, Any]] = []
             self.load_config()
             
         except Exception as e:
@@ -93,8 +86,7 @@ class TradingBot:
         elif rsi >= self.rsi_overbought:
             self._place_sell_order(symbol)
             
-    def calculate_rsi(self, symbol):
-        # Get historical data
+    def calculate_rsi(self, symbol: str) -> float:
         end = datetime.now()
         start = end - timedelta(days=1)
         prices = self._get_historical_prices(symbol, start, end)
@@ -107,20 +99,16 @@ class TradingBot:
         rs = gain / loss
         rsi = 100 - (100 / (1 + rs))
         
-        return rsi.iloc[-1]
+        return float(rsi.iloc[-1]) if not pd.isna(rsi.iloc[-1]) else 50.0
     
-    def _get_historical_prices(self, symbol, start, end):
+    def _get_historical_prices(self, symbol: str, start: datetime, end: datetime) -> pd.Series:
         try:
-            # Get historical prices from Coinbase
             currency_pair = f"{symbol}-USD"
-            
-            # Get current price data
             price_data = self.client.get_buy_price(currency_pair=currency_pair)
+            price = float(price_data.get('amount', 0))
             
-            # For demonstration, create a simple price series
-            # In production, you'd want to implement proper historical data fetching
             dates = pd.date_range(start=start, end=end, freq='5min')
-            prices = pd.Series(float(price_data['amount']), index=dates)
+            prices = pd.Series(price, index=dates)
             
             return prices
             
@@ -128,25 +116,26 @@ class TradingBot:
             logging.error(f"Error fetching historical prices for {symbol}: {str(e)}")
             raise
             
-    def _place_buy_order(self, symbol):
+    def _place_buy_order(self, symbol: str) -> None:
         try:
-            # Get payment methods
             payment_methods = self.client.get_payment_methods()
             if not payment_methods:
                 raise Exception("No payment methods available")
                 
-            # Place buy order
+            payment_method_id = payment_methods[0].get('id')
+            if not payment_method_id:
+                raise Exception("Invalid payment method")
+                
             self.client.buy(self.trade_amount,
                           currency=symbol,
-                          payment_method=payment_methods[0]['id'])
+                          payment_method=payment_method_id)
             
-            trade_info = {
+            self.trade_history.append({
                 'timestamp': datetime.now(),
                 'action': 'BUY',
                 'symbol': symbol,
                 'amount_usd': self.trade_amount
-            }
-            self.trade_history.append(trade_info)
+            })
             logging.info(f"Buy order placed for {symbol}: ${self.trade_amount}")
             
         except Exception as e:
