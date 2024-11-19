@@ -98,91 +98,69 @@ class TradingBot:
         return "Trading bot stopped successfully" if was_active else "Trading bot is already stopped"
         
     async def _trading_loop(self):
-        """Trading loop that runs for both real and paper trading"""
+        """Trading loop with unified decision making"""
         logging.info("Trading loop started")
         
         while self.trading_active or self.paper_trading:
             try:
                 self._ensure_positions_watched()
-                logging.info(f"Trading loop iteration - Active: {self.trading_active}, Paper: {self.paper_trading}")
+                message = "🔄 Trading Analysis Update\n\n"
                 
-                if self.watched_coins:
-                    message = "🔄 Trading Analysis Update\n\n"
-                    
-                    for symbol in self.watched_coins:
-                        try:
-                            # Check if we already own this coin
-                            has_real_position = symbol in self.positions
-                            has_paper_position = symbol in self.paper_positions
-                            
-                            # Get all analysis
-                            current_price = float(self.client.get_product(f"{symbol}-USD").price)
-                            rsi = self.calculate_rsi(symbol)
-                            volume_data = self.analyze_volume(symbol)
-                            ma_data = self.calculate_moving_averages(symbol)
-                            sentiment = self.analyze_market_sentiment(symbol)
-                            
-                            # Determine action based on analysis
-                            action = "HOLD"
-                            reason = []
-                            position_size = 0.0
-                            
-                            # Only consider buying if we don't already own it
-                            if not has_real_position and not has_paper_position:
-                                if rsi <= self.rsi_oversold:
+                for symbol in self.watched_coins:
+                    try:
+                        # Get prediction
+                        prediction = self._analyze_price_prediction(symbol)
+                        
+                        # Check current positions
+                        has_real_position = symbol in self.positions
+                        has_paper_position = symbol in self.paper_positions
+                        
+                        # Determine action based on prediction
+                        action = "HOLD"
+                        if prediction['prediction_score'] >= 50:  # Strong bullish signals
+                            if not (has_real_position or has_paper_position):
+                                # Calculate position size we can afford
+                                position_size = self._calculate_position_size(symbol, is_paper=self.paper_trading)
+                                if position_size > 0:  # Only if we can afford it
                                     action = "BUY"
-                                    reason.append(f"RSI oversold ({rsi:.2f})")
-                                    # Calculate position size if we're considering buying
-                                    position_size = self._calculate_position_size(symbol, is_paper=self.paper_trading)
-                                elif ma_data['trend'] == 'Strong Uptrend' and volume_data['volume_ratio'] > 1.5:
-                                    action = "BUY"
-                                    reason.append("Strong uptrend with volume confirmation")
-                                    position_size = self._calculate_position_size(symbol, is_paper=self.paper_trading)
-                            
-                            # Consider selling only if we own the position
-                            elif (self.trading_active and has_real_position) or (self.paper_trading and has_paper_position):
-                                if rsi >= self.rsi_overbought:
-                                    action = "SELL"
-                                    reason.append(f"RSI overbought ({rsi:.2f})")
-                                elif ma_data['trend'] == 'Strong Downtrend':
-                                    action = "SELL"
-                                    reason.append("Strong downtrend detected")
-                            
-                            # Add analysis to message
-                            message += f"📊 {symbol} Analysis:\n"
-                            message += f"Price: ${current_price:,.2f}\n"
-                            message += f"RSI: {rsi:.2f}\n"
-                            message += f"Volume: {volume_data['volume_ratio']:.2f}x average\n"
-                            message += f"Trend: {ma_data['trend']}\n"
-                            message += f"Sentiment: {sentiment['overall_sentiment']}\n"
-                            message += f"Current Position: {'Yes' if (has_real_position or has_paper_position) else 'No'}\n"
-                            message += f"Decision: {action}\n"
-                            if reason:
-                                message += f"Reason: {', '.join(reason)}\n"
-                            if action == "BUY" and position_size > 0:
+                        elif prediction['prediction_score'] <= -50:  # Strong bearish signals
+                            if has_real_position or has_paper_position:
+                                action = "SELL"
+                        
+                        # Add analysis to message
+                        message += f"📊 {symbol} Analysis:\n"
+                        message += f"Price: ${prediction['current_price']:,.2f}\n"
+                        message += f"Prediction Score: {prediction['prediction_score']:+.1f}\n"
+                        if prediction['bullish_signals']:
+                            message += "Bullish Signals:\n - " + "\n - ".join(prediction['bullish_signals']) + "\n"
+                        if prediction['bearish_signals']:
+                            message += "Bearish Signals:\n - " + "\n - ".join(prediction['bearish_signals']) + "\n"
+                        message += f"Current Position: {'Yes' if (has_real_position or has_paper_position) else 'No'}\n"
+                        message += f"Decision: {action}\n"
+                        
+                        if action == "BUY":
+                            position_size = self._calculate_position_size(symbol, is_paper=self.paper_trading)
+                            if position_size > 0:
                                 message += f"Planned Position Size: ${position_size:.2f}\n"
-                                message += f"Percentage of {'Paper' if self.paper_trading else 'Real'} Balance: "
                                 if self.paper_trading:
                                     percentage = (position_size / self.paper_balance) * 100
-                                else:
-                                    balance = float(self.get_account_balance()['balances'].get('USD', {}).get('balance', 0))
-                                    percentage = (position_size / balance) * 100 if balance > 0 else 0
-                                message += f"{percentage:.1f}%\n"
-                            message += "\n"
-                            
-                            # Execute trades if conditions are met
-                            if self.paper_trading and action == "BUY" and position_size > 0:
-                                await self._simulate_buy_order(symbol)
-                            elif self.paper_trading and action == "SELL" and has_paper_position:
-                                await self._simulate_sell_order(symbol)
+                                    message += f"Percentage of Paper Balance: {percentage:.1f}%\n"
+                        message += "\n"
                         
-                        except Exception as e:
-                            error_msg = f"Error analyzing {symbol}: {str(e)}"
-                            logging.error(error_msg)
-                            message += f"❌ {error_msg}\n\n"
-                    
-                    # Send the update
-                    await self.send_notification(message, is_update=True)
+                        # Execute trades
+                        if self.paper_trading:
+                            if action == "BUY":
+                                await self._simulate_buy_order(symbol)
+                            elif action == "SELL" and has_paper_position:
+                                await self._simulate_sell_order(symbol)
+                            
+                    except Exception as e:
+                        error_msg = f"Error analyzing {symbol}: {str(e)}"
+                        logging.error(error_msg)
+                        message += f"❌ {error_msg}\n\n"
+                
+                # Send the update
+                await self.send_notification(message, is_update=True)
                 
                 # Wait for next interval
                 await asyncio.sleep(self.trading_interval)
@@ -1330,3 +1308,63 @@ class TradingBot:
             await self.send_notification(message)
         except Exception as e:
             logging.error(f"Error sending alert: {str(e)}")
+
+    def _analyze_price_prediction(self, symbol: str) -> Dict[str, Any]:
+        """Make a unified price movement prediction"""
+        try:
+            # Get all indicators
+            rsi = self.calculate_rsi(symbol)
+            volume_data = self.analyze_volume(symbol)
+            ma_data = self.calculate_moving_averages(symbol)
+            sentiment = self.analyze_market_sentiment(symbol)
+            
+            # Determine overall market prediction
+            bullish_signals = []
+            bearish_signals = []
+            
+            # RSI signals
+            if rsi <= self.rsi_oversold:
+                bullish_signals.append(f"RSI oversold ({rsi:.2f})")
+            elif rsi >= self.rsi_overbought:
+                bearish_signals.append(f"RSI overbought ({rsi:.2f})")
+                
+            # Volume signals
+            if volume_data['volume_ratio'] > 1.5:
+                if volume_data['price_change'] > 0:
+                    bullish_signals.append(f"High volume upward movement ({volume_data['volume_ratio']:.1f}x)")
+                else:
+                    bearish_signals.append(f"High volume downward movement ({volume_data['volume_ratio']:.1f}x)")
+                    
+            # Trend signals
+            if ma_data['trend'] in ['Strong Uptrend', 'Weak Uptrend']:
+                bullish_signals.append(f"Upward trend: {ma_data['trend']}")
+            elif ma_data['trend'] == 'Downtrend':
+                bearish_signals.append("Downward trend")
+                
+            # Sentiment signals
+            if sentiment['sentiment_score'] > 50:
+                bullish_signals.append(f"Bullish sentiment ({sentiment['sentiment_score']:.0f})")
+            elif sentiment['sentiment_score'] < -50:
+                bearish_signals.append(f"Bearish sentiment ({sentiment['sentiment_score']:.0f})")
+                
+            # Calculate overall prediction score (-100 to +100)
+            total_signals = len(bullish_signals) + len(bearish_signals)
+            if total_signals == 0:
+                prediction_score = 0
+            else:
+                prediction_score = ((len(bullish_signals) - len(bearish_signals)) / total_signals) * 100
+                
+            return {
+                'prediction_score': prediction_score,
+                'bullish_signals': bullish_signals,
+                'bearish_signals': bearish_signals,
+                'current_price': float(self.client.get_product(f"{symbol}-USD").price),
+                'rsi': rsi,
+                'volume_ratio': volume_data['volume_ratio'],
+                'trend': ma_data['trend'],
+                'sentiment': sentiment['overall_sentiment']
+            }
+            
+        except Exception as e:
+            logging.error(f"Error making price prediction for {symbol}: {str(e)}")
+            raise
