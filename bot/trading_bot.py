@@ -157,42 +157,65 @@ class TradingBot:
     def _analyze_trading_signals(self, symbol: str) -> Dict[str, Any]:
         """Analyze all signals to get a coherent market prediction"""
         try:
-            # Get price data for different timeframes
+            # First verify we can get current price
+            try:
+                current_price = float(self.client.get_product(f"{symbol}-USD").price)
+                if not current_price or current_price <= 0:
+                    raise Exception(f"Invalid current price for {symbol}")
+            except Exception as e:
+                logging.error(f"Error getting current price for {symbol}: {str(e)}")
+                raise Exception(f"Cannot get valid price data for {symbol}")
+
+            # Get historical prices with validation
             end = datetime.now()
             start_long = end - timedelta(days=90)
             
-            # Get historical prices and validate data
             prices_long = self._get_historical_prices(symbol, start_long, end)
-            if prices_long is None or len(prices_long) < 2:
-                raise Exception(f"Insufficient price data for {symbol}")
+            if prices_long is None or len(prices_long) < 14:  # Need at least 14 candles for RSI
+                raise Exception(f"Insufficient historical data for {symbol} (need at least 14 candles)")
+            
+            # Validate the DataFrame structure
+            if not all(col in prices_long.columns for col in ['close', 'volume']):
+                raise Exception(f"Missing required price data columns for {symbol}")
             
             # Ensure we have valid price data
-            if prices_long.iloc[-1] is None or prices_long.iloc[0] is None:
-                raise Exception(f"Invalid price data for {symbol}")
+            if prices_long['close'].isnull().any() or prices_long['volume'].isnull().any():
+                raise Exception(f"Found null values in price data for {symbol}")
             
-            # Calculate price changes with validation
+            # Calculate technical indicators with validation
             try:
-                price_change_long = ((prices_long.iloc[-1] - prices_long.iloc[0]) / prices_long.iloc[0]) * 100
-                prices_medium = prices_long[prices_long.index >= end - timedelta(days=30)]
-                prices_short = prices_long[prices_long.index >= end - timedelta(days=7)]
+                rsi = self.calculate_rsi(symbol)
+                volume_data = self.analyze_volume(symbol)
+                ma_data = self.calculate_moving_averages(symbol)
+                sentiment = self.analyze_market_sentiment(symbol)
                 
-                if len(prices_medium) >= 2 and len(prices_short) >= 2:
-                    price_change_medium = ((prices_medium.iloc[-1] - prices_medium.iloc[0]) / prices_medium.iloc[0]) * 100
-                    price_change_short = ((prices_short.iloc[-1] - prices_short.iloc[0]) / prices_short.iloc[0]) * 100
-                else:
-                    logging.warning(f"Insufficient data points for {symbol} medium/short term analysis")
-                    price_change_medium = 0
-                    price_change_short = 0
+                if any(v is None for v in [rsi, volume_data, ma_data, sentiment]):
+                    raise Exception("One or more technical indicators returned None")
+                
             except Exception as e:
-                logging.error(f"Error calculating price changes for {symbol}: {str(e)}")
-                price_change_long = 0
-                price_change_medium = 0
-                price_change_short = 0
+                logging.error(f"Error calculating technical indicators for {symbol}: {str(e)}")
+                raise Exception(f"Technical analysis failed for {symbol}")
 
             # Rest of the analysis code...
         except Exception as e:
-            logging.error(f"Error analyzing trading signals for {symbol}: {str(e)}")
-            raise
+            logging.error(f"Error analyzing {symbol}: {str(e)}")
+            return {
+                'error': str(e),
+                'prediction': 0,
+                'current_price': 0,
+                'signals': {
+                    'rsi': 0,
+                    'volume': 0,
+                    'ma': 0,
+                    'sentiment': 0
+                },
+                'details': {
+                    'rsi': 0,
+                    'volume_ratio': 0,
+                    'trend': 'Error',
+                    'sentiment': 'Error'
+                }
+            }
 
     def _format_analysis_message(self, symbol: str, analysis: Dict[str, Any], action: str, reason: List[str]) -> str:
         """Format analysis message for notifications"""
