@@ -130,16 +130,16 @@ class TradingBot:
             logging.info(f"Fetching candles for {symbol} from {start_time} to {end_time}")
             
             try:
-                # Convert to Unix timestamps (seconds since epoch)
-                start_unix = int(start_time.timestamp())
-                end_unix = int(end_time.timestamp())
+                # Format timestamps as ISO 8601 strings
+                start_iso = start_time.isoformat() + 'Z'
+                end_iso = end_time.isoformat() + 'Z'
                 
                 # Get daily candles for the last 30 days
                 response = self.client.get_candles(
                     product_id=product_id,
-                    start=start_unix,
-                    end=end_unix,
-                    granularity="ONE_DAY"  # Using string enum for granularity
+                    start=start_iso,
+                    end=end_iso,
+                    granularity=86400  # Using integer (86400 seconds = 1 day)
                 )
                 
                 # Convert response to list and check if we have data
