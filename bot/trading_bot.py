@@ -106,14 +106,15 @@ class TradingBot:
                 self._ensure_positions_watched()
                 logging.info(f"Trading loop iteration - Active: {self.trading_active}, Paper: {self.paper_trading}")
                 
-                # Send interval update for all watched coins
                 if self.watched_coins:
-                    logging.info(f"Processing {len(self.watched_coins)} watched coins")
                     message = "🔄 Trading Analysis Update\n\n"
                     
                     for symbol in self.watched_coins:
                         try:
-                            logging.info(f"Analyzing {symbol}")
+                            # Check if we already own this coin
+                            has_real_position = symbol in self.positions
+                            has_paper_position = symbol in self.paper_positions
+                            
                             # Get all analysis
                             current_price = float(self.client.get_product(f"{symbol}-USD").price)
                             rsi = self.calculate_rsi(symbol)
@@ -121,34 +122,31 @@ class TradingBot:
                             ma_data = self.calculate_moving_averages(symbol)
                             sentiment = self.analyze_market_sentiment(symbol)
                             
-                            # Check positions
-                            has_real_position = symbol in self.positions
-                            has_paper_position = symbol in self.paper_positions
-                            
                             # Determine action based on analysis
                             action = "HOLD"
                             reason = []
+                            position_size = 0.0
                             
-                            # SELL conditions - check positions first
-                            if (self.trading_active and has_real_position) or (self.paper_trading and has_paper_position):
+                            # Only consider buying if we don't already own it
+                            if not has_real_position and not has_paper_position:
+                                if rsi <= self.rsi_oversold:
+                                    action = "BUY"
+                                    reason.append(f"RSI oversold ({rsi:.2f})")
+                                    # Calculate position size if we're considering buying
+                                    position_size = self._calculate_position_size(symbol, is_paper=self.paper_trading)
+                                elif ma_data['trend'] == 'Strong Uptrend' and volume_data['volume_ratio'] > 1.5:
+                                    action = "BUY"
+                                    reason.append("Strong uptrend with volume confirmation")
+                                    position_size = self._calculate_position_size(symbol, is_paper=self.paper_trading)
+                            
+                            # Consider selling only if we own the position
+                            elif (self.trading_active and has_real_position) or (self.paper_trading and has_paper_position):
                                 if rsi >= self.rsi_overbought:
                                     action = "SELL"
                                     reason.append(f"RSI overbought ({rsi:.2f})")
                                 elif ma_data['trend'] == 'Strong Downtrend':
                                     action = "SELL"
                                     reason.append("Strong downtrend detected")
-                                elif volume_data['volume_ratio'] > 2.0 and sentiment['overall_sentiment'] == 'Bearish':
-                                    action = "SELL"
-                                    reason.append("High volume bearish movement")
-                            
-                            # BUY conditions - only if we don't have a position
-                            elif not (has_real_position or has_paper_position):
-                                if rsi <= self.rsi_oversold:
-                                    action = "BUY"
-                                    reason.append(f"RSI oversold ({rsi:.2f})")
-                                elif ma_data['trend'] == 'Strong Uptrend' and volume_data['volume_ratio'] > 1.5:
-                                    action = "BUY"
-                                    reason.append("Strong uptrend with volume confirmation")
                             
                             # Add analysis to message
                             message += f"📊 {symbol} Analysis:\n"
@@ -157,18 +155,26 @@ class TradingBot:
                             message += f"Volume: {volume_data['volume_ratio']:.2f}x average\n"
                             message += f"Trend: {ma_data['trend']}\n"
                             message += f"Sentiment: {sentiment['overall_sentiment']}\n"
-                            message += f"Position: {'Yes' if (has_real_position or has_paper_position) else 'No'}\n"
+                            message += f"Current Position: {'Yes' if (has_real_position or has_paper_position) else 'No'}\n"
                             message += f"Decision: {action}\n"
                             if reason:
                                 message += f"Reason: {', '.join(reason)}\n"
+                            if action == "BUY" and position_size > 0:
+                                message += f"Planned Position Size: ${position_size:.2f}\n"
+                                message += f"Percentage of {'Paper' if self.paper_trading else 'Real'} Balance: "
+                                if self.paper_trading:
+                                    percentage = (position_size / self.paper_balance) * 100
+                                else:
+                                    balance = float(self.get_account_balance()['balances'].get('USD', {}).get('balance', 0))
+                                    percentage = (position_size / balance) * 100 if balance > 0 else 0
+                                message += f"{percentage:.1f}%\n"
                             message += "\n"
                             
                             # Execute trades if conditions are met
-                            if self.paper_trading and action != "HOLD":
-                                if action == "BUY" and self._should_trade(symbol, 'BUY'):
-                                    await self._simulate_buy_order(symbol)
-                                elif action == "SELL" and has_paper_position and self._should_trade(symbol, 'SELL'):
-                                    await self._simulate_sell_order(symbol)
+                            if self.paper_trading and action == "BUY" and position_size > 0:
+                                await self._simulate_buy_order(symbol)
+                            elif self.paper_trading and action == "SELL" and has_paper_position:
+                                await self._simulate_sell_order(symbol)
                         
                         except Exception as e:
                             error_msg = f"Error analyzing {symbol}: {str(e)}"
@@ -176,22 +182,13 @@ class TradingBot:
                             message += f"❌ {error_msg}\n\n"
                     
                     # Send the update
-                    logging.info("Attempting to send interval update notification")
-                    try:
-                        await self.send_notification(message, is_update=True)
-                        logging.info("Successfully sent interval update")
-                    except Exception as e:
-                        logging.error(f"Failed to send notification: {str(e)}")
-                else:
-                    logging.warning("No coins in watchlist")
+                    await self.send_notification(message, is_update=True)
                 
                 # Wait for next interval
-                logging.info(f"Waiting {self.trading_interval} seconds until next update")
                 await asyncio.sleep(self.trading_interval)
                 
             except Exception as e:
                 logging.error(f"Critical error in trading loop: {str(e)}")
-                # Wait a minute before retrying if there's an error
                 await asyncio.sleep(60)
     
     def _check_and_trade(self, symbol):
@@ -646,29 +643,43 @@ class TradingBot:
             logging.error(f"Error analyzing volume for {symbol}: {str(e)}")
             raise
 
-    def _calculate_position_size(self, symbol: str) -> float:
-        """Smarter position sizing based on risk"""
+    def _calculate_position_size(self, symbol: str, is_paper: bool = False) -> float:
+        """Calculate appropriate position size based on portfolio and risk"""
         try:
-            available_funds = float(self.get_account_balance()['balances'].get('USD', {}).get('balance', 0))
+            # Get available funds based on trading mode
+            if is_paper:
+                available_funds = self.paper_balance
+                portfolio_value = self.get_paper_balance()['total_value']
+            else:
+                available_funds = float(self.get_account_balance()['balances'].get('USD', {}).get('balance', 0))
+                portfolio_value = self.get_account_balance()['total_usd_value']
             
             # Never risk more than 2% of total portfolio on any single trade
-            portfolio_value = self.get_account_balance()['total_usd_value']
             max_risk_amount = portfolio_value * 0.02
             
             # Calculate position size based on stop loss
             current_price = float(self.client.get_product(f"{symbol}-USD").price)
             risk_per_share = current_price * (self.stop_loss_percentage / 100)
             
-            # Position size that risks the max risk amount
+            # Consider current market conditions for position sizing
+            market_conditions = self._check_market_conditions(symbol)
+            sentiment_multiplier = 1.0
+            if market_conditions['sentiment_score'] > 50:  # Strong bullish sentiment
+                sentiment_multiplier = 1.2
+            elif market_conditions['sentiment_score'] < -50:  # Strong bearish sentiment
+                sentiment_multiplier = 0.8
+            
+            # Calculate base position size
             position_size = min(
                 max_risk_amount / risk_per_share * current_price,
-                available_funds,
+                available_funds * 0.5,  # Never use more than 50% of available funds
                 self.max_position_size
-            )
+            ) * sentiment_multiplier
             
             # Ensure minimum trade size
-            return max(5.0, position_size) if position_size >= 5.0 else 0
-            
+            min_trade = 5.0 if not is_paper else 1.0  # Lower minimum for paper trading
+            return max(min_trade, position_size) if position_size >= min_trade else 0
+                
         except Exception as e:
             logging.error(f"Error calculating position size: {str(e)}")
             return 0
@@ -1065,21 +1076,28 @@ class TradingBot:
             logging.error(f"Error analyzing market sentiment for {symbol}: {str(e)}")
             raise
 
-    def _simulate_buy_order(self, symbol: str) -> None:
+    async def _simulate_buy_order(self, symbol: str) -> None:
         """Simulate a buy order with paper trading"""
         try:
             product_id = f"{symbol}-USD"
             current_price = float(self.client.get_product(product_id).price)
             
+            # Calculate position size
+            trade_amount = self._calculate_position_size(symbol, is_paper=True)
+            if trade_amount == 0:
+                logging.warning(f"Position size too small for {symbol}")
+                return
+            
             # Calculate fees (0.6% Coinbase fee)
-            fee = self.trade_amount * 0.006
-            actual_trade_amount = self.trade_amount - fee
+            fee = trade_amount * 0.006
+            actual_trade_amount = trade_amount - fee
             
             # Check if we have enough paper balance
-            if self.paper_balance < self.trade_amount:
+            if self.paper_balance < trade_amount:
                 logging.warning(f"Insufficient paper balance for {symbol} buy")
                 return
             
+            # Calculate quantity after fees
             quantity = actual_trade_amount / current_price
             
             # Create new paper position
@@ -1092,21 +1110,32 @@ class TradingBot:
             )
             
             # Update paper balance
-            self.paper_balance -= self.trade_amount
+            self.paper_balance -= trade_amount
             
             # Record trade
-            self.paper_trade_history.append({
+            trade_record = {
                 'timestamp': datetime.now(),
                 'action': 'BUY',
                 'symbol': symbol,
-                'amount_usd': self.trade_amount,
+                'amount_usd': trade_amount,
                 'price': current_price,
                 'quantity': quantity,
                 'fees': fee,
-                'is_paper': True
-            })
+                'is_paper': True,
+                'balance_after': self.paper_balance
+            }
+            self.paper_trade_history.append(trade_record)
             
-            logging.info(f"Paper buy order placed for {symbol}: ${self.trade_amount}")
+            # Send notification
+            await self.send_trade_notification(
+                action='BUY',
+                symbol=symbol,
+                price=current_price,
+                quantity=quantity,
+                is_paper=True
+            )
+            
+            logging.info(f"Paper buy order placed for {symbol}: ${trade_amount:.2f} (Fee: ${fee:.2f})")
             
         except Exception as e:
             logging.error(f"Error simulating buy order for {symbol}: {str(e)}")
