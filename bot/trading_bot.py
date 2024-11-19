@@ -135,9 +135,8 @@ class TradingBot:
             product_id = f"{symbol}-USD"
             
             # Get current time and calculate start time
-            # For 1M chart, we want more data points to ensure accurate RSI
             end_time = datetime.now()
-            start_time = end_time - timedelta(days=45)  # Get 45 days to ensure enough data for monthly view
+            start_time = end_time - timedelta(days=90)  # Get 90 days for better trend analysis
             
             logging.info(f"Fetching candles for {symbol} from {start_time} to {end_time}")
             
@@ -146,12 +145,12 @@ class TradingBot:
                 start_unix = int(start_time.timestamp())
                 end_unix = int(end_time.timestamp())
                 
-                # Get 4-hour candles for better granularity
+                # Get daily candles
                 response = self.client.get_candles(
                     product_id=product_id,
                     start=start_unix,
                     end=end_unix,
-                    granularity="FOUR_HOUR"  # Changed from ONE_DAY to get more data points
+                    granularity="ONE_DAY"  # Daily candles
                 )
                 
                 # Convert response to list and check if we have data
