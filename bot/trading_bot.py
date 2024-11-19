@@ -523,45 +523,127 @@ class TradingBot:
             logging.error(f"Error analyzing volume for {symbol}: {str(e)}")
             raise
 
-    def _should_trade(self, symbol: str, action: str) -> bool:
-        """Determines if a trade should be executed based on multiple indicators"""
+    def _calculate_position_size(self, symbol: str) -> float:
+        """Smarter position sizing based on risk"""
         try:
-            # Get RSI
-            rsi = self.calculate_rsi(symbol)
+            available_funds = float(self.get_account_balance()['balances'].get('USD', {}).get('balance', 0))
             
-            # Get volume analysis
-            volume_data = self.analyze_volume(symbol)
+            # Never risk more than 2% of total portfolio on any single trade
+            portfolio_value = self.get_account_balance()['total_usd_value']
+            max_risk_amount = portfolio_value * 0.02
             
-            # Get MA analysis
-            ma_data = self.calculate_moving_averages(symbol)
+            # Calculate position size based on stop loss
+            current_price = float(self.client.get_product(f"{symbol}-USD").price)
+            risk_per_share = current_price * (self.stop_loss_percentage / 100)
             
-            # Check if volume confirms trend
-            volume_confirms = volume_data['confirms_trend']
+            # Position size that risks the max risk amount
+            position_size = min(
+                max_risk_amount / risk_per_share * current_price,
+                available_funds,
+                self.max_position_size
+            )
             
-            if action == 'BUY':
-                should_trade = (
-                    rsi <= self.rsi_oversold and
-                    volume_confirms and
-                    volume_data['trend_strength'] != 'weak' and
-                    (ma_data['sma_cross_bullish'] or ma_data['ema_cross_bullish']) and
-                    ma_data['trend'] in ['Weak Uptrend', 'Strong Uptrend']
-                )
-            else:  # SELL
-                should_trade = (
-                    rsi >= self.rsi_overbought and
-                    volume_confirms and
-                    volume_data['trend_strength'] != 'weak' and
-                    (ma_data['sma_cross_bearish'] or ma_data['ema_cross_bearish']) and
-                    ma_data['trend'] == 'Downtrend'
-                )
-            
-            logging.info(f"Trade decision for {symbol} {action}: {should_trade}")
-            logging.info(f"RSI: {rsi}, Volume: {volume_data['trend_strength']}, Trend: {ma_data['trend']}")
-            
-            return should_trade
+            # Ensure minimum trade size
+            return max(5.0, position_size) if position_size >= 5.0 else 0
             
         except Exception as e:
-            logging.error(f"Error in trade decision for {symbol}: {str(e)}")
+            logging.error(f"Error calculating position size: {str(e)}")
+            return 0
+
+    def _check_market_conditions(self, symbol: str) -> Dict[str, Any]:
+        """Analyze current market conditions for trading"""
+        try:
+            # Get sentiment analysis
+            sentiment = self.analyze_market_sentiment(symbol)
+            
+            # Get volatility (using price range as simple measure)
+            prices = self._get_historical_prices(symbol, 
+                                              start=datetime.now() - timedelta(days=7),
+                                              end=datetime.now())
+            price_range = (prices.max() - prices.min()) / prices.min() * 100
+            
+            # Check if market is too volatile
+            is_volatile = price_range > 10  # Consider >10% range as volatile
+            
+            # Check trading hours (some hours historically have more volatility)
+            current_hour = datetime.now().hour
+            is_high_activity = 13 <= current_hour <= 21  # 9 AM - 5 PM EST
+            
+            # Get overall market trend (using BTC as proxy)
+            if symbol != 'BTC':
+                btc_sentiment = self.analyze_market_sentiment('BTC')
+                market_aligned = (
+                    (sentiment['overall_sentiment'] == btc_sentiment['overall_sentiment']) or
+                    (sentiment['sentiment_score'] * btc_sentiment['sentiment_score'] > 0)
+                )
+            else:
+                market_aligned = True
+            
+            conditions = {
+                'sentiment': sentiment['overall_sentiment'],
+                'sentiment_score': sentiment['sentiment_score'],
+                'is_volatile': is_volatile,
+                'price_range_7d': price_range,
+                'is_high_activity': is_high_activity,
+                'market_aligned': market_aligned,
+                'suitable_for_trading': (
+                    not is_volatile and
+                    (is_high_activity or abs(sentiment['sentiment_score']) > 50) and
+                    market_aligned
+                )
+            }
+            
+            logging.info(f"Market conditions for {symbol}: {conditions}")
+            return conditions
+            
+        except Exception as e:
+            logging.error(f"Error checking market conditions: {str(e)}")
+            raise
+
+    def _should_trade(self, symbol: str, action: str) -> bool:
+        """Enhanced trade confirmation with multiple timeframes"""
+        try:
+            # Get current price and volume data
+            current_price = float(self.client.get_product(f"{symbol}-USD").price)
+            volume_data = self.analyze_volume(symbol)
+            
+            # Check if we have enough funds
+            position_size = self._calculate_position_size(symbol)
+            if position_size < 5.0:  # Minimum trade size
+                return False
+            
+            if action == 'BUY':
+                # Price must be above 20 EMA on shorter timeframe for uptrend confirmation
+                ma_data = self.calculate_moving_averages(symbol)
+                price_above_ema = current_price > ma_data['ema_20']
+                
+                # Volume should be increasing
+                volume_confirming = volume_data['volume_ratio'] > 1.2
+                
+                # Check if we're buying near recent support
+                recent_low = min(self._get_historical_prices(symbol, 
+                    datetime.now() - timedelta(days=7), 
+                    datetime.now()
+                ))
+                not_chasing = current_price < (recent_low * 1.1)  # Within 10% of recent low
+                
+                return price_above_ema and volume_confirming and not_chasing
+                
+            else:  # SELL
+                # Don't sell if we're near support levels
+                recent_low = min(self._get_historical_prices(symbol, 
+                    datetime.now() - timedelta(days=7), 
+                    datetime.now()
+                ))
+                near_support = current_price < (recent_low * 1.05)
+                
+                # Volume should confirm downtrend
+                volume_confirming = volume_data['volume_ratio'] > 1.2
+                
+                return not near_support and volume_confirming
+                
+        except Exception as e:
+            logging.error(f"Error in trade decision: {str(e)}")
             return False
 
     def get_position_info(self, symbol: Optional[str] = None) -> Dict[str, Any]:
@@ -744,27 +826,40 @@ class TradingBot:
             return False
 
     def _check_risk_management(self, symbol: str) -> None:
-        """Check if any positions need to be closed based on risk management"""
+        """Enhanced risk management with trailing stops"""
         try:
             position = self.positions.get(symbol)
             if not position:
                 return
-
+            
             current_price = float(self.client.get_product(f"{symbol}-USD").price)
             profit_info = position.calculate_profit(current_price)
             
-            # Check stop loss
-            if profit_info['profit_percentage'] <= -self.stop_loss_percentage:
+            # Update trailing stop as profit increases
+            if profit_info['profit_percentage'] > 5:  # Above 5% profit
+                # Move stop loss to break even
+                adjusted_stop = max(
+                    position.entry_price,  # Don't go below entry price
+                    current_price * (1 - self.stop_loss_percentage/200)  # Tighter stop
+                )
+            else:
+                adjusted_stop = position.entry_price * (1 - self.stop_loss_percentage/100)
+            
+            # Check stops
+            if current_price <= adjusted_stop:
                 logging.info(f"Stop loss triggered for {symbol} at {profit_info['profit_percentage']}%")
                 self._place_sell_order(symbol)
             
-            # Check take profit
+            # Take partial profits at targets
             elif profit_info['profit_percentage'] >= self.take_profit_percentage:
-                logging.info(f"Take profit triggered for {symbol} at {profit_info['profit_percentage']}%")
+                # Sell half the position
+                original_quantity = position.quantity
+                self.trade_amount = (original_quantity * current_price) / 2
+                logging.info(f"Taking partial profits for {symbol} at {profit_info['profit_percentage']}%")
                 self._place_sell_order(symbol)
             
         except Exception as e:
-            logging.error(f"Error in risk management for {symbol}: {str(e)}")
+            logging.error(f"Error in risk management: {str(e)}")
 
     def analyze_market_sentiment(self, symbol: str) -> Dict[str, Any]:
         """Analyze overall market sentiment using multiple indicators"""
