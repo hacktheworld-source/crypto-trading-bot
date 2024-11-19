@@ -10,6 +10,7 @@ from typing import Dict, Any, List, Union, Optional
 from decimal import Decimal
 from .position import Position
 import asyncio
+from functools import wraps
 
 # Set up logging
 logging.basicConfig(
@@ -17,6 +18,27 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
+
+def rate_limit(seconds: int = 1):
+    """Decorator to rate limit API calls"""
+    def decorator(func):
+        last_called = {}
+        
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            now = time.time()
+            if func.__name__ not in last_called or now - last_called[func.__name__] >= seconds:
+                result = await func(*args, **kwargs)
+                last_called[func.__name__] = now
+                return result
+            else:
+                wait_time = seconds - (now - last_called[func.__name__])
+                await asyncio.sleep(wait_time)
+                result = await func(*args, **kwargs)
+                last_called[func.__name__] = time.time()
+                return result
+        return wrapper
+    return decorator
 
 class TradingBot:
     def __init__(self):
@@ -57,6 +79,9 @@ class TradingBot:
             self.paper_portfolio_value = self.paper_balance
             
             self.discord_channel = None  # Will be set when bot starts
+            
+            self.last_api_call = 0
+            self.min_api_interval = 0.25  # Minimum 250ms between API calls
             
         except Exception as e:
             logging.error(f"Failed to initialize trading bot: {str(e)}")
@@ -252,49 +277,35 @@ class TradingBot:
             logging.error(f"Error calculating RSI for {symbol}: {str(e)}")
             raise
     
-    def _get_historical_prices(self, symbol: str, start: datetime, end: datetime) -> pd.Series:
+    async def _get_historical_prices(self, symbol: str, start: datetime, end: datetime) -> pd.Series:
         try:
             product_id = f"{symbol}-USD"
             
-            # Get current time and calculate start time
-            end_time = datetime.now()
-            start_time = end_time - timedelta(days=90)  # Get 90 days for better trend analysis
+            # Use rate-limited API call
+            candles = await self._make_api_call(
+                self.client.get_candles,
+                product_id=product_id,
+                start=int(start.timestamp()),
+                end=int(end.timestamp()),
+                granularity="ONE_DAY"
+            )
             
-            logging.info(f"Fetching candles for {symbol} from {start_time} to {end_time}")
+            # Convert response to list and check if we have data
+            candles = candles.candles if hasattr(candles, 'candles') else []
+            if not candles:
+                raise Exception(f"No candle data received for {symbol}")
             
-            try:
-                # Convert to Unix timestamps
-                start_unix = int(start_time.timestamp())
-                end_unix = int(end_time.timestamp())
-                
-                # Get daily candles
-                response = self.client.get_candles(
-                    product_id=product_id,
-                    start=start_unix,
-                    end=end_unix,
-                    granularity="ONE_DAY"  # Daily candles
-                )
-                
-                # Convert response to list and check if we have data
-                candles = response.candles if hasattr(response, 'candles') else []
-                if not candles:
-                    raise Exception(f"No candle data received for {symbol}")
-                
-                # Convert candles to pandas Series
-                prices = pd.Series(
-                    [float(candle.close) for candle in reversed(candles)],
-                    index=[datetime.fromtimestamp(float(candle.start)) for candle in reversed(candles)]
-                )
-                
-                logging.info(f"Fetched {len(candles)} candles for {symbol}")
-                return prices
+            # Convert candles to pandas Series
+            prices = pd.Series(
+                [float(candle.close) for candle in reversed(candles)],
+                index=[datetime.fromtimestamp(float(candle.start)) for candle in reversed(candles)]
+            )
+            
+            logging.info(f"Fetched {len(candles)} candles for {symbol}")
+            return prices
                     
-            except Exception as e:
-                logging.error(f"Error fetching candle batch: {str(e)}")
-                raise
-            
         except Exception as e:
-            logging.error(f"Error fetching historical prices for {symbol}: {str(e)}")
+            logging.error(f"Error fetching candle batch: {str(e)}")
             raise
             
     def _place_buy_order(self, symbol: str) -> None:
@@ -587,10 +598,10 @@ class TradingBot:
             logging.error(f"Error getting account balance: {str(e)}")
             return {'balances': {}, 'total_usd_value': 0.0}
 
-    def get_current_price(self, symbol: str) -> float:
+    async def get_current_price(self, symbol: str) -> float:
         try:
             product_id = f"{symbol}-USD"
-            product = self.client.get_product(product_id)
+            product = await self._make_api_call(self.client.get_product, product_id)
             price = float(product.price)
             logging.info(f"Current price for {symbol}: ${price}")
             return price
@@ -1278,3 +1289,27 @@ class TradingBot:
             await self.send_notification(message)
         except Exception as e:
             logging.error(f"Error sending alert: {str(e)}")
+
+    async def _make_api_call(self, func, *args, **kwargs):
+        """Make API call with rate limiting and retries"""
+        max_retries = 3
+        retry_delay = 1
+        
+        for attempt in range(max_retries):
+            try:
+                # Rate limiting
+                now = time.time()
+                time_since_last = now - self.last_api_call
+                if time_since_last < self.min_api_interval:
+                    await asyncio.sleep(self.min_api_interval - time_since_last)
+                
+                result = func(*args, **kwargs)
+                self.last_api_call = time.time()
+                return result
+                
+            except Exception as e:
+                if attempt == max_retries - 1:  # Last attempt
+                    raise
+                    
+                logging.warning(f"API call failed (attempt {attempt + 1}/{max_retries}): {str(e)}")
+                await asyncio.sleep(retry_delay * (attempt + 1))  # Exponential backoff
