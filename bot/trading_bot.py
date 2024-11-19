@@ -561,30 +561,62 @@ class TradingBot:
             return False
 
     def get_position_info(self, symbol: Optional[str] = None) -> Dict[str, Any]:
-        """Get information about current positions"""
+        """Get information about current positions and holdings"""
         try:
-            if symbol:
-                position = self.positions.get(symbol)
-                if not position:
-                    return {}
+            positions_info = {}
+            
+            # Get account balances
+            accounts_response = self.client.get_accounts()
+            if hasattr(accounts_response, 'accounts'):
+                for account in accounts_response.accounts:
+                    # Skip USD and empty balances
+                    if (account.currency == 'USD' or 
+                        not hasattr(account, 'available_balance') or 
+                        float(account.available_balance.get('value', 0)) <= 0):
+                        continue
                     
-                current_price = float(self.client.get_product(f"{symbol}-USD").price)
-                position.update_price(current_price)
-                profit_info = position.calculate_profit(current_price)
-                
-                return {
-                    'symbol': symbol,
-                    'entry_price': position.entry_price,
-                    'current_price': current_price,
-                    'quantity': position.quantity,
-                    'entry_time': position.entry_time,
-                    **profit_info
-                }
-            else:
-                return {
-                    symbol: self.get_position_info(symbol)
-                    for symbol in self.positions
-                }
+                    symbol = account.currency
+                    balance = float(account.available_balance.get('value', 0))
+                    
+                    try:
+                        # Get current price
+                        current_price = float(self.client.get_product(f"{symbol}-USD").price)
+                        
+                        # If we have a tracked position, use its data
+                        if symbol in self.positions:
+                            position = self.positions[symbol]
+                            position.update_price(current_price)
+                            profit_info = position.calculate_profit(current_price)
+                            
+                            positions_info[symbol] = {
+                                'symbol': symbol,
+                                'entry_price': position.entry_price,
+                                'current_price': current_price,
+                                'quantity': position.quantity,
+                                'entry_time': position.entry_time,
+                                'is_bot_position': True,
+                                **profit_info
+                            }
+                        else:
+                            # For holdings not tracked by bot, use current price as entry price
+                            positions_info[symbol] = {
+                                'symbol': symbol,
+                                'entry_price': current_price,  # We don't know the actual entry price
+                                'current_price': current_price,
+                                'quantity': balance,
+                                'entry_time': None,  # We don't know when it was acquired
+                                'is_bot_position': False,
+                                'profit_usd': 0,  # Can't calculate profit without entry price
+                                'profit_percentage': 0,
+                                'highest_profit_percentage': 0,
+                                'drawdown_percentage': 0
+                            }
+                    
+                    except Exception as e:
+                        logging.warning(f"Could not process position for {symbol}: {str(e)}")
+                        continue
+                    
+            return positions_info
                 
         except Exception as e:
             logging.error(f"Error getting position info: {str(e)}")

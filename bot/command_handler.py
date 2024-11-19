@@ -148,17 +148,22 @@ class CommandHandler:
     def get_positions(self):
         positions = self.trading_bot.get_position_info()
         if not positions:
-            return "No active positions"
+            return "No active positions or holdings"
             
-        response = "Active Positions:\n```"
+        response = "Current Positions and Holdings:\n```"
         for symbol, pos in positions.items():
             response += f"\n{symbol}:"
-            response += f"\n  Entry Price: ${pos['entry_price']:.2f}"
             response += f"\n  Current Price: ${pos['current_price']:.2f}"
             response += f"\n  Quantity: {pos['quantity']:.8f}"
-            response += f"\n  Profit: ${pos['profit_usd']:.2f} ({pos['profit_percentage']:+.2f}%)"
-            response += f"\n  Max Profit: {pos['highest_profit_percentage']:+.2f}%"
-            response += f"\n  Max Drawdown: {pos['drawdown_percentage']:+.2f}%"
+            response += f"\n  Total Value: ${pos['current_price'] * pos['quantity']:.2f}"
+            
+            if pos['is_bot_position']:
+                response += f"\n  Entry Price: ${pos['entry_price']:.2f}"
+                response += f"\n  Profit: ${pos['profit_usd']:.2f} ({pos['profit_percentage']:+.2f}%)"
+                response += f"\n  Max Profit: {pos['highest_profit_percentage']:+.2f}%"
+                response += f"\n  Max Drawdown: {pos['drawdown_percentage']:+.2f}%"
+            else:
+                response += "\n  (External holding)"
             response += "\n"
         response += "```"
         return response
