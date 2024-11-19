@@ -124,22 +124,22 @@ class TradingBot:
             product_id = f"{symbol}-USD"
             
             # Get current time and calculate start time (30 days ago)
-            end_time = datetime.now().astimezone()  # Get timezone-aware datetime
+            end_time = datetime.now()
             start_time = end_time - timedelta(days=30)
             
             logging.info(f"Fetching candles for {symbol} from {start_time} to {end_time}")
             
             try:
-                # Format timestamps in RFC3339 format
-                start_str = start_time.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
-                end_str = end_time.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
+                # Convert to Unix timestamps (seconds since epoch)
+                start_unix = int(start_time.timestamp())
+                end_unix = int(end_time.timestamp())
                 
                 # Get daily candles for the last 30 days
                 response = self.client.get_candles(
                     product_id=product_id,
-                    start=start_str,
-                    end=end_str,
-                    granularity="ONE_DAY"
+                    start=start_unix,
+                    end=end_unix,
+                    granularity="ONE_DAY"  # Using string enum for granularity
                 )
                 
                 # Convert response to list and check if we have data
