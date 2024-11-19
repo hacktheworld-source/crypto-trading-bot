@@ -234,3 +234,11 @@ class CommandHandler:
         response += f"\n\nAverage Hold Time: {avg_hold.days}d {avg_hold.seconds//3600}h"
         response += "```"
         return response
+        
+    def set_risk_params(self, stop_loss: float, take_profit: float, max_position: float):
+        if self.trading_bot.set_risk_parameters(stop_loss, take_profit, max_position):
+            return (f"Risk parameters updated:\n"
+                    f"Stop Loss: {stop_loss}%\n"
+                    f"Take Profit: {take_profit}%\n"
+                    f"Max Position: ${max_position}")
+        return "Failed to update risk parameters. Please check values."

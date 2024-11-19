@@ -135,6 +135,13 @@ async def get_performance(ctx):
     response = command_handler.get_performance()
     await ctx.send(response)
 
+# Command to set risk management parameters
+@bot.command(name='setrisk')
+async def set_risk(ctx, stop_loss: float, take_profit: float, max_position: float):
+    """Set risk management parameters"""
+    response = command_handler.set_risk_params(stop_loss, take_profit, max_position)
+    await ctx.send(response)
+
 # Run the bot
 keep_alive()
 bot.run(os.getenv('DISCORD_TOKEN')) 

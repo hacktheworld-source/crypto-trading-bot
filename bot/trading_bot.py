@@ -43,6 +43,9 @@ class TradingBot:
             self.trade_history: List[Dict[str, Any]] = []
             self.positions: Dict[str, Position] = {}  # Track active positions
             self.position_history: List[Dict[str, Any]] = []  # Track closed positions
+            self.stop_loss_percentage = 5.0  # Default 5% stop loss
+            self.take_profit_percentage = 10.0  # Default 10% take profit
+            self.max_position_size = 1000.0  # Maximum USD in any single position
             self.load_config()
             
         except Exception as e:
@@ -67,25 +70,19 @@ class TradingBot:
         return "Trading bot is already stopped"
         
     def _trading_loop(self):
-        consecutive_errors = 0
         while self.trading_active:
             try:
                 for coin in self.watched_coins:
                     try:
+                        # Check risk management first
+                        self._check_risk_management(coin)
+                        # Then check for new trades
                         self._check_and_trade(coin)
-                        consecutive_errors = 0
                     except Exception as e:
-                        consecutive_errors += 1
-                        logging.error(f"Error trading {coin}: {str(e)}")
-                        if consecutive_errors >= 3:
-                            self.trading_active = False
-                            logging.critical("Too many consecutive errors. Stopping trading bot.")
-                            return
+                        logging.error(f"Error processing {coin}: {str(e)}")
                 time.sleep(self.trading_interval)
             except Exception as e:
-                logging.critical(f"Critical error in trading loop: {str(e)}")
-                self.trading_active = False
-                return
+                logging.error(f"Error in trading loop: {str(e)}")
             
     def _check_and_trade(self, symbol):
         try:
@@ -732,3 +729,39 @@ class TradingBot:
         except Exception as e:
             logging.error(f"Error calculating performance stats: {str(e)}")
             return {}
+
+    def set_risk_parameters(self, stop_loss: float, take_profit: float, max_position: float) -> bool:
+        """Set risk management parameters"""
+        try:
+            if 0 < stop_loss < take_profit and max_position > 0:
+                self.stop_loss_percentage = stop_loss
+                self.take_profit_percentage = take_profit
+                self.max_position_size = max_position
+                logging.info(f"Risk parameters updated: SL={stop_loss}%, TP={take_profit}%, Max=${max_position}")
+                return True
+            return False
+        except ValueError:
+            return False
+
+    def _check_risk_management(self, symbol: str) -> None:
+        """Check if any positions need to be closed based on risk management"""
+        try:
+            position = self.positions.get(symbol)
+            if not position:
+                return
+
+            current_price = float(self.client.get_product(f"{symbol}-USD").price)
+            profit_info = position.calculate_profit(current_price)
+            
+            # Check stop loss
+            if profit_info['profit_percentage'] <= -self.stop_loss_percentage:
+                logging.info(f"Stop loss triggered for {symbol} at {profit_info['profit_percentage']}%")
+                self._place_sell_order(symbol)
+            
+            # Check take profit
+            elif profit_info['profit_percentage'] >= self.take_profit_percentage:
+                logging.info(f"Take profit triggered for {symbol} at {profit_info['profit_percentage']}%")
+                self._place_sell_order(symbol)
+            
+        except Exception as e:
+            logging.error(f"Error in risk management for {symbol}: {str(e)}")
