@@ -1,3 +1,5 @@
+from datetime import datetime
+
 class CommandHandler:
     def __init__(self, trading_bot):
         self.trading_bot = trading_bot
