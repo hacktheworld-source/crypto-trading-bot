@@ -139,7 +139,7 @@ class TradingBot:
                     product_id=product_id,
                     start=start_unix,
                     end=end_unix,
-                    granularity=86400  # 24 hours in seconds (daily candles)
+                    granularity="ONE_DAY"  # String enum for granularity
                 )
                 
                 # Convert response to list and check if we have data
