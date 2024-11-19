@@ -59,20 +59,30 @@ class CommandHandler:
         
     def get_status(self):
         bot = self.trading_bot
-        balance_info = bot.get_account_balance()
+        real_balance = bot.get_account_balance()
+        paper_balance = bot.get_paper_balance()
         
         status = "Bot Status:\n```"
         status += f"Trading Active: {bot.trading_active}\n"
+        status += f"Paper Trading: {'Active' if bot.paper_trading else 'Inactive'}\n"
         status += f"Watched Coins: {', '.join(bot.watched_coins) if bot.watched_coins else 'None'}\n"
         status += f"Trade Amount: ${bot.trade_amount}\n"
         status += f"RSI Settings: Oversold={bot.rsi_oversold}, Overbought={bot.rsi_overbought}\n"
         status += f"Check Interval: {bot.trading_interval//60} minutes\n\n"
         
-        # Add balance information
-        status += "Account Balances:\n"
-        for symbol, data in balance_info['balances'].items():
+        # Real Account Balances
+        status += "Real Account Balances:\n"
+        for symbol, data in real_balance['balances'].items():
             status += f"{symbol}: {data['balance']:.8f} (${data['usd_value']:.2f})\n"
-        status += f"\nTotal Portfolio Value: ${balance_info['total_usd_value']:.2f}\n"
+        status += f"Total Real Portfolio Value: ${real_balance['total_usd_value']:.2f}\n\n"
+        
+        # Paper Trading Balances
+        status += "Paper Trading Account:\n"
+        status += f"Paper Cash: ${paper_balance['cash_balance']:.2f}\n"
+        paper_profit = paper_balance['total_value'] - 1000.0  # Assuming $1000 starting balance
+        paper_profit_pct = (paper_profit / 1000.0) * 100
+        status += f"Paper Portfolio Value: ${paper_balance['total_value']:.2f}\n"
+        status += f"Paper P/L: ${paper_profit:+.2f} ({paper_profit_pct:+.2f}%)"
         status += "```"
         return status
         
@@ -96,30 +106,41 @@ class CommandHandler:
             )
         
     def get_help(self):
-        help_text = "Available Commands:\n```"
-        help_text += "\nTrading Commands:"
+        help_text = "Trading Bot Commands:\n```"
+        
+        help_text += "\nReal Trading Commands:"
         help_text += "\n!start         - Start the trading bot"
         help_text += "\n!stop          - Stop the trading bot"
         help_text += "\n!status        - Show bot status and portfolio value"
+        help_text += "\n!positions     - View all positions (real & paper)"
+        help_text += "\n!poshistory    - View position history"
+        help_text += "\n!performance   - View trading performance stats"
         
-        help_text += "\n\nCoin Management:"
-        help_text += "\n!addcoin BTC   - Add a coin to watchlist"
-        help_text += "\n!removecoin BTC - Remove a coin from watchlist"
-        help_text += "\n!listcoins     - Show all watched coins"
+        help_text += "\n\nPaper Trading Commands:"
+        help_text += "\n!paper start [balance] - Start paper trading with optional balance"
+        help_text += "\n!paper balance         - Show paper trading balance"
+        help_text += "\n!paper reset           - Reset paper trading"
+        help_text += "\n!paper stats           - Show paper trading statistics"
+        help_text += "\n!paper trades          - Show paper trade history"
+        help_text += "\n!paper positions       - Show paper positions only"
+        help_text += "\n!paper settings        - Show/modify paper settings"
         
         help_text += "\n\nAnalysis Commands:"
         help_text += "\n!price BTC     - Get current price"
         help_text += "\n!rsi BTC       - Get current RSI"
         help_text += "\n!ma BTC        - Get Moving Average analysis"
         help_text += "\n!volume BTC    - Get volume analysis"
+        help_text += "\n!sentiment BTC - Get market sentiment analysis"
         
-        help_text += "\n\nPosition Management:"
-        help_text += "\n!positions     - View current positions and holdings"
-        help_text += "\n!poshistory    - View position history"
-        help_text += "\n!performance   - View trading performance stats"
+        help_text += "\n\nCoin Management:"
+        help_text += "\n!addcoin BTC   - Add a coin to watchlist"
+        help_text += "\n!removecoin BTC - Remove a coin from watchlist"
+        help_text += "\n!listcoins     - Show all watched coins"
         
         help_text += "\n\nRisk Management:"
-        help_text += "\n!setrisk 5 10 1000 - Set Stop Loss %, Take Profit %, Max Position $"
+        help_text += "\n!setrisk <stop_loss> <take_profit> <max_position>"
+        help_text += "\n  Example: !setrisk 5 10 1000"
+        help_text += "\n  Sets: 5% stop loss, 10% take profit, $1000 max position"
         
         help_text += "\n\nConfiguration:"
         help_text += "\n!setamount 100 - Set trade amount in USD"
@@ -326,5 +347,83 @@ class CommandHandler:
         profit_percentage = (profit / 1000.0) * 100
         
         response += f"Total P/L: ${profit:+.2f} ({profit_percentage:+.2f}%)"
+        response += "```"
+        return response
+        
+    def reset_paper_trading(self, initial_balance: float = 1000.0):
+        """Reset paper trading with new balance"""
+        self.trading_bot.reset_paper_trading(initial_balance)
+        return f"Paper trading reset with ${initial_balance:.2f} balance"
+        
+    def get_paper_stats(self):
+        """Get detailed paper trading statistics"""
+        paper_balance = self.trading_bot.get_paper_balance()
+        paper_trades = self.trading_bot.paper_trade_history
+        
+        if not paper_trades:
+            return "No paper trading history available"
+        
+        # Calculate statistics
+        total_trades = len(paper_trades)
+        winning_trades = len([t for t in paper_trades if t.get('profit', 0) > 0])
+        total_profit = sum(t.get('profit', 0) for t in paper_trades)
+        total_fees = sum(t.get('fees', 0) for t in paper_trades)
+        
+        response = "Paper Trading Statistics:\n```"
+        response += f"Total Trades: {total_trades}\n"
+        response += f"Winning Trades: {winning_trades}\n"
+        response += f"Win Rate: {(winning_trades/total_trades*100):.1f}%\n"
+        response += f"Total Profit: ${total_profit:,.2f}\n"
+        response += f"Total Fees Paid: ${total_fees:.2f}\n"
+        response += f"Current Balance: ${paper_balance['cash_balance']:,.2f}\n"
+        response += f"Portfolio Value: ${paper_balance['total_value']:,.2f}\n"
+        
+        # Calculate return on initial investment
+        roi = ((paper_balance['total_value'] - 1000.0) / 1000.0) * 100
+        response += f"Total Return: {roi:+.2f}%"
+        response += "```"
+        return response
+        
+    def get_paper_trades(self):
+        """Show paper trading history"""
+        trades = self.trading_bot.paper_trade_history
+        if not trades:
+            return "No paper trades yet"
+        
+        response = "Paper Trading History:\n```"
+        # Show last 10 trades
+        for trade in trades[-10:]:
+            response += f"\n{trade['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}"
+            response += f"\n{trade['action']} {trade['symbol']}"
+            response += f"\nPrice: ${trade['price']:,.2f}"
+            response += f"\nQuantity: {trade['quantity']:.8f}"
+            response += f"\nTotal: ${trade['amount_usd']:,.2f}"
+            response += f"\nFees: ${trade['fees']:.2f}"
+            if 'profit' in trade:
+                response += f"\nProfit: ${trade['profit']:+,.2f} ({trade['profit_percentage']:+.2f}%)"
+            response += "\n"
+        response += "```"
+        return response
+        
+    def get_paper_positions(self):
+        """Show current paper positions only"""
+        positions = self.trading_bot.paper_positions
+        if not positions:
+            return "No active paper positions"
+        
+        response = "Paper Trading Positions:\n```"
+        for symbol, pos in positions.items():
+            current_price = float(self.trading_bot.client.get_product(f"{symbol}-USD").price)
+            profit_info = pos.calculate_profit(current_price)
+            
+            response += f"\n{symbol}:"
+            response += f"\n  Current Price: ${current_price:,.2f}"
+            response += f"\n  Entry Price: ${pos.entry_price:,.2f}"
+            response += f"\n  Quantity: {pos.quantity:.8f}"
+            response += f"\n  Position Value: ${(current_price * pos.quantity):,.2f}"
+            response += f"\n  Unrealized P/L: ${profit_info['profit_usd']:+,.2f} ({profit_info['profit_percentage']:+.2f}%)"
+            response += f"\n  Fees Paid: ${profit_info['fees_paid']:.2f}"
+            response += f"\n  Holding Time: {datetime.now() - pos.entry_time}"
+            response += "\n"
         response += "```"
         return response

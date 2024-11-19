@@ -170,13 +170,32 @@ async def get_sentiment(ctx, symbol: str):
 @bot.command(name='paper')
 async def paper_trading(ctx, action: str, *args):
     """Paper trading commands"""
-    if action.lower() == 'start':
+    action = action.lower()
+    
+    if action == 'start':
         initial_balance = float(args[0]) if args else 1000.0
         response = command_handler.start_paper_trading(initial_balance)
-    elif action.lower() == 'balance':
+    elif action == 'balance':
         response = command_handler.get_paper_balance()
+    elif action == 'reset':
+        initial_balance = float(args[0]) if args else 1000.0
+        response = command_handler.reset_paper_trading(initial_balance)
+    elif action == 'stats':
+        response = command_handler.get_paper_stats()
+    elif action == 'trades':
+        response = command_handler.get_paper_trades()
+    elif action == 'positions':
+        response = command_handler.get_paper_positions()
     else:
-        response = "Invalid paper trading command. Use 'start' or 'balance'"
+        response = (
+            "Invalid paper trading command. Available commands:\n"
+            "!paper start [amount] - Start paper trading with optional initial balance\n"
+            "!paper balance        - Show current paper trading balance\n"
+            "!paper reset [amount] - Reset paper trading with optional new balance\n"
+            "!paper stats          - Show detailed paper trading statistics\n"
+            "!paper trades         - Show paper trading history\n"
+            "!paper positions      - Show current paper positions"
+        )
     
     await ctx.send(response)
 
