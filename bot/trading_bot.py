@@ -85,14 +85,20 @@ class TradingBot:
         
     async def _trading_loop(self):
         """Trading loop that runs for both real and paper trading"""
-        while self.trading_active:  # This will run for both real and paper trading now
+        logging.info("Trading loop started")
+        
+        while self.trading_active or self.paper_trading:
             try:
+                logging.info(f"Trading loop iteration - Active: {self.trading_active}, Paper: {self.paper_trading}")
+                
                 # Send interval update for all watched coins
                 if self.watched_coins:
+                    logging.info(f"Processing {len(self.watched_coins)} watched coins")
                     message = "🔄 Trading Analysis Update\n\n"
                     
                     for symbol in self.watched_coins:
                         try:
+                            logging.info(f"Analyzing {symbol}")
                             # Get all analysis
                             current_price = float(self.client.get_product(f"{symbol}-USD").price)
                             rsi = self.calculate_rsi(symbol)
@@ -100,7 +106,7 @@ class TradingBot:
                             ma_data = self.calculate_moving_averages(symbol)
                             sentiment = self.analyze_market_sentiment(symbol)
                             
-                            # Determine action based on analysis
+                            # Determine actions for both real and paper trading
                             action = "HOLD"
                             reason = []
                             
@@ -108,9 +114,11 @@ class TradingBot:
                             if rsi <= self.rsi_oversold:
                                 action = "BUY"
                                 reason.append(f"RSI oversold ({rsi:.2f})")
+                                logging.info(f"{symbol} - BUY signal detected")
                             elif rsi >= self.rsi_overbought:
                                 action = "SELL"
                                 reason.append(f"RSI overbought ({rsi:.2f})")
+                                logging.info(f"{symbol} - SELL signal detected")
                             
                             # Add analysis to message
                             message += f"📊 {symbol} Analysis:\n"
@@ -125,24 +133,36 @@ class TradingBot:
                             message += "\n"
                             
                             # Execute paper trades if conditions are met
-                            if self.paper_trading:
+                            if self.paper_trading and action != "HOLD":
+                                logging.info(f"Attempting paper trade - {action} {symbol}")
                                 if action == "BUY" and self._should_trade(symbol, 'BUY'):
                                     await self._simulate_buy_order(symbol)
                                 elif action == "SELL" and self._should_trade(symbol, 'SELL'):
                                     await self._simulate_sell_order(symbol)
                         
                         except Exception as e:
-                            message += f"❌ Error analyzing {symbol}: {str(e)}\n\n"
+                            error_msg = f"Error analyzing {symbol}: {str(e)}"
+                            logging.error(error_msg)
+                            message += f"❌ {error_msg}\n\n"
                     
                     # Send the update
-                    await self.send_notification(message, is_update=True)
+                    logging.info("Attempting to send interval update notification")
+                    try:
+                        await self.send_notification(message, is_update=True)
+                        logging.info("Successfully sent interval update")
+                    except Exception as e:
+                        logging.error(f"Failed to send notification: {str(e)}")
+                else:
+                    logging.warning("No coins in watchlist")
                 
                 # Wait for next interval
+                logging.info(f"Waiting {self.trading_interval} seconds until next update")
                 await asyncio.sleep(self.trading_interval)
                 
             except Exception as e:
-                logging.error(f"Error in trading loop: {str(e)}")
-                await asyncio.sleep(60)  # Wait a minute before retrying if there's an error
+                logging.error(f"Critical error in trading loop: {str(e)}")
+                # Wait a minute before retrying if there's an error
+                await asyncio.sleep(60)
     
     def _check_and_trade(self, symbol):
         try:
