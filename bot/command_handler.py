@@ -2,15 +2,27 @@ class CommandHandler:
     def __init__(self, trading_bot):
         self.trading_bot = trading_bot
         
-    def add_coin(self, symbol):
-        if self.trading_bot.add_coin(symbol):
-            return f"Successfully added {symbol} to watchlist"
-        return f"Failed to add {symbol} to watchlist"
+    def add_coin(self, *symbols):
+        """Add multiple coins to watchlist"""
+        results = []
+        for symbol in symbols:
+            if self.trading_bot.add_coin(symbol):
+                results.append(f"✅ Added {symbol}")
+            else:
+                results.append(f"❌ Failed to add {symbol}")
         
-    def remove_coin(self, symbol):
-        if self.trading_bot.remove_coin(symbol):
-            return f"Successfully removed {symbol} from watchlist"
-        return f"Failed to remove {symbol} from watchlist"
+        return "\n".join(results)
+        
+    def remove_coin(self, *symbols):
+        """Remove multiple coins from watchlist"""
+        results = []
+        for symbol in symbols:
+            if self.trading_bot.remove_coin(symbol):
+                results.append(f"✅ Removed {symbol}")
+            else:
+                results.append(f"❌ {symbol} not in watchlist")
+        
+        return "\n".join(results)
         
     def list_coins(self):
         coins = list(self.trading_bot.watched_coins)
@@ -63,26 +75,59 @@ class CommandHandler:
         paper_balance = bot.get_paper_balance()
         
         status = "Bot Status:\n```"
-        status += f"Trading Active: {bot.trading_active}\n"
-        status += f"Paper Trading: {'Active' if bot.paper_trading else 'Inactive'}\n"
-        status += f"Watched Coins: {', '.join(bot.watched_coins) if bot.watched_coins else 'None'}\n"
-        status += f"Trade Amount: ${bot.trade_amount}\n"
-        status += f"RSI Settings: Oversold={bot.rsi_oversold}, Overbought={bot.rsi_overbought}\n"
-        status += f"Check Interval: {bot.trading_interval//60} minutes\n\n"
+        
+        # Trading Status
+        status += "\n📊 Trading Status:"
+        status += f"\n  Trading Active: {'✅' if bot.trading_active else '❌'}"
+        status += f"\n  Paper Trading: {'✅' if bot.paper_trading else '❌'}"
+        status += f"\n  Check Interval: {bot.trading_interval//60} minutes"
+        
+        # Trading Configuration
+        status += "\n\n⚙️ Configuration:"
+        status += f"\n  Trade Amount: ${bot.trade_amount:.2f}"
+        status += f"\n  Stop Loss: {bot.stop_loss_percentage}%"
+        status += f"\n  Take Profit: {bot.take_profit_percentage}%"
+        status += f"\n  Max Position Size: ${bot.max_position_size:.2f}"
+        
+        # Technical Indicators
+        status += "\n\n📈 Technical Indicators:"
+        status += f"\n  RSI Period: {bot.rsi_period} days"
+        status += f"\n  RSI Thresholds: {bot.rsi_oversold} (oversold) / {bot.rsi_overbought} (overbought)"
+        
+        # Watched Coins
+        status += "\n\n🔍 Watched Coins:"
+        if bot.watched_coins:
+            for coin in sorted(bot.watched_coins):
+                try:
+                    current_price = bot.get_current_price(coin)
+                    rsi = bot.calculate_rsi(coin)
+                    status += f"\n  {coin}: ${current_price:,.2f} (RSI: {rsi:.1f})"
+                except:
+                    status += f"\n  {coin}: Error fetching data"
+        else:
+            status += "\n  None"
         
         # Real Account Balances
-        status += "Real Account Balances:\n"
+        status += "\n\n💰 Real Account Balances:"
         for symbol, data in real_balance['balances'].items():
-            status += f"{symbol}: {data['balance']:.8f} (${data['usd_value']:.2f})\n"
-        status += f"Total Real Portfolio Value: ${real_balance['total_usd_value']:.2f}\n\n"
+            status += f"\n  {symbol}: {data['balance']:.8f} (${data['usd_value']:.2f})"
+        status += f"\n  Total Real Portfolio Value: ${real_balance['total_usd_value']:.2f}"
         
-        # Paper Trading Balances
-        status += "Paper Trading Account:\n"
-        status += f"Paper Cash: ${paper_balance['cash_balance']:.2f}\n"
-        paper_profit = paper_balance['total_value'] - 1000.0  # Assuming $1000 starting balance
+        # Paper Trading Account
+        status += "\n\n📝 Paper Trading Account:"
+        status += f"\n  Paper Cash: ${paper_balance['cash_balance']:.2f}"
+        paper_profit = paper_balance['total_value'] - 1000.0
         paper_profit_pct = (paper_profit / 1000.0) * 100
-        status += f"Paper Portfolio Value: ${paper_balance['total_value']:.2f}\n"
-        status += f"Paper P/L: ${paper_profit:+.2f} ({paper_profit_pct:+.2f}%)"
+        status += f"\n  Paper Portfolio Value: ${paper_balance['total_value']:.2f}"
+        status += f"\n  Paper P/L: ${paper_profit:+.2f} ({paper_profit_pct:+.2f}%)"
+        
+        # Trading History Summary
+        status += "\n\n📜 Trading History:"
+        status += f"\n  Total Real Trades: {len(bot.trade_history)}"
+        status += f"\n  Total Paper Trades: {len(bot.paper_trade_history)}"
+        status += f"\n  Active Real Positions: {len(bot.positions)}"
+        status += f"\n  Active Paper Positions: {len(bot.paper_positions)}"
+        
         status += "```"
         return status
         

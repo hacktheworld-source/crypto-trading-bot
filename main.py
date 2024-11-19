@@ -34,14 +34,16 @@ async def on_ready():
 
 # Command to add a coin to watchlist
 @bot.command(name='addcoin')
-async def add_coin(ctx, symbol: str):
-    response = command_handler.add_coin(symbol.upper())
+async def add_coin(ctx, *symbols: str):
+    """Add one or more coins to watchlist"""
+    response = command_handler.add_coin(*[s.upper() for s in symbols])
     await ctx.send(response)
 
 # Command to remove a coin from watchlist
 @bot.command(name='removecoin')
-async def remove_coin(ctx, symbol: str):
-    response = command_handler.remove_coin(symbol.upper())
+async def remove_coin(ctx, *symbols: str):
+    """Remove one or more coins from watchlist"""
+    response = command_handler.remove_coin(*[s.upper() for s in symbols])
     await ctx.send(response)
 
 # Command to list all watched coins
