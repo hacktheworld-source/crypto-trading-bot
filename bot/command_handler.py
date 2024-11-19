@@ -106,15 +106,27 @@ class CommandHandler:
         help_text += "\n!addcoin BTC   - Add a coin to watchlist"
         help_text += "\n!removecoin BTC - Remove a coin from watchlist"
         help_text += "\n!listcoins     - Show all watched coins"
-        help_text += "\n!rsi BTC       - Get current RSI for a coin"
+        
+        help_text += "\n\nAnalysis Commands:"
+        help_text += "\n!price BTC     - Get current price"
+        help_text += "\n!rsi BTC       - Get current RSI"
+        help_text += "\n!ma BTC        - Get Moving Average analysis"
+        help_text += "\n!volume BTC    - Get volume analysis"
+        
+        help_text += "\n\nPosition Management:"
+        help_text += "\n!positions     - View current positions and holdings"
+        help_text += "\n!poshistory    - View position history"
+        help_text += "\n!performance   - View trading performance stats"
+        
+        help_text += "\n\nRisk Management:"
+        help_text += "\n!setrisk 5 10 1000 - Set Stop Loss %, Take Profit %, Max Position $"
         
         help_text += "\n\nConfiguration:"
         help_text += "\n!setamount 100 - Set trade amount in USD"
         help_text += "\n!setrsi 30 70  - Set RSI thresholds (oversold overbought)"
         help_text += "\n!setinterval 5 - Set check interval in minutes"
         
-        help_text += "\n\nInformation:"
-        help_text += "\n!history       - View last 10 trades"
+        help_text += "\n\nSystem Commands:"
         help_text += "\n!testapi       - Test Coinbase API connection"
         help_text += "\n!ping          - Test if bot is responsive"
         help_text += "\n!commands      - Show this help message"
@@ -242,3 +254,34 @@ class CommandHandler:
                     f"Take Profit: {take_profit}%\n"
                     f"Max Position: ${max_position}")
         return "Failed to update risk parameters. Please check values."
+        
+    def get_sentiment_analysis(self, symbol):
+        try:
+            analysis = self.trading_bot.analyze_market_sentiment(symbol)
+            
+            response = f"Market Sentiment Analysis for {symbol}:\n```"
+            response += f"Overall Sentiment: {analysis['overall_sentiment']}\n"
+            response += f"Sentiment Score: {analysis['sentiment_score']:.1f}\n\n"
+            
+            response += "Price Changes:\n"
+            response += f"  7-Day:  {analysis['price_changes']['short_term']:+.2f}%\n"
+            response += f"  30-Day: {analysis['price_changes']['medium_term']:+.2f}%\n"
+            response += f"  90-Day: {analysis['price_changes']['long_term']:+.2f}%\n\n"
+            
+            response += "Momentum:\n"
+            response += f"  Short-term:  {analysis['momentum']['short_term'].title()}\n"
+            response += f"  Medium-term: {analysis['momentum']['medium_term'].title()}\n"
+            response += f"  Long-term:   {analysis['momentum']['long_term'].title()}\n\n"
+            
+            response += f"Trend Strength: {analysis['trend_strength']:+d}\n"
+            response += f"Volume Trend: {analysis['volume_trend'].title()}\n\n"
+            
+            response += "Technical Indicators:\n"
+            response += f"  MA Trend: {analysis['technical_indicators']['ma_trend']}\n"
+            response += f"  RSI: {analysis['technical_indicators']['rsi']:.2f}\n"
+            response += f"  Volume Ratio: {analysis['technical_indicators']['volume_ratio']:.2f}x average"
+            response += "```"
+            return response
+            
+        except Exception as e:
+            return f"Error analyzing market sentiment for {symbol}: {str(e)}"

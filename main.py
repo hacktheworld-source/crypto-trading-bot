@@ -142,6 +142,13 @@ async def set_risk(ctx, stop_loss: float, take_profit: float, max_position: floa
     response = command_handler.set_risk_params(stop_loss, take_profit, max_position)
     await ctx.send(response)
 
+# Command to get market sentiment analysis for a coin
+@bot.command(name='sentiment')
+async def get_sentiment(ctx, symbol: str):
+    """Get market sentiment analysis for a coin"""
+    response = command_handler.get_sentiment_analysis(symbol.upper())
+    await ctx.send(response)
+
 # Run the bot
 keep_alive()
 bot.run(os.getenv('DISCORD_TOKEN')) 

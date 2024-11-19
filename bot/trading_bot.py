@@ -765,3 +765,84 @@ class TradingBot:
             
         except Exception as e:
             logging.error(f"Error in risk management for {symbol}: {str(e)}")
+
+    def analyze_market_sentiment(self, symbol: str) -> Dict[str, Any]:
+        """Analyze overall market sentiment using multiple indicators"""
+        try:
+            # Get data for different timeframes
+            end = datetime.now()
+            start_long = end - timedelta(days=90)   # 90 days for long-term
+            start_medium = end - timedelta(days=30)  # 30 days for medium-term
+            start_short = end - timedelta(days=7)    # 7 days for short-term
+            
+            # Get price data for different timeframes
+            prices_long = self._get_historical_prices(symbol, start_long, end)
+            prices_medium = prices_long[prices_long.index >= start_medium]
+            prices_short = prices_long[prices_long.index >= start_short]
+            
+            # Calculate price changes
+            price_change_long = ((prices_long.iloc[-1] - prices_long.iloc[0]) / prices_long.iloc[0]) * 100
+            price_change_medium = ((prices_medium.iloc[-1] - prices_medium.iloc[0]) / prices_medium.iloc[0]) * 100
+            price_change_short = ((prices_short.iloc[-1] - prices_short.iloc[0]) / prices_short.iloc[0]) * 100
+            
+            # Get technical indicators
+            ma_data = self.calculate_moving_averages(symbol)
+            volume_data = self.analyze_volume(symbol)
+            rsi = self.calculate_rsi(symbol)
+            
+            # Determine momentum
+            momentum_signals = {
+                'short_term': 'bullish' if price_change_short > 0 else 'bearish',
+                'medium_term': 'bullish' if price_change_medium > 0 else 'bearish',
+                'long_term': 'bullish' if price_change_long > 0 else 'bearish'
+            }
+            
+            # Calculate strength of trend
+            trend_strength = sum([
+                1 if momentum_signals['short_term'] == 'bullish' else -1,
+                1 if momentum_signals['medium_term'] == 'bullish' else -1,
+                1 if momentum_signals['long_term'] == 'bullish' else -1
+            ])
+            
+            # Analyze volume trend
+            volume_trend = 'bullish' if volume_data['volume_ratio'] > 1.0 else 'bearish'
+            
+            # Combine all signals
+            bullish_signals = sum([
+                1 if ma_data['trend'] in ['Strong Uptrend', 'Weak Uptrend'] else 0,
+                1 if volume_trend == 'bullish' else 0,
+                1 if rsi < 50 else 0,  # RSI below 50 suggests room for growth
+                1 if trend_strength > 0 else 0
+            ])
+            
+            # Calculate overall sentiment score (-100 to 100)
+            sentiment_score = (bullish_signals / 4) * 100 - 50
+            
+            analysis = {
+                'sentiment_score': sentiment_score,
+                'overall_sentiment': 'Strong Buy' if sentiment_score > 75 else
+                                   'Buy' if sentiment_score > 25 else
+                                   'Neutral' if sentiment_score > -25 else
+                                   'Sell' if sentiment_score > -75 else
+                                   'Strong Sell',
+                'price_changes': {
+                    'short_term': price_change_short,
+                    'medium_term': price_change_medium,
+                    'long_term': price_change_long
+                },
+                'momentum': momentum_signals,
+                'trend_strength': trend_strength,
+                'volume_trend': volume_trend,
+                'technical_indicators': {
+                    'ma_trend': ma_data['trend'],
+                    'rsi': rsi,
+                    'volume_ratio': volume_data['volume_ratio']
+                }
+            }
+            
+            logging.info(f"Market sentiment analysis for {symbol}: {analysis}")
+            return analysis
+            
+        except Exception as e:
+            logging.error(f"Error analyzing market sentiment for {symbol}: {str(e)}")
+            raise
