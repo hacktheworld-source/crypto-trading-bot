@@ -375,22 +375,37 @@ class TradingBot:
             balances = {}
             total_usd_value = 0.0
 
+            # Debug logging
+            logging.info("Raw accounts response received")
+            
             # Access accounts through the accounts attribute
             if hasattr(accounts_response, 'accounts'):
                 for account in accounts_response.accounts:
-                    if hasattr(account, 'available_balance') and float(account.available_balance.value) > 0:
+                    # Debug log each account
+                    logging.info(f"Processing account: {account.__dict__}")
+                    
+                    # Check for balance in both available_balance and hold
+                    balance_value = 0.0
+                    if hasattr(account, 'available_balance'):
+                        balance_value = float(account.available_balance.value)
+                    elif hasattr(account, 'balance'):
+                        balance_value = float(account.balance)
+                    
+                    if balance_value > 0:
                         symbol = account.currency
-                        balance = float(account.available_balance.value)
+                        balance = balance_value
                         
                         if symbol == 'USD':
                             usd_value = balance
+                            logging.info(f"Found USD balance: ${usd_value}")
                         else:
                             try:
                                 product = self.client.get_product(f"{symbol}-USD")
                                 price = float(product.price)
                                 usd_value = balance * price
-                            except Exception:
-                                logging.warning(f"Could not get price for {symbol}, skipping...")
+                                logging.info(f"Calculated {symbol} value: ${usd_value}")
+                            except Exception as e:
+                                logging.warning(f"Could not get price for {symbol}: {str(e)}")
                                 continue
                         
                         if usd_value > 0:
