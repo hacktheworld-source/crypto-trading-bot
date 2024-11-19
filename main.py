@@ -111,6 +111,18 @@ async def get_volume(ctx, symbol: str):
     response = command_handler.get_volume_analysis(symbol.upper())
     await ctx.send(response)
 
+# Command to get positions
+@bot.command(name='positions')
+async def get_positions(ctx):
+    response = command_handler.get_positions()
+    await ctx.send(response)
+
+# Command to get position history
+@bot.command(name='poshistory')
+async def get_position_history(ctx):
+    response = command_handler.get_position_history()
+    await ctx.send(response)
+
 # Run the bot
 keep_alive()
 bot.run(os.getenv('DISCORD_TOKEN')) 

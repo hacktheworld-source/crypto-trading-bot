@@ -144,3 +144,37 @@ class CommandHandler:
             
         except Exception as e:
             return f"Error analyzing volume for {symbol}: {str(e)}"
+        
+    def get_positions(self):
+        positions = self.trading_bot.get_position_info()
+        if not positions:
+            return "No active positions"
+            
+        response = "Active Positions:\n```"
+        for symbol, pos in positions.items():
+            response += f"\n{symbol}:"
+            response += f"\n  Entry Price: ${pos['entry_price']:.2f}"
+            response += f"\n  Current Price: ${pos['current_price']:.2f}"
+            response += f"\n  Quantity: {pos['quantity']:.8f}"
+            response += f"\n  Profit: ${pos['profit_usd']:.2f} ({pos['profit_percentage']:+.2f}%)"
+            response += f"\n  Max Profit: {pos['highest_profit_percentage']:+.2f}%"
+            response += f"\n  Max Drawdown: {pos['drawdown_percentage']:+.2f}%"
+            response += "\n"
+        response += "```"
+        return response
+        
+    def get_position_history(self):
+        history = self.trading_bot.position_history
+        if not history:
+            return "No position history available"
+            
+        response = "Position History:\n```"
+        for pos in history[-5:]:  # Show last 5 closed positions
+            response += f"\n{pos['symbol']}:"
+            response += f"\n  Entry: ${pos['entry_price']:.2f}"
+            response += f"\n  Exit: ${pos['exit_price']:.2f}"
+            response += f"\n  Profit: ${pos['profit_usd']:.2f} ({pos['profit_percentage']:+.2f}%)"
+            response += f"\n  Duration: {pos['exit_time'] - pos['entry_time']}"
+            response += "\n"
+        response += "```"
+        return response

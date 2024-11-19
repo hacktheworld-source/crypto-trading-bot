@@ -6,8 +6,9 @@ import pandas as pd
 from datetime import datetime, timedelta
 import json
 from coinbase.rest import RESTClient
-from typing import Dict, Any, List, Union
+from typing import Dict, Any, List, Union, Optional
 from decimal import Decimal
+from .position import Position
 
 # Set up logging
 logging.basicConfig(
@@ -40,6 +41,8 @@ class TradingBot:
             self.trading_active: bool = False
             self.trade_amount: float = 100.0
             self.trade_history: List[Dict[str, Any]] = []
+            self.positions: Dict[str, Position] = {}  # Track active positions
+            self.position_history: List[Dict[str, Any]] = []  # Track closed positions
             self.load_config()
             
         except Exception as e:
@@ -190,6 +193,8 @@ class TradingBot:
     def _place_buy_order(self, symbol: str) -> None:
         try:
             product_id = f"{symbol}-USD"
+            current_price = float(self.client.get_product(product_id).price)
+            quantity = self.trade_amount / current_price
             
             self.client.create_order(
                 product_id=product_id,
@@ -200,6 +205,14 @@ class TradingBot:
                     }
                 },
                 client_order_id=str(int(time.time()))
+            )
+            
+            # Create new position
+            self.positions[symbol] = Position(
+                symbol=symbol,
+                entry_price=current_price,
+                quantity=quantity,
+                entry_time=datetime.now()
             )
             
             self.trade_history.append({
@@ -216,15 +229,15 @@ class TradingBot:
             
     def _place_sell_order(self, symbol: str) -> None:
         try:
-            product_id = f"{symbol}-USD"
-            
-            accounts_response = self.client.get_accounts()
-            accounts_list = list(accounts_response)
-            account = next((acc for acc in accounts_list if acc.currency == symbol), None)
-            
-            if not account:
-                raise Exception(f"No account found for {symbol}")
+            # Get current position
+            position = self.positions.get(symbol)
+            if not position:
+                logging.warning(f"No position found for {symbol}, cannot sell")
+                return
                 
+            product_id = f"{symbol}-USD"
+            current_price = float(self.client.get_product(product_id).price)
+            
             self.client.create_order(
                 product_id=product_id,
                 side='SELL',
@@ -235,6 +248,26 @@ class TradingBot:
                 },
                 client_order_id=str(int(time.time()))
             )
+            
+            # Calculate final profit
+            profit_info = position.calculate_profit(current_price)
+            
+            # Add to position history
+            self.position_history.append({
+                'symbol': symbol,
+                'entry_price': position.entry_price,
+                'exit_price': current_price,
+                'quantity': position.quantity,
+                'entry_time': position.entry_time,
+                'exit_time': datetime.now(),
+                'profit_usd': profit_info['profit_usd'],
+                'profit_percentage': profit_info['profit_percentage'],
+                'max_profit_percentage': profit_info['highest_profit_percentage'],
+                'max_drawdown': profit_info['drawdown_percentage']
+            })
+            
+            # Remove the position
+            del self.positions[symbol]
             
             self.trade_history.append({
                 'timestamp': datetime.now(),
@@ -526,3 +559,33 @@ class TradingBot:
         except Exception as e:
             logging.error(f"Error in trade decision for {symbol}: {str(e)}")
             return False
+
+    def get_position_info(self, symbol: Optional[str] = None) -> Dict[str, Any]:
+        """Get information about current positions"""
+        try:
+            if symbol:
+                position = self.positions.get(symbol)
+                if not position:
+                    return {}
+                    
+                current_price = float(self.client.get_product(f"{symbol}-USD").price)
+                position.update_price(current_price)
+                profit_info = position.calculate_profit(current_price)
+                
+                return {
+                    'symbol': symbol,
+                    'entry_price': position.entry_price,
+                    'current_price': current_price,
+                    'quantity': position.quantity,
+                    'entry_time': position.entry_time,
+                    **profit_info
+                }
+            else:
+                return {
+                    symbol: self.get_position_info(symbol)
+                    for symbol in self.positions
+                }
+                
+        except Exception as e:
+            logging.error(f"Error getting position info: {str(e)}")
+            return {}
