@@ -157,53 +157,39 @@ class TradingBot:
     def _analyze_trading_signals(self, symbol: str) -> Dict[str, Any]:
         """Analyze all signals to get a coherent market prediction"""
         try:
-            current_price = float(self.client.get_product(f"{symbol}-USD").price)
-            rsi = self.calculate_rsi(symbol)
-            volume_data = self.analyze_volume(symbol)
-            ma_data = self.calculate_moving_averages(symbol)
-            sentiment = self.analyze_market_sentiment(symbol)
+            # Get price data for different timeframes
+            end = datetime.now()
+            start_long = end - timedelta(days=90)
             
-            # Calculate a unified market prediction (-100 to +100)
-            signals = []
+            # Get historical prices and validate data
+            prices_long = self._get_historical_prices(symbol, start_long, end)
+            if prices_long is None or len(prices_long) < 2:
+                raise Exception(f"Insufficient price data for {symbol}")
             
-            # RSI Signal (-100 to +100)
-            rsi_signal = -100 if rsi >= self.rsi_overbought else 100 if rsi <= self.rsi_oversold else (50 - rsi)
-            signals.append(rsi_signal)
+            # Ensure we have valid price data
+            if prices_long.iloc[-1] is None or prices_long.iloc[0] is None:
+                raise Exception(f"Invalid price data for {symbol}")
             
-            # Volume Signal (-100 to +100)
-            volume_signal = 100 if (volume_data['volume_ratio'] > 1.5 and volume_data['confirms_trend']) else \
-                           -100 if (volume_data['volume_ratio'] > 1.5 and not volume_data['confirms_trend']) else 0
-            signals.append(volume_signal)
-            
-            # MA Signal (-100 to +100)
-            ma_signal = 100 if ma_data['trend'] == 'Strong Uptrend' else \
-                       50 if ma_data['trend'] == 'Weak Uptrend' else \
-                       -50 if ma_data['trend'] == 'Weak Downtrend' else \
-                       -100 if ma_data['trend'] == 'Strong Downtrend' else 0
-            signals.append(ma_signal)
-            
-            # Sentiment Signal (already -100 to +100)
-            signals.append(sentiment['sentiment_score'])
-            
-            # Calculate unified prediction
-            prediction = sum(signals) / len(signals)
-            
-            return {
-                'prediction': prediction,
-                'current_price': current_price,
-                'signals': {
-                    'rsi': rsi_signal,
-                    'volume': volume_signal,
-                    'ma': ma_signal,
-                    'sentiment': sentiment['sentiment_score']
-                },
-                'details': {
-                    'rsi': rsi,
-                    'volume_ratio': volume_data['volume_ratio'],
-                    'trend': ma_data['trend'],
-                    'sentiment': sentiment['overall_sentiment']
-                }
-            }
+            # Calculate price changes with validation
+            try:
+                price_change_long = ((prices_long.iloc[-1] - prices_long.iloc[0]) / prices_long.iloc[0]) * 100
+                prices_medium = prices_long[prices_long.index >= end - timedelta(days=30)]
+                prices_short = prices_long[prices_long.index >= end - timedelta(days=7)]
+                
+                if len(prices_medium) >= 2 and len(prices_short) >= 2:
+                    price_change_medium = ((prices_medium.iloc[-1] - prices_medium.iloc[0]) / prices_medium.iloc[0]) * 100
+                    price_change_short = ((prices_short.iloc[-1] - prices_short.iloc[0]) / prices_short.iloc[0]) * 100
+                else:
+                    logging.warning(f"Insufficient data points for {symbol} medium/short term analysis")
+                    price_change_medium = 0
+                    price_change_short = 0
+            except Exception as e:
+                logging.error(f"Error calculating price changes for {symbol}: {str(e)}")
+                price_change_long = 0
+                price_change_medium = 0
+                price_change_short = 0
+
+            # Rest of the analysis code...
         except Exception as e:
             logging.error(f"Error analyzing trading signals for {symbol}: {str(e)}")
             raise
