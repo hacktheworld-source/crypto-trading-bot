@@ -103,6 +103,7 @@ class TradingBot:
         
         while self.trading_active or self.paper_trading:
             try:
+                self._ensure_positions_watched()
                 logging.info(f"Trading loop iteration - Active: {self.trading_active}, Paper: {self.paper_trading}")
                 
                 # Send interval update for all watched coins
@@ -120,19 +121,34 @@ class TradingBot:
                             ma_data = self.calculate_moving_averages(symbol)
                             sentiment = self.analyze_market_sentiment(symbol)
                             
-                            # Determine actions for both real and paper trading
+                            # Check positions
+                            has_real_position = symbol in self.positions
+                            has_paper_position = symbol in self.paper_positions
+                            
+                            # Determine action based on analysis
                             action = "HOLD"
                             reason = []
                             
-                            # RSI conditions
-                            if rsi <= self.rsi_oversold:
-                                action = "BUY"
-                                reason.append(f"RSI oversold ({rsi:.2f})")
-                                logging.info(f"{symbol} - BUY signal detected")
-                            elif rsi >= self.rsi_overbought:
-                                action = "SELL"
-                                reason.append(f"RSI overbought ({rsi:.2f})")
-                                logging.info(f"{symbol} - SELL signal detected")
+                            # SELL conditions - check positions first
+                            if (self.trading_active and has_real_position) or (self.paper_trading and has_paper_position):
+                                if rsi >= self.rsi_overbought:
+                                    action = "SELL"
+                                    reason.append(f"RSI overbought ({rsi:.2f})")
+                                elif ma_data['trend'] == 'Strong Downtrend':
+                                    action = "SELL"
+                                    reason.append("Strong downtrend detected")
+                                elif volume_data['volume_ratio'] > 2.0 and sentiment['overall_sentiment'] == 'Bearish':
+                                    action = "SELL"
+                                    reason.append("High volume bearish movement")
+                            
+                            # BUY conditions - only if we don't have a position
+                            elif not (has_real_position or has_paper_position):
+                                if rsi <= self.rsi_oversold:
+                                    action = "BUY"
+                                    reason.append(f"RSI oversold ({rsi:.2f})")
+                                elif ma_data['trend'] == 'Strong Uptrend' and volume_data['volume_ratio'] > 1.5:
+                                    action = "BUY"
+                                    reason.append("Strong uptrend with volume confirmation")
                             
                             # Add analysis to message
                             message += f"📊 {symbol} Analysis:\n"
@@ -141,17 +157,17 @@ class TradingBot:
                             message += f"Volume: {volume_data['volume_ratio']:.2f}x average\n"
                             message += f"Trend: {ma_data['trend']}\n"
                             message += f"Sentiment: {sentiment['overall_sentiment']}\n"
+                            message += f"Position: {'Yes' if (has_real_position or has_paper_position) else 'No'}\n"
                             message += f"Decision: {action}\n"
                             if reason:
                                 message += f"Reason: {', '.join(reason)}\n"
                             message += "\n"
                             
-                            # Execute paper trades if conditions are met
+                            # Execute trades if conditions are met
                             if self.paper_trading and action != "HOLD":
-                                logging.info(f"Attempting paper trade - {action} {symbol}")
                                 if action == "BUY" and self._should_trade(symbol, 'BUY'):
                                     await self._simulate_buy_order(symbol)
-                                elif action == "SELL" and self._should_trade(symbol, 'SELL'):
+                                elif action == "SELL" and has_paper_position and self._should_trade(symbol, 'SELL'):
                                     await self._simulate_sell_order(symbol)
                         
                         except Exception as e:
@@ -410,23 +426,36 @@ class TradingBot:
     def get_trade_history(self):
         return self.trade_history
         
-    def add_coin(self, symbol):
+    def add_coin(self, symbol: str) -> bool:
+        """Add a coin to watchlist"""
         try:
-            # Verify the coin exists by attempting to get its price
-            product_id = f"{symbol}-USD"
-            self.client.get_product(product_id)
+            # Validate the symbol
+            self.client.get_product(f"{symbol}-USD")
             self.watched_coins.add(symbol)
             logging.info(f"Added {symbol} to watchlist")
             return True
         except Exception as e:
             logging.error(f"Failed to add {symbol}: {str(e)}")
             return False
+
+    def remove_coin(self, symbol: str) -> bool:
+        """Remove a coin from watchlist if not in any positions"""
+        if symbol in self.positions or symbol in self.paper_positions:
+            logging.warning(f"Cannot remove {symbol} - active position exists")
+            return False
         
-    def remove_coin(self, symbol):
         if symbol in self.watched_coins:
             self.watched_coins.remove(symbol)
+            logging.info(f"Removed {symbol} from watchlist")
             return True
-        return False 
+        return False
+
+    def _ensure_positions_watched(self):
+        """Ensure all positions are in watchlist"""
+        for symbol in self.positions.keys():
+            self.watched_coins.add(symbol)
+        for symbol in self.paper_positions.keys():
+            self.watched_coins.add(symbol)
 
     def _check_balance(self, symbol, action='BUY'):
         try:
