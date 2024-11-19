@@ -99,6 +99,12 @@ async def show_commands(ctx):
     response = command_handler.get_help()
     await ctx.send(response)
 
+# Command to get the current price of a coin
+@bot.command(name='price')
+async def get_price(ctx, symbol: str):
+    response = command_handler.get_price(symbol.upper())
+    await ctx.send(response)
+
 # Run the bot
 keep_alive()
 bot.run(os.getenv('DISCORD_TOKEN')) 

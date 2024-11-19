@@ -428,3 +428,14 @@ class TradingBot:
         except Exception as e:
             logging.error(f"Error getting account balance: {str(e)}")
             return {'balances': {}, 'total_usd_value': 0.0}
+
+    def get_current_price(self, symbol: str) -> float:
+        try:
+            product_id = f"{symbol}-USD"
+            product = self.client.get_product(product_id)
+            price = float(product.price)
+            logging.info(f"Current price for {symbol}: ${price}")
+            return price
+        except Exception as e:
+            logging.error(f"Error getting price for {symbol}: {str(e)}")
+            raise

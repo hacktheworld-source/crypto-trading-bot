@@ -120,3 +120,10 @@ class CommandHandler:
         help_text += "\n!commands      - Show this help message"
         help_text += "```"
         return help_text
+        
+    def get_price(self, symbol):
+        try:
+            price = self.trading_bot.get_current_price(symbol)
+            return f"Current {symbol} price: ${price:,.2f}"
+        except Exception as e:
+            return f"Error getting price for {symbol}: {str(e)}"
