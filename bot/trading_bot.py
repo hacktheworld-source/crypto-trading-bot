@@ -139,7 +139,7 @@ class TradingBot:
                     product_id=product_id,
                     start=start_iso,
                     end=end_iso,
-                    granularity=86400  # Using integer (86400 seconds = 1 day)
+                    granularity="ONE_DAY"  # Using string enum instead of seconds
                 )
                 
                 # Convert response to list and check if we have data
