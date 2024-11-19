@@ -84,14 +84,40 @@ async def trade_history(ctx):
 
 # Command to start the trading bot
 @bot.command(name='start')
-async def start_bot(ctx):
-    response = command_handler.start_bot()
+async def start_bot(ctx, mode: str = 'paper'):
+    """Start the trading bot in either paper or real mode"""
+    mode = mode.lower()
+    if mode not in ['paper', 'real']:
+        await ctx.send("Invalid mode. Use '!start paper' or '!start real'")
+        return
+        
+    if mode == 'real':
+        # Add confirmation for real trading
+        await ctx.send("⚠️ WARNING: You are about to start REAL trading with actual money. Type '!confirm' within 30 seconds to proceed.")
+        
+        def check(m):
+            return m.author == ctx.author and m.content.lower() == '!confirm'
+            
+        try:
+            await bot.wait_for('message', check=check, timeout=30.0)
+            response = command_handler.start_real_trading()
+        except TimeoutError:
+            response = "Real trading start cancelled due to timeout."
+    else:
+        response = command_handler.start_paper_trading()
+    
     await ctx.send(response)
 
 # Command to stop the trading bot
 @bot.command(name='stop')
-async def stop_bot(ctx):
-    response = command_handler.stop_bot()
+async def stop_bot(ctx, mode: str = 'all'):
+    """Stop the trading bot (paper, real, or all)"""
+    mode = mode.lower()
+    if mode not in ['paper', 'real', 'all']:
+        await ctx.send("Invalid mode. Use '!stop paper', '!stop real', or '!stop all'")
+        return
+    
+    response = command_handler.stop_trading(mode)
     await ctx.send(response)
 
 # Command to get the bot's current status

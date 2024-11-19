@@ -62,18 +62,32 @@ class TradingBot:
             logging.error(f"Failed to initialize trading bot: {str(e)}")
             raise Exception(f"Bot initialization failed: {str(e)}")
         
-    def start_trading_loop(self):
-        """Start the trading loop for either real or paper trading"""
-        if not self.trading_active and not self.paper_trading:
-            self.paper_trading = True  # Default to paper trading if neither is active
-            self.trading_active = True  # We need this for the loop to run
-            asyncio.create_task(self._trading_loop())  # Use asyncio instead of threading
-            logging.info("Paper trading loop started")
-            return "Paper trading bot started successfully"
-        elif self.trading_active:
-            return "Real trading bot is already running"
-        else:
-            return "Paper trading bot is already running"
+    def start_trading_loop(self, paper: bool = True):
+        """Start the trading loop in either paper or real mode"""
+        try:
+            if paper:
+                if self.trading_active:
+                    return "Real trading is already active"
+                self.paper_trading = True
+                mode = "Paper"
+            else:
+                if self.paper_trading:
+                    return "Paper trading is already active"
+                self.trading_active = True
+                mode = "Real"
+            
+            # Create and start the trading loop task
+            loop = asyncio.get_event_loop()
+            loop.create_task(self._trading_loop())
+            
+            logging.info(f"{mode} trading loop started")
+            return f"{mode} trading bot started successfully"
+            
+        except Exception as e:
+            logging.error(f"Failed to start trading loop: {str(e)}")
+            self.trading_active = False
+            self.paper_trading = False
+            return f"Error starting trading bot: {str(e)}"
         
     def stop_trading_loop(self):
         """Stop the trading loop"""

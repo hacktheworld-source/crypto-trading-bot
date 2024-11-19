@@ -63,11 +63,33 @@ class CommandHandler:
         response += "```"
         return response
         
-    def start_bot(self):
-        return self.trading_bot.start_trading_loop()
+    def start_real_trading(self):
+        """Start real money trading"""
+        if self.trading_bot.paper_trading:
+            return "❌ Cannot start real trading while paper trading is active. Stop paper trading first with '!stop paper'"
         
-    def stop_bot(self):
-        return self.trading_bot.stop_trading_loop()
+        return self.trading_bot.start_trading_loop(paper=False)
+        
+    def start_paper_trading(self, initial_balance: float = 1000.0):
+        """Start paper trading"""
+        if self.trading_bot.trading_active:
+            return "❌ Cannot start paper trading while real trading is active. Stop real trading first with '!stop real'"
+        
+        self.trading_bot.reset_paper_trading(initial_balance)
+        return self.trading_bot.start_trading_loop(paper=True)
+        
+    def stop_trading(self, mode: str = 'all'):
+        """Stop trading (paper, real, or all)"""
+        if mode == 'paper':
+            self.trading_bot.paper_trading = False
+            return "Paper trading stopped"
+        elif mode == 'real':
+            self.trading_bot.trading_active = False
+            return "Real trading stopped"
+        else:  # all
+            self.trading_bot.paper_trading = False
+            self.trading_bot.trading_active = False
+            return "All trading stopped"
         
     def get_status(self):
         bot = self.trading_bot
@@ -373,11 +395,6 @@ class CommandHandler:
             
         except Exception as e:
             return f"Error analyzing market sentiment for {symbol}: {str(e)}"
-        
-    def start_paper_trading(self, initial_balance: float = 1000.0):
-        """Start or reset paper trading with initial balance"""
-        self.trading_bot.reset_paper_trading(initial_balance)
-        return f"Paper trading started with ${initial_balance:.2f} balance"
         
     def get_paper_balance(self):
         """Get paper trading account status"""
