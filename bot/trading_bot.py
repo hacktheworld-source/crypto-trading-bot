@@ -118,25 +118,34 @@ class TradingBot:
     def _get_historical_prices(self, symbol: str, start: datetime, end: datetime) -> pd.Series:
         try:
             product_id = f"{symbol}-USD"
+            
+            # Get current time and calculate start time (30 days ago)
             end_time = datetime.now()
             start_time = end_time - timedelta(days=30)
             
             logging.info(f"Fetching candles for {symbol} from {start_time} to {end_time}")
             
             try:
+                # Convert to Unix timestamps (seconds since epoch)
+                start_unix = int(start_time.timestamp())
+                end_unix = int(end_time.timestamp())
+                
+                # Get daily candles for the last 30 days
                 response = self.client.get_candles(
                     product_id=product_id,
-                    start=int(start_time.timestamp()),
-                    end=int(end_time.timestamp()),
-                    granularity=86400
+                    start=start_unix,  # Unix timestamp
+                    end=end_unix,      # Unix timestamp
+                    granularity="ONE_DAY"  # String enum for granularity
                 )
                 
+                # Convert response to list and check if we have data
                 candles = response.candles if hasattr(response, 'candles') else []
                 if not candles:
                     raise Exception(f"No candle data received for {symbol}")
                 
+                # Convert candles to pandas Series
                 prices = pd.Series(
-                    [float(candle.close) for candle in reversed(candles)],
+                    [float(candle.close) for candle in reversed(candles)],  # Reverse to get chronological order
                     index=[datetime.fromtimestamp(float(candle.start)) for candle in reversed(candles)]
                 )
                 
