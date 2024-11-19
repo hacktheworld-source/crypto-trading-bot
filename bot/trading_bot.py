@@ -63,14 +63,17 @@ class TradingBot:
             raise Exception(f"Bot initialization failed: {str(e)}")
         
     def start_trading_loop(self):
-        if not self.trading_active:
-            self.trading_active = True
+        if not self.trading_active and not self.paper_trading:
+            self.paper_trading = True  # Default to paper trading if neither is active
             thread = threading.Thread(target=self._trading_loop)
             thread.daemon = True
             thread.start()
-            logging.info("Trading loop started")
-            return "Trading bot started successfully"
-        return "Trading bot is already running"
+            logging.info("Paper trading loop started")
+            return "Paper trading bot started successfully"
+        elif self.trading_active:
+            return "Real trading bot is already running"
+        else:
+            return "Paper trading bot is already running"
         
     def stop_trading_loop(self):
         if self.trading_active:
@@ -80,24 +83,70 @@ class TradingBot:
         return "Trading bot is already stopped"
         
     async def _trading_loop(self):
-        while self.trading_active:
+        """Trading loop that runs for both real and paper trading"""
+        while self.trading_active or self.paper_trading:
             try:
-                # Send interval update
-                await self.send_interval_update()
+                # Send interval update for all watched coins
+                if self.watched_coins:
+                    message = "🔄 Trading Analysis Update\n\n"
+                    
+                    for symbol in self.watched_coins:
+                        try:
+                            # Get all analysis
+                            current_price = float(self.client.get_product(f"{symbol}-USD").price)
+                            rsi = self.calculate_rsi(symbol)
+                            volume_data = self.analyze_volume(symbol)
+                            ma_data = self.calculate_moving_averages(symbol)
+                            sentiment = self.analyze_market_sentiment(symbol)
+                            
+                            # Determine actions for both real and paper trading
+                            real_action = "HOLD"
+                            paper_action = "HOLD"
+                            
+                            # Check buy conditions
+                            if rsi <= self.rsi_oversold and self._should_trade(symbol, 'BUY'):
+                                if self.trading_active:
+                                    real_action = "BUY"
+                                    await self._place_buy_order(symbol)
+                                if self.paper_trading:
+                                    paper_action = "BUY"
+                                    await self._simulate_buy_order(symbol)
+                                    
+                            # Check sell conditions
+                            elif rsi >= self.rsi_overbought and self._should_trade(symbol, 'SELL'):
+                                if self.trading_active:
+                                    real_action = "SELL"
+                                    await self._place_sell_order(symbol)
+                                if self.paper_trading:
+                                    paper_action = "SELL"
+                                    await self._simulate_sell_order(symbol)
+                            
+                            # Add analysis to message
+                            message += f"📊 {symbol} Analysis:\n"
+                            message += f"Price: ${current_price:,.2f}\n"
+                            message += f"RSI: {rsi:.2f}\n"
+                            message += f"Volume: {volume_data['volume_ratio']:.2f}x average\n"
+                            message += f"Trend: {ma_data['trend']}\n"
+                            message += f"Sentiment: {sentiment['overall_sentiment']}\n"
+                            if self.trading_active:
+                                message += f"Real Trading Action: {real_action}\n"
+                            if self.paper_trading:
+                                message += f"Paper Trading Action: {paper_action}\n"
+                            message += "\n"
+                            
+                        except Exception as e:
+                            message += f"❌ Error analyzing {symbol}: {str(e)}\n\n"
+                    
+                    # Send the update
+                    await self.send_notification(message, is_update=True)
                 
-                for coin in self.watched_coins:
-                    try:
-                        # Check risk management first
-                        self._check_risk_management(coin)
-                        # Then check for new trades
-                        self._check_and_trade(coin)
-                    except Exception as e:
-                        logging.error(f"Error processing {coin}: {str(e)}")
-                
+                # Wait for next interval
                 await asyncio.sleep(self.trading_interval)
+                
             except Exception as e:
                 logging.error(f"Error in trading loop: {str(e)}")
-            
+                await asyncio.sleep(60)  # Wait a minute before retrying if there's an error
+    
     def _check_and_trade(self, symbol):
         try:
             rsi = self.calculate_rsi(symbol)
