@@ -183,3 +183,24 @@ class CommandHandler:
             response += "\n"
         response += "```"
         return response
+        
+    def get_ma_analysis(self, symbol):
+        try:
+            analysis = self.trading_bot.calculate_moving_averages(symbol)
+            
+            response = f"Moving Average Analysis for {symbol}:\n```"
+            response += f"Current Price: ${analysis['current_price']:.2f}\n"
+            response += f"20-day SMA: ${analysis['sma_20']:.2f}\n"
+            response += f"50-day SMA: ${analysis['sma_50']:.2f}\n"
+            response += f"12-day EMA: ${analysis['ema_12']:.2f}\n"
+            response += f"26-day EMA: ${analysis['ema_26']:.2f}\n\n"
+            response += f"Current Trend: {analysis['trend']}\n"
+            response += f"SMA Golden Cross: {'Yes' if analysis['sma_cross_bullish'] else 'No'}\n"
+            response += f"SMA Death Cross: {'Yes' if analysis['sma_cross_bearish'] else 'No'}\n"
+            response += f"EMA Bullish Cross: {'Yes' if analysis['ema_cross_bullish'] else 'No'}\n"
+            response += f"EMA Bearish Cross: {'Yes' if analysis['ema_cross_bearish'] else 'No'}"
+            response += "```"
+            return response
+            
+        except Exception as e:
+            return f"Error analyzing MAs for {symbol}: {str(e)}"

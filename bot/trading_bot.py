@@ -535,6 +535,9 @@ class TradingBot:
             # Get volume analysis
             volume_data = self.analyze_volume(symbol)
             
+            # Get MA analysis
+            ma_data = self.calculate_moving_averages(symbol)
+            
             # Check if volume confirms trend
             volume_confirms = volume_data['confirms_trend']
             
@@ -542,17 +545,21 @@ class TradingBot:
                 should_trade = (
                     rsi <= self.rsi_oversold and
                     volume_confirms and
-                    volume_data['trend_strength'] != 'weak'
+                    volume_data['trend_strength'] != 'weak' and
+                    (ma_data['sma_cross_bullish'] or ma_data['ema_cross_bullish']) and
+                    ma_data['trend'] in ['Weak Uptrend', 'Strong Uptrend']
                 )
             else:  # SELL
                 should_trade = (
                     rsi >= self.rsi_overbought and
                     volume_confirms and
-                    volume_data['trend_strength'] != 'weak'
+                    volume_data['trend_strength'] != 'weak' and
+                    (ma_data['sma_cross_bearish'] or ma_data['ema_cross_bearish']) and
+                    ma_data['trend'] == 'Downtrend'
                 )
             
             logging.info(f"Trade decision for {symbol} {action}: {should_trade}")
-            logging.info(f"RSI: {rsi}, Volume Strength: {volume_data['trend_strength']}")
+            logging.info(f"RSI: {rsi}, Volume: {volume_data['trend_strength']}, Trend: {ma_data['trend']}")
             
             return should_trade
             
@@ -621,3 +628,69 @@ class TradingBot:
         except Exception as e:
             logging.error(f"Error getting position info: {str(e)}")
             return {}
+
+    def calculate_moving_averages(self, symbol: str) -> Dict[str, Any]:
+        """Calculate various moving averages and their signals"""
+        try:
+            # Get 90 days of price data for reliable MA calculation
+            end = datetime.now()
+            start = end - timedelta(days=90)
+            prices = self._get_historical_prices(symbol, start, end)
+            
+            # Calculate different MAs
+            sma_20 = prices.rolling(window=20).mean()  # 20-day SMA
+            sma_50 = prices.rolling(window=50).mean()  # 50-day SMA
+            ema_12 = prices.ewm(span=12, adjust=False).mean()  # 12-day EMA
+            ema_26 = prices.ewm(span=26, adjust=False).mean()  # 26-day EMA
+            
+            # Get latest values
+            current_price = prices.iloc[-1]
+            sma_20_current = sma_20.iloc[-1]
+            sma_50_current = sma_50.iloc[-1]
+            ema_12_current = ema_12.iloc[-1]
+            ema_26_current = ema_26.iloc[-1]
+            
+            # Check for golden/death crosses (SMA)
+            sma_cross_bullish = (sma_20.iloc[-2] <= sma_50.iloc[-2] and 
+                               sma_20_current > sma_50_current)
+            sma_cross_bearish = (sma_20.iloc[-2] >= sma_50.iloc[-2] and 
+                               sma_20_current < sma_50_current)
+            
+            # Check for EMA crosses
+            ema_cross_bullish = (ema_12.iloc[-2] <= ema_26.iloc[-2] and 
+                               ema_12_current > ema_26_current)
+            ema_cross_bearish = (ema_12.iloc[-2] >= ema_26.iloc[-2] and 
+                               ema_12_current < ema_26_current)
+            
+            # Determine trend based on price position relative to MAs
+            above_sma_20 = current_price > sma_20_current
+            above_sma_50 = current_price > sma_50_current
+            
+            if above_sma_20 and above_sma_50:
+                trend = "Strong Uptrend"
+            elif above_sma_20:
+                trend = "Weak Uptrend"
+            elif above_sma_50:
+                trend = "Mixed Trend"
+            else:
+                trend = "Downtrend"
+                
+            analysis = {
+                'current_price': current_price,
+                'sma_20': sma_20_current,
+                'sma_50': sma_50_current,
+                'ema_12': ema_12_current,
+                'ema_26': ema_26_current,
+                'sma_cross_bullish': sma_cross_bullish,
+                'sma_cross_bearish': sma_cross_bearish,
+                'ema_cross_bullish': ema_cross_bullish,
+                'ema_cross_bearish': ema_cross_bearish,
+                'trend': trend
+            }
+            
+            logging.info(f"MA analysis for {symbol}: {analysis}")
+            return analysis
+            
+        except Exception as e:
+            logging.error(f"Error calculating MAs for {symbol}: {str(e)}")
+            raise

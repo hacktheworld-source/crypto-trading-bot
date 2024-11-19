@@ -123,6 +123,12 @@ async def get_position_history(ctx):
     response = command_handler.get_position_history()
     await ctx.send(response)
 
+# Command to get Moving Average analysis for a coin
+@bot.command(name='ma')
+async def get_ma(ctx, symbol: str):
+    response = command_handler.get_ma_analysis(symbol.upper())
+    await ctx.send(response)
+
 # Run the bot
 keep_alive()
 bot.run(os.getenv('DISCORD_TOKEN')) 
