@@ -105,6 +105,12 @@ async def get_price(ctx, symbol: str):
     response = command_handler.get_price(symbol.upper())
     await ctx.send(response)
 
+# Command to get volume analysis for a coin
+@bot.command(name='volume')
+async def get_volume(ctx, symbol: str):
+    response = command_handler.get_volume_analysis(symbol.upper())
+    await ctx.send(response)
+
 # Run the bot
 keep_alive()
 bot.run(os.getenv('DISCORD_TOKEN')) 

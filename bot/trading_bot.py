@@ -85,13 +85,18 @@ class TradingBot:
                 return
             
     def _check_and_trade(self, symbol):
-        rsi = self.calculate_rsi(symbol)
-        
-        if rsi <= self.rsi_oversold:
-            self._place_buy_order(symbol)
-        elif rsi >= self.rsi_overbought:
-            self._place_sell_order(symbol)
+        try:
+            rsi = self.calculate_rsi(symbol)
             
+            if rsi <= self.rsi_oversold and self._should_trade(symbol, 'BUY'):
+                self._place_buy_order(symbol)
+            elif rsi >= self.rsi_overbought and self._should_trade(symbol, 'SELL'):
+                self._place_sell_order(symbol)
+            
+        except Exception as e:
+            logging.error(f"Error checking and trading {symbol}: {str(e)}")
+            raise
+    
     def calculate_rsi(self, symbol: str) -> float:
         try:
             end = datetime.now()
@@ -439,3 +444,85 @@ class TradingBot:
         except Exception as e:
             logging.error(f"Error getting price for {symbol}: {str(e)}")
             raise
+
+    def analyze_volume(self, symbol: str) -> Dict[str, Any]:
+        """Analyzes trading volume to confirm price trends"""
+        try:
+            end_time = datetime.now()
+            start_time = end_time - timedelta(days=90)  # 90 days for good volume baseline
+            
+            # Get candles with volume data
+            response = self.client.get_candles(
+                product_id=f"{symbol}-USD",
+                start=int(start_time.timestamp()),
+                end=int(end_time.timestamp()),
+                granularity="ONE_DAY"
+            )
+            
+            candles = response.candles if hasattr(response, 'candles') else []
+            if not candles:
+                raise Exception("No candle data received")
+            
+            # Extract volume and price data
+            volumes = [float(candle.volume) for candle in candles]
+            prices = [float(candle.close) for candle in candles]
+            
+            # Calculate average volume
+            avg_volume = sum(volumes) / len(volumes)
+            current_volume = volumes[0]  # Most recent volume
+            
+            # Calculate price change
+            price_change = ((prices[0] - prices[1]) / prices[1]) * 100
+            
+            # Determine if volume confirms trend
+            volume_ratio = current_volume / avg_volume
+            
+            analysis = {
+                'current_volume': current_volume,
+                'average_volume': avg_volume,
+                'volume_ratio': volume_ratio,
+                'price_change': price_change,
+                'trend_strength': 'strong' if volume_ratio > 1.5 else 'moderate' if volume_ratio > 1.0 else 'weak',
+                'confirms_trend': volume_ratio > 1.0 and abs(price_change) > 1.0
+            }
+            
+            logging.info(f"Volume analysis for {symbol}: {analysis}")
+            return analysis
+            
+        except Exception as e:
+            logging.error(f"Error analyzing volume for {symbol}: {str(e)}")
+            raise
+
+    def _should_trade(self, symbol: str, action: str) -> bool:
+        """Determines if a trade should be executed based on multiple indicators"""
+        try:
+            # Get RSI
+            rsi = self.calculate_rsi(symbol)
+            
+            # Get volume analysis
+            volume_data = self.analyze_volume(symbol)
+            
+            # Check if volume confirms trend
+            volume_confirms = volume_data['confirms_trend']
+            
+            if action == 'BUY':
+                should_trade = (
+                    rsi <= self.rsi_oversold and
+                    volume_confirms and
+                    volume_data['trend_strength'] != 'weak'
+                )
+            else:  # SELL
+                should_trade = (
+                    rsi >= self.rsi_overbought and
+                    volume_confirms and
+                    volume_data['trend_strength'] != 'weak'
+                )
+            
+            logging.info(f"Trade decision for {symbol} {action}: {should_trade}")
+            logging.info(f"RSI: {rsi}, Volume Strength: {volume_data['trend_strength']}")
+            
+            return should_trade
+            
+        except Exception as e:
+            logging.error(f"Error in trade decision for {symbol}: {str(e)}")
+            return False

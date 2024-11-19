@@ -127,3 +127,20 @@ class CommandHandler:
             return f"Current {symbol} price: ${price:,.2f}"
         except Exception as e:
             return f"Error getting price for {symbol}: {str(e)}"
+        
+    def get_volume_analysis(self, symbol):
+        try:
+            analysis = self.trading_bot.analyze_volume(symbol)
+            
+            response = f"Volume Analysis for {symbol}:\n```"
+            response += f"Current Volume: {analysis['current_volume']:,.2f}\n"
+            response += f"Average Volume: {analysis['average_volume']:,.2f}\n"
+            response += f"Volume Ratio: {analysis['volume_ratio']:.2f}x average\n"
+            response += f"Price Change: {analysis['price_change']:+.2f}%\n"
+            response += f"Trend Strength: {analysis['trend_strength'].title()}\n"
+            response += f"Confirms Trend: {'Yes' if analysis['confirms_trend'] else 'No'}"
+            response += "```"
+            return response
+            
+        except Exception as e:
+            return f"Error analyzing volume for {symbol}: {str(e)}"
