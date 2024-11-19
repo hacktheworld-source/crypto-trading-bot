@@ -129,6 +129,12 @@ async def get_ma(ctx, symbol: str):
     response = command_handler.get_ma_analysis(symbol.upper())
     await ctx.send(response)
 
+# Command to get performance stats
+@bot.command(name='performance')
+async def get_performance(ctx):
+    response = command_handler.get_performance()
+    await ctx.send(response)
+
 # Run the bot
 keep_alive()
 bot.run(os.getenv('DISCORD_TOKEN')) 

@@ -204,3 +204,33 @@ class CommandHandler:
             
         except Exception as e:
             return f"Error analyzing MAs for {symbol}: {str(e)}"
+        
+    def get_performance(self):
+        stats = self.trading_bot.get_performance_stats()
+        if not stats:
+            return "No performance data available yet"
+        
+        response = "Trading Performance:\n```"
+        response += f"Total Trades: {stats['total_trades']}\n"
+        response += f"Active Positions: {stats['active_positions']}\n"
+        response += f"Closed Positions: {stats['closed_positions']}\n"
+        response += f"Total Profit: ${stats['total_profit_usd']:.2f}\n"
+        response += f"Win Rate: {stats['win_rate']:.1f}%\n"
+        response += f"Average Profit: ${stats['average_profit']:.2f}\n"
+        
+        if stats['best_trade']:
+            response += f"\nBest Trade:"
+            response += f"\n  {stats['best_trade']['symbol']}"
+            response += f"\n  Profit: ${stats['best_trade']['profit_usd']:.2f}"
+            response += f"\n  Return: {stats['best_trade']['profit_percentage']:.1f}%"
+        
+        if stats['worst_trade']:
+            response += f"\n\nWorst Trade:"
+            response += f"\n  {stats['worst_trade']['symbol']}"
+            response += f"\n  Profit: ${stats['worst_trade']['profit_usd']:.2f}"
+            response += f"\n  Return: {stats['worst_trade']['profit_percentage']:.1f}%"
+        
+        avg_hold = stats['average_hold_time']
+        response += f"\n\nAverage Hold Time: {avg_hold.days}d {avg_hold.seconds//3600}h"
+        response += "```"
+        return response

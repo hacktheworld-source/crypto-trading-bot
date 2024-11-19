@@ -694,3 +694,41 @@ class TradingBot:
         except Exception as e:
             logging.error(f"Error calculating MAs for {symbol}: {str(e)}")
             raise
+
+    def get_performance_stats(self) -> Dict[str, Any]:
+        """Calculate overall trading performance statistics"""
+        try:
+            stats = {
+                'total_trades': len(self.trade_history),
+                'active_positions': len(self.positions),
+                'closed_positions': len(self.position_history),
+                'total_profit_usd': 0.0,
+                'win_rate': 0.0,
+                'average_profit': 0.0,
+                'best_trade': None,
+                'worst_trade': None,
+                'average_hold_time': timedelta(0)
+            }
+            
+            if self.position_history:
+                # Calculate profits
+                profits = [pos['profit_usd'] for pos in self.position_history]
+                winning_trades = len([p for p in profits if p > 0])
+                
+                stats.update({
+                    'total_profit_usd': sum(profits),
+                    'win_rate': (winning_trades / len(profits)) * 100,
+                    'average_profit': sum(profits) / len(profits),
+                    'best_trade': max(self.position_history, key=lambda x: x['profit_percentage']),
+                    'worst_trade': min(self.position_history, key=lambda x: x['profit_percentage']),
+                    'average_hold_time': sum(
+                        [(pos['exit_time'] - pos['entry_time']) for pos in self.position_history],
+                        timedelta(0)
+                    ) / len(self.position_history)
+                })
+                
+            return stats
+            
+        except Exception as e:
+            logging.error(f"Error calculating performance stats: {str(e)}")
+            return {}
