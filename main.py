@@ -13,8 +13,24 @@ command_handler = CommandHandler(trading_bot)
 @bot.event
 async def on_ready():
     print(f'Bot is ready! Logged in as {bot.user}')
-    # Remove auto-start
-    # trading_bot.start_trading_loop()
+    
+    # Look for notifications channel in all guilds (servers) the bot is in
+    notification_channel = None
+    for guild in bot.guilds:
+        # Try to find channel named 'notifications' (case-insensitive)
+        channel = discord.utils.get(guild.text_channels, name='notifications')
+        if channel:
+            notification_channel = channel
+            break
+    
+    # Set up notification channel if found
+    if notification_channel:
+        trading_bot.set_discord_channel(notification_channel)
+        await trading_bot.send_notification("Trading bot initialized and ready!")
+        print(f"Found notifications channel: #{notification_channel.name} in {notification_channel.guild.name}")
+    else:
+        print("No 'notifications' channel found. Bot will run without sending notifications.")
+        trading_bot.set_discord_channel(None)
 
 # Command to add a coin to watchlist
 @bot.command(name='addcoin')
@@ -147,6 +163,21 @@ async def set_risk(ctx, stop_loss: float, take_profit: float, max_position: floa
 async def get_sentiment(ctx, symbol: str):
     """Get market sentiment analysis for a coin"""
     response = command_handler.get_sentiment_analysis(symbol.upper())
+    await ctx.send(response)
+
+# Add these new commands
+
+@bot.command(name='paper')
+async def paper_trading(ctx, action: str, *args):
+    """Paper trading commands"""
+    if action.lower() == 'start':
+        initial_balance = float(args[0]) if args else 1000.0
+        response = command_handler.start_paper_trading(initial_balance)
+    elif action.lower() == 'balance':
+        response = command_handler.get_paper_balance()
+    else:
+        response = "Invalid paper trading command. Use 'start' or 'balance'"
+    
     await ctx.send(response)
 
 # Run the bot

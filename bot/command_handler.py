@@ -158,25 +158,49 @@ class CommandHandler:
             return f"Error analyzing volume for {symbol}: {str(e)}"
         
     def get_positions(self):
+        """Show both real and paper positions"""
         positions = self.trading_bot.get_position_info()
-        if not positions:
+        paper_positions = self.trading_bot.paper_positions
+        
+        if not positions and not paper_positions:
             return "No active positions or holdings"
-            
+        
         response = "Current Positions and Holdings:\n```"
-        for symbol, pos in positions.items():
-            response += f"\n{symbol}:"
-            response += f"\n  Current Price: ${pos['current_price']:.2f}"
-            response += f"\n  Quantity: {pos['quantity']:.8f}"
-            response += f"\n  Total Value: ${pos['current_price'] * pos['quantity']:.2f}"
-            
-            if pos['is_bot_position']:
-                response += f"\n  Entry Price: ${pos['entry_price']:.2f}"
-                response += f"\n  Profit: ${pos['profit_usd']:.2f} ({pos['profit_percentage']:+.2f}%)"
-                response += f"\n  Max Profit: {pos['highest_profit_percentage']:+.2f}%"
-                response += f"\n  Max Drawdown: {pos['drawdown_percentage']:+.2f}%"
-            else:
-                response += "\n  (External holding)"
-            response += "\n"
+        
+        # Real positions
+        if positions:
+            response += "\nReal Positions:"
+            for symbol, pos in positions.items():
+                response += f"\n{symbol}:"
+                response += f"\n  Current Price: ${pos['current_price']:.2f}"
+                response += f"\n  Quantity: {pos['quantity']:.8f}"
+                response += f"\n  Total Value: ${pos['current_price'] * pos['quantity']:.2f}"
+                
+                if pos['is_bot_position']:
+                    response += f"\n  Entry Price: ${pos['entry_price']:.2f}"
+                    response += f"\n  Profit: ${pos['profit_usd']:.2f} ({pos['profit_percentage']:+.2f}%)"
+                    response += f"\n  Max Profit: {pos['highest_profit_percentage']:+.2f}%"
+                    response += f"\n  Max Drawdown: {pos['drawdown_percentage']:+.2f}%"
+                else:
+                    response += "\n  (External holding)"
+                response += "\n"
+        
+        # Paper positions
+        if paper_positions:
+            response += "\nPaper Positions:"
+            for symbol, pos in paper_positions.items():
+                current_price = float(self.trading_bot.client.get_product(f"{symbol}-USD").price)
+                profit_info = pos.calculate_profit(current_price)
+                
+                response += f"\n{symbol} (Paper):"
+                response += f"\n  Current Price: ${current_price:.2f}"
+                response += f"\n  Quantity: {pos.quantity:.8f}"
+                response += f"\n  Total Value: ${current_price * pos.quantity:.2f}"
+                response += f"\n  Entry Price: ${pos.entry_price:.2f}"
+                response += f"\n  Profit: ${profit_info['profit_usd']:.2f} ({profit_info['profit_percentage']:+.2f}%)"
+                response += f"\n  Fees Paid: ${profit_info['fees_paid']:.2f}"
+                response += "\n"
+        
         response += "```"
         return response
         
@@ -218,32 +242,30 @@ class CommandHandler:
             return f"Error analyzing MAs for {symbol}: {str(e)}"
         
     def get_performance(self):
-        stats = self.trading_bot.get_performance_stats()
-        if not stats:
-            return "No performance data available yet"
+        """Show both real and paper trading performance"""
+        real_stats = self.trading_bot.get_performance_stats()
+        paper_balance = self.trading_bot.get_paper_balance()
         
         response = "Trading Performance:\n```"
-        response += f"Total Trades: {stats['total_trades']}\n"
-        response += f"Active Positions: {stats['active_positions']}\n"
-        response += f"Closed Positions: {stats['closed_positions']}\n"
-        response += f"Total Profit: ${stats['total_profit_usd']:.2f}\n"
-        response += f"Win Rate: {stats['win_rate']:.1f}%\n"
-        response += f"Average Profit: ${stats['average_profit']:.2f}\n"
         
-        if stats['best_trade']:
-            response += f"\nBest Trade:"
-            response += f"\n  {stats['best_trade']['symbol']}"
-            response += f"\n  Profit: ${stats['best_trade']['profit_usd']:.2f}"
-            response += f"\n  Return: {stats['best_trade']['profit_percentage']:.1f}%"
+        # Real trading performance
+        response += "\nReal Trading:"
+        response += f"\nTotal Trades: {real_stats['total_trades']}"
+        response += f"\nActive Positions: {real_stats['active_positions']}"
+        response += f"\nClosed Positions: {real_stats['closed_positions']}"
+        response += f"\nTotal Profit: ${real_stats['total_profit_usd']:.2f}"
+        if real_stats['total_trades'] > 0:
+            response += f"\nWin Rate: {real_stats['win_rate']:.1f}%"
+            response += f"\nAverage Profit: ${real_stats['average_profit']:.2f}"
         
-        if stats['worst_trade']:
-            response += f"\n\nWorst Trade:"
-            response += f"\n  {stats['worst_trade']['symbol']}"
-            response += f"\n  Profit: ${stats['worst_trade']['profit_usd']:.2f}"
-            response += f"\n  Return: {stats['worst_trade']['profit_percentage']:.1f}%"
+        # Paper trading performance
+        response += "\n\nPaper Trading:"
+        paper_profit = paper_balance['total_value'] - 1000.0
+        paper_profit_pct = (paper_profit / 1000.0) * 100
+        response += f"\nTotal Value: ${paper_balance['total_value']:.2f}"
+        response += f"\nTotal P/L: ${paper_profit:+.2f} ({paper_profit_pct:+.2f}%)"
+        response += f"\nCash Balance: ${paper_balance['cash_balance']:.2f}"
         
-        avg_hold = stats['average_hold_time']
-        response += f"\n\nAverage Hold Time: {avg_hold.days}d {avg_hold.seconds//3600}h"
         response += "```"
         return response
         
@@ -285,3 +307,24 @@ class CommandHandler:
             
         except Exception as e:
             return f"Error analyzing market sentiment for {symbol}: {str(e)}"
+        
+    def start_paper_trading(self, initial_balance: float = 1000.0):
+        """Start or reset paper trading with initial balance"""
+        self.trading_bot.reset_paper_trading(initial_balance)
+        return f"Paper trading started with ${initial_balance:.2f} balance"
+        
+    def get_paper_balance(self):
+        """Get paper trading account status"""
+        balance = self.trading_bot.get_paper_balance()
+        
+        response = "Paper Trading Account:\n```"
+        response += f"Cash Balance: ${balance['cash_balance']:.2f}\n"
+        response += f"Total Value: ${balance['total_value']:.2f}\n"
+        
+        # Calculate profit/loss
+        profit = balance['total_value'] - 1000.0  # Assuming $1000 starting balance
+        profit_percentage = (profit / 1000.0) * 100
+        
+        response += f"Total P/L: ${profit:+.2f} ({profit_percentage:+.2f}%)"
+        response += "```"
+        return response

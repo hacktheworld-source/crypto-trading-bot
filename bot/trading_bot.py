@@ -9,6 +9,7 @@ from coinbase.rest import RESTClient
 from typing import Dict, Any, List, Union, Optional
 from decimal import Decimal
 from .position import Position
+import asyncio
 
 # Set up logging
 logging.basicConfig(
@@ -48,6 +49,15 @@ class TradingBot:
             self.max_position_size = 1000.0  # Maximum USD in any single position
             self.load_config()
             
+            # Paper trading attributes
+            self.paper_trading = not self.trading_active  # Paper trade when real trading is off
+            self.paper_balance = 1000.0  # Start with $1000 paper money
+            self.paper_positions: Dict[str, Position] = {}
+            self.paper_trade_history: List[Dict[str, Any]] = []
+            self.paper_portfolio_value = self.paper_balance
+            
+            self.discord_channel = None  # Will be set when bot starts
+            
         except Exception as e:
             logging.error(f"Failed to initialize trading bot: {str(e)}")
             raise Exception(f"Bot initialization failed: {str(e)}")
@@ -69,9 +79,12 @@ class TradingBot:
             return "Trading bot stopped successfully"
         return "Trading bot is already stopped"
         
-    def _trading_loop(self):
+    async def _trading_loop(self):
         while self.trading_active:
             try:
+                # Send interval update
+                await self.send_interval_update()
+                
                 for coin in self.watched_coins:
                     try:
                         # Check risk management first
@@ -80,7 +93,8 @@ class TradingBot:
                         self._check_and_trade(coin)
                     except Exception as e:
                         logging.error(f"Error processing {coin}: {str(e)}")
-                time.sleep(self.trading_interval)
+                
+                await asyncio.sleep(self.trading_interval)
             except Exception as e:
                 logging.error(f"Error in trading loop: {str(e)}")
             
@@ -941,3 +955,217 @@ class TradingBot:
         except Exception as e:
             logging.error(f"Error analyzing market sentiment for {symbol}: {str(e)}")
             raise
+
+    def _simulate_buy_order(self, symbol: str) -> None:
+        """Simulate a buy order with paper trading"""
+        try:
+            product_id = f"{symbol}-USD"
+            current_price = float(self.client.get_product(product_id).price)
+            
+            # Calculate fees (0.6% Coinbase fee)
+            fee = self.trade_amount * 0.006
+            actual_trade_amount = self.trade_amount - fee
+            
+            # Check if we have enough paper balance
+            if self.paper_balance < self.trade_amount:
+                logging.warning(f"Insufficient paper balance for {symbol} buy")
+                return
+            
+            quantity = actual_trade_amount / current_price
+            
+            # Create new paper position
+            self.paper_positions[symbol] = Position(
+                symbol=symbol,
+                entry_price=current_price,
+                quantity=quantity,
+                entry_time=datetime.now(),
+                is_paper=True
+            )
+            
+            # Update paper balance
+            self.paper_balance -= self.trade_amount
+            
+            # Record trade
+            self.paper_trade_history.append({
+                'timestamp': datetime.now(),
+                'action': 'BUY',
+                'symbol': symbol,
+                'amount_usd': self.trade_amount,
+                'price': current_price,
+                'quantity': quantity,
+                'fees': fee,
+                'is_paper': True
+            })
+            
+            logging.info(f"Paper buy order placed for {symbol}: ${self.trade_amount}")
+            
+        except Exception as e:
+            logging.error(f"Error simulating buy order for {symbol}: {str(e)}")
+            raise
+
+    def _simulate_sell_order(self, symbol: str) -> None:
+        """Simulate a sell order with paper trading"""
+        try:
+            position = self.paper_positions.get(symbol)
+            if not position:
+                logging.warning(f"No paper position found for {symbol}, cannot sell")
+                return
+            
+            product_id = f"{symbol}-USD"
+            current_price = float(self.client.get_product(product_id).price)
+            
+            # Calculate total value and fees
+            total_value = position.quantity * current_price
+            fee = total_value * 0.006
+            actual_value = total_value - fee
+            
+            # Calculate profit/loss
+            profit_info = position.calculate_profit(current_price)
+            
+            # Update paper balance
+            self.paper_balance += actual_value
+            
+            # Record trade
+            self.paper_trade_history.append({
+                'timestamp': datetime.now(),
+                'action': 'SELL',
+                'symbol': symbol,
+                'amount_usd': total_value,
+                'price': current_price,
+                'quantity': position.quantity,
+                'fees': fee,
+                'profit': profit_info['profit_usd'],
+                'profit_percentage': profit_info['profit_percentage'],
+                'is_paper': True
+            })
+            
+            # Remove position
+            del self.paper_positions[symbol]
+            
+            logging.info(f"Paper sell order placed for {symbol}: ${total_value:.2f} (Profit: ${profit_info['profit_usd']:.2f})")
+            
+        except Exception as e:
+            logging.error(f"Error simulating sell order for {symbol}: {str(e)}")
+            raise
+
+    def get_paper_balance(self) -> Dict[str, float]:
+        """Get paper trading account balance"""
+        try:
+            total_value = self.paper_balance
+            
+            # Add value of all paper positions
+            for symbol, position in self.paper_positions.items():
+                try:
+                    current_price = float(self.client.get_product(f"{symbol}-USD").price)
+                    position_value = position.quantity * current_price
+                    total_value += position_value
+                except Exception as e:
+                    logging.error(f"Error calculating paper position value for {symbol}: {str(e)}")
+                
+            return {
+                'cash_balance': self.paper_balance,
+                'total_value': total_value
+            }
+        except Exception as e:
+            logging.error(f"Error getting paper balance: {str(e)}")
+            return {'cash_balance': 0.0, 'total_value': 0.0}
+
+    def reset_paper_trading(self, initial_balance: float = 1000.0) -> None:
+        """Reset paper trading with new balance"""
+        self.paper_balance = initial_balance
+        self.paper_positions.clear()
+        self.paper_trade_history.clear()
+        logging.info(f"Paper trading reset with ${initial_balance} balance")
+
+    def set_discord_channel(self, channel):
+        """Set the Discord channel for notifications"""
+        self.discord_channel = channel
+        logging.info(f"Discord notifications channel set")
+
+    async def send_notification(self, message: str, is_update: bool = False):
+        """Send a notification to Discord channel if available"""
+        if not self.discord_channel:
+            # Just log the message if no channel is set
+            logging.info(f"Notification (no channel): {message}")
+            return
+        
+        try:
+            # Format based on type
+            if is_update:
+                formatted_message = f"📊 Trading Update:\n```{message}```"
+            else:
+                formatted_message = f"🔔 Alert:\n```{message}```"
+            
+            await self.discord_channel.send(formatted_message)
+            logging.info(f"Notification sent: {message}")
+        except Exception as e:
+            logging.error(f"Error sending notification: {str(e)}")
+            self.discord_channel = None  # Reset channel if we can't send messages
+
+    async def send_trade_notification(self, action: str, symbol: str, price: float, quantity: float, 
+                                    is_paper: bool = False, profit_info: Dict[str, float] = None):
+        """Send a trade notification"""
+        try:
+            trade_type = "Paper" if is_paper else "Real"
+            message = f"{trade_type} Trade: {action} {symbol}\n"
+            message += f"Price: ${price:,.2f}\n"
+            message += f"Quantity: {quantity:.8f}\n"
+            message += f"Total: ${(price * quantity):,.2f}"
+            
+            if profit_info and action == 'SELL':
+                message += f"\nProfit: ${profit_info['profit_usd']:+,.2f} ({profit_info['profit_percentage']:+.2f}%)"
+                message += f"\nFees Paid: ${profit_info['fees_paid']:.2f}"
+            
+            await self.send_notification(message)
+        except Exception as e:
+            logging.error(f"Error sending trade notification: {str(e)}")
+
+    async def send_interval_update(self):
+        """Send periodic update of all watched coins"""
+        try:
+            if not self.watched_coins:
+                return
+            
+            message = "Periodic Trading Update\n\n"
+            
+            for symbol in self.watched_coins:
+                try:
+                    # Get all analysis
+                    current_price = float(self.client.get_product(f"{symbol}-USD").price)
+                    rsi = self.calculate_rsi(symbol)
+                    volume_data = self.analyze_volume(symbol)
+                    ma_data = self.calculate_moving_averages(symbol)
+                    sentiment = self.analyze_market_sentiment(symbol)
+                    
+                    # Determine action
+                    action = "HOLD"
+                    if rsi <= self.rsi_oversold and self._should_trade(symbol, 'BUY'):
+                        action = "BUY SIGNAL"
+                    elif rsi >= self.rsi_overbought and self._should_trade(symbol, 'SELL'):
+                        action = "SELL SIGNAL"
+                    
+                    # Add to message
+                    message += f"{symbol}:\n"
+                    message += f"Price: ${current_price:,.2f}\n"
+                    message += f"RSI: {rsi:.2f}\n"
+                    message += f"Volume: {volume_data['volume_ratio']:.2f}x average\n"
+                    message += f"Trend: {ma_data['trend']}\n"
+                    message += f"Sentiment: {sentiment['overall_sentiment']}\n"
+                    message += f"Action: {action}\n\n"
+                    
+                except Exception as e:
+                    message += f"{symbol}: Error analyzing - {str(e)}\n\n"
+            
+            await self.send_notification(message, is_update=True)
+        except Exception as e:
+            logging.error(f"Error sending interval update: {str(e)}")
+
+    async def send_alert(self, symbol: str, alert_type: str, details: str):
+        """Send an alert notification"""
+        try:
+            message = f"Alert for {symbol}\n"
+            message += f"Type: {alert_type}\n"
+            message += f"Details: {details}"
+            await self.send_notification(message)
+        except Exception as e:
+            logging.error(f"Error sending alert: {str(e)}")
