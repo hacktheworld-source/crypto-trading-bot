@@ -134,23 +134,24 @@ class TradingBot:
         try:
             product_id = f"{symbol}-USD"
             
-            # Get current time and calculate start time (30 days ago)
+            # Get current time and calculate start time
+            # For 1M chart, we want more data points to ensure accurate RSI
             end_time = datetime.now()
-            start_time = end_time - timedelta(days=30)
+            start_time = end_time - timedelta(days=45)  # Get 45 days to ensure enough data for monthly view
             
             logging.info(f"Fetching candles for {symbol} from {start_time} to {end_time}")
             
             try:
-                # Convert to Unix timestamps (seconds since epoch)
+                # Convert to Unix timestamps
                 start_unix = int(start_time.timestamp())
                 end_unix = int(end_time.timestamp())
                 
-                # Get daily candles for the last 30 days
+                # Get 4-hour candles for better granularity
                 response = self.client.get_candles(
                     product_id=product_id,
-                    start=start_unix,  # Unix timestamp
-                    end=end_unix,      # Unix timestamp
-                    granularity="ONE_DAY"  # String enum for granularity
+                    start=start_unix,
+                    end=end_unix,
+                    granularity="FOUR_HOUR"  # Changed from ONE_DAY to get more data points
                 )
                 
                 # Convert response to list and check if we have data
@@ -160,11 +161,11 @@ class TradingBot:
                 
                 # Convert candles to pandas Series
                 prices = pd.Series(
-                    [float(candle.close) for candle in reversed(candles)],  # Reverse to get chronological order
+                    [float(candle.close) for candle in reversed(candles)],
                     index=[datetime.fromtimestamp(float(candle.start)) for candle in reversed(candles)]
                 )
                 
-                logging.info(f"Fetched {len(candles)} daily candles for {symbol}")
+                logging.info(f"Fetched {len(candles)} candles for {symbol}")
                 return prices
                     
             except Exception as e:
