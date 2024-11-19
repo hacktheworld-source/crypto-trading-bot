@@ -98,11 +98,16 @@ class CommandHandler:
         
         status = "Bot Status:\n```"
         
-        # Trading Status
+        # Trading Status - More detailed now
         status += "\n📊 Trading Status:"
-        status += f"\n  Trading Active: {'✅' if bot.trading_active else '❌'}"
-        status += f"\n  Paper Trading: {'✅' if bot.paper_trading else '❌'}"
+        status += "\n  Trading Loop: " + ("✅ Running" if (bot.trading_active or bot.paper_trading) else "❌ Stopped")
+        status += "\n  Real Trading: " + ("✅ Active" if bot.trading_active else "❌ Inactive")
+        status += "\n  Paper Trading: " + ("✅ Active" if bot.paper_trading else "❌ Inactive")
         status += f"\n  Check Interval: {bot.trading_interval//60} minutes"
+        
+        # Add warning if both modes are inactive
+        if not bot.trading_active and not bot.paper_trading:
+            status += "\n  ⚠️ WARNING: No trading mode is active. Use !start paper or !start real"
         
         # Trading Configuration
         status += "\n\n⚙️ Configuration:"
