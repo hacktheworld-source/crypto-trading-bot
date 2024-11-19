@@ -6,7 +6,8 @@ import pandas as pd
 from datetime import datetime, timedelta
 import json
 from coinbase.rest import RESTClient
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, List, Union
+from decimal import Decimal
 
 # Set up logging
 logging.basicConfig(
@@ -20,20 +21,17 @@ class TradingBot:
         try:
             logging.info("Starting bot initialization...")
             
-            # Check if environment variables exist
             if 'COINBASE_API_KEY' not in os.environ:
                 raise Exception("COINBASE_API_KEY not found in environment variables")
             if 'COINBASE_API_SECRET' not in os.environ:
                 raise Exception("COINBASE_API_SECRET not found in environment variables")
             
-            # Initialize the new REST client
             self.client = RESTClient(
                 api_key=os.environ['COINBASE_API_KEY'].strip(),
                 api_secret=os.environ['COINBASE_API_SECRET'].strip()
             )
             logging.info("Coinbase client initialized successfully")
             
-            # Rest of initialization stays the same
             self.watched_coins: set = set()
             self.trading_interval: int = 300
             self.rsi_period: int = 14
@@ -97,13 +95,12 @@ class TradingBot:
     def calculate_rsi(self, symbol: str) -> float:
         try:
             end = datetime.now()
-            start = end - timedelta(days=30)  # Get 30 days of data for monthly RSI
+            start = end - timedelta(days=30)
             prices = self._get_historical_prices(symbol, start, end)
             
             if len(prices) < self.rsi_period:
                 raise Exception(f"Not enough data points for RSI calculation. Need {self.rsi_period}, got {len(prices)}")
             
-            # Calculate RSI
             delta = prices.diff()
             gain = (delta.where(delta > 0, 0)).rolling(window=self.rsi_period).mean()
             loss = (-delta.where(delta < 0, 0)).rolling(window=self.rsi_period).mean()
@@ -111,9 +108,8 @@ class TradingBot:
             rs = gain / loss
             rsi = 100 - (100 / (1 + rs))
             
-            current_rsi = float(rsi.iloc[-1])
-            logging.info(f"Calculated RSI for {symbol}: {current_rsi:.2f}")
-            return current_rsi if not pd.isna(current_rsi) else 50.0
+            last_value = rsi.iloc[-1] if not pd.isna(rsi.iloc[-1]) else 50.0
+            return float(last_value)
             
         except Exception as e:
             logging.error(f"Error calculating RSI for {symbol}: {str(e)}")
@@ -122,35 +118,26 @@ class TradingBot:
     def _get_historical_prices(self, symbol: str, start: datetime, end: datetime) -> pd.Series:
         try:
             product_id = f"{symbol}-USD"
-            
-            # Get current time and calculate start time (30 days ago)
             end_time = datetime.now()
             start_time = end_time - timedelta(days=30)
             
             logging.info(f"Fetching candles for {symbol} from {start_time} to {end_time}")
             
             try:
-                # Format timestamps as ISO 8601 strings
-                start_iso = start_time.strftime("%Y-%m-%dT%H:%M:%SZ")
-                end_iso = end_time.strftime("%Y-%m-%dT%H:%M:%SZ")
-                
-                # Get daily candles for the last 30 days
                 response = self.client.get_candles(
                     product_id=product_id,
-                    start=start_iso,
-                    end=end_iso,
-                    granularity=86400  # Daily candles (24 hours in seconds)
+                    start=int(start_time.timestamp()),
+                    end=int(end_time.timestamp()),
+                    granularity=86400
                 )
                 
-                # Convert response to list and check if we have data
                 candles = response.candles if hasattr(response, 'candles') else []
                 if not candles:
                     raise Exception(f"No candle data received for {symbol}")
                 
-                # Convert candles to pandas Series
                 prices = pd.Series(
-                    [float(candle.close) for candle in reversed(candles)],  # Reverse to get chronological order
-                    index=[datetime.fromtimestamp(candle.start) for candle in reversed(candles)]
+                    [float(candle.close) for candle in reversed(candles)],
+                    index=[datetime.fromtimestamp(float(candle.start)) for candle in reversed(candles)]
                 )
                 
                 logging.info(f"Fetched {len(candles)} daily candles for {symbol}")
@@ -168,22 +155,15 @@ class TradingBot:
         try:
             product_id = f"{symbol}-USD"
             
-            # Get current price
-            product = self.client.get_product(product_id)
-            current_price = float(product.price)
-            
-            # Calculate quantity based on trade amount
-            quantity = self.trade_amount / current_price
-            
-            # Place market buy order
-            order = self.client.create_order(
+            self.client.create_order(
                 product_id=product_id,
                 side='BUY',
                 order_configuration={
                     'market_market_ioc': {
-                        'quote_size': str(self.trade_amount)  # Amount in USD
+                        'quote_size': str(self.trade_amount)
                     }
-                }
+                },
+                client_order_id=str(int(time.time()))
             )
             
             self.trade_history.append({
@@ -202,22 +182,22 @@ class TradingBot:
         try:
             product_id = f"{symbol}-USD"
             
-            # Get current holdings
-            accounts = self.client.get_accounts()
-            account = next((acc for acc in accounts if acc.currency == symbol), None)
+            accounts_response = self.client.get_accounts()
+            accounts_list = list(accounts_response)
+            account = next((acc for acc in accounts_list if acc.currency == symbol), None)
             
             if not account:
                 raise Exception(f"No account found for {symbol}")
                 
-            # Place market sell order
-            order = self.client.create_order(
+            self.client.create_order(
                 product_id=product_id,
                 side='SELL',
                 order_configuration={
                     'market_market_ioc': {
-                        'quote_size': str(self.trade_amount)  # Amount in USD
+                        'quote_size': str(self.trade_amount)
                     }
-                }
+                },
+                client_order_id=str(int(time.time()))
             )
             
             self.trade_history.append({
@@ -357,40 +337,37 @@ class TradingBot:
             logging.error(f"API test failed: {str(e)}")
             raise Exception(f"API test failed: {str(e)}")
 
-    def get_account_balance(self) -> Dict[str, float]:
+    def get_account_balance(self) -> Dict[str, Union[Dict[str, float], float]]:
         try:
-            accounts = self.client.get_accounts()
+            accounts_response = self.client.get_accounts()
+            accounts_list = list(accounts_response)
             balances = {}
             total_usd_value = 0.0
 
-            # The accounts response has a 'data' attribute containing the list of accounts
-            if hasattr(accounts, 'data'):
-                for account in accounts.data:
-                    # Get the available balance
-                    available = getattr(account, 'available_balance', None)
-                    if available and float(available.value) > 0:
-                        symbol = account.currency
-                        balance = float(available.value)
-                        
-                        if symbol == 'USD':
-                            usd_value = balance
-                        else:
-                            # Get current price for non-USD assets
-                            try:
-                                product = self.client.get_product(f"{symbol}-USD")
-                                price = float(product.price)
-                                usd_value = balance * price
-                            except:
-                                logging.warning(f"Could not get price for {symbol}, skipping...")
-                                continue
-                        
-                        if usd_value > 0:
-                            balances[symbol] = {
-                                'balance': balance,
-                                'usd_value': usd_value
-                            }
-                            total_usd_value += usd_value
-                            logging.info(f"Added {symbol} balance: {balance} (${usd_value:.2f})")
+            for account in accounts_list:
+                available = getattr(account, 'available_balance', None)
+                if available and float(available.value) > 0:
+                    symbol = account.currency
+                    balance = float(available.value)
+                    
+                    if symbol == 'USD':
+                        usd_value = balance
+                    else:
+                        try:
+                            product = self.client.get_product(f"{symbol}-USD")
+                            price = float(product.price)
+                            usd_value = balance * price
+                        except Exception:
+                            logging.warning(f"Could not get price for {symbol}, skipping...")
+                            continue
+                    
+                    if usd_value > 0:
+                        balances[symbol] = {
+                            'balance': balance,
+                            'usd_value': usd_value
+                        }
+                        total_usd_value += usd_value
+                        logging.info(f"Added {symbol} balance: {balance} (${usd_value:.2f})")
 
             logging.info(f"Total portfolio value: ${total_usd_value:.2f}")
             return {
