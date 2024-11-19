@@ -141,7 +141,8 @@ class TradingBot:
                             logging.info(f"Analyzing {symbol}")
                             # Get all analysis
                             current_price = float(self.client.get_product(f"{symbol}-USD").price)
-                            rsi = self.calculate_rsi(symbol)
+                            # Await RSI calculation
+                            rsi = await self.calculate_rsi(symbol)
                             volume_data = self.analyze_volume(symbol)
                             ma_data = self.calculate_moving_averages(symbol)
                             sentiment = self.analyze_market_sentiment(symbol)
@@ -232,15 +233,16 @@ class TradingBot:
             logging.error(f"Error checking and trading {symbol}: {str(e)}")
             raise
     
-    def calculate_rsi(self, symbol: str) -> float:
+    async def calculate_rsi(self, symbol: str) -> float:
         try:
             end = datetime.now()
             start = end - timedelta(days=30)
-            prices = self._get_historical_prices(symbol, start, end)
+            # Await the async call
+            prices = await self._get_historical_prices(symbol, start, end)
             
             logging.info(f"Calculating RSI for {symbol} with {len(prices)} data points")
             
-            if len(prices) < self.rsi_period * 2:  # Need at least 2x RSI period for accuracy
+            if len(prices) < self.rsi_period * 2:
                 raise Exception(f"Not enough data points for accurate RSI calculation")
             
             # Calculate price changes
