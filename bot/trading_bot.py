@@ -50,8 +50,8 @@ class TradingBot:
             self.load_config()
             
             # Paper trading attributes
-            self.paper_trading = not self.trading_active  # Paper trade when real trading is off
-            self.paper_balance = 1000.0  # Start with $1000 paper money
+            self.paper_trading = False  # Don't auto-start paper trading
+            self.paper_balance = 1000.0
             self.paper_positions: Dict[str, Position] = {}
             self.paper_trade_history: List[Dict[str, Any]] = []
             self.paper_portfolio_value = self.paper_balance
