@@ -100,8 +100,15 @@ class TradingBot:
             
             logging.info(f"Calculating RSI for {symbol} with {len(prices)} data points")
             
+            if len(prices) < self.rsi_period * 2:  # Need at least 2x RSI period for accuracy
+                raise Exception(f"Not enough data points for accurate RSI calculation")
+            
             # Calculate price changes
             delta = prices.diff()
+            
+            # Log some key statistics for verification
+            logging.info(f"Price range: ${prices.min():.2f} - ${prices.max():.2f}")
+            logging.info(f"Average daily change: ${delta.abs().mean():.2f}")
             
             # Separate gains and losses
             gains = delta.where(delta > 0, 0)

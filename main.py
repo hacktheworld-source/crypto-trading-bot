@@ -13,8 +13,8 @@ command_handler = CommandHandler(trading_bot)
 @bot.event
 async def on_ready():
     print(f'Bot is ready! Logged in as {bot.user}')
-    # Start the trading loop
-    trading_bot.start_trading_loop()
+    # Remove auto-start
+    # trading_bot.start_trading_loop()
 
 # Command to add a coin to watchlist
 @bot.command(name='addcoin')
