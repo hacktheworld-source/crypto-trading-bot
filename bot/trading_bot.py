@@ -98,18 +98,33 @@ class TradingBot:
             start = end - timedelta(days=30)
             prices = self._get_historical_prices(symbol, start, end)
             
-            if len(prices) < self.rsi_period:
-                raise Exception(f"Not enough data points for RSI calculation. Need {self.rsi_period}, got {len(prices)}")
+            logging.info(f"Calculating RSI for {symbol} with {len(prices)} data points")
             
+            # Calculate price changes
             delta = prices.diff()
-            gain = (delta.where(delta > 0, 0)).rolling(window=self.rsi_period).mean()
-            loss = (-delta.where(delta < 0, 0)).rolling(window=self.rsi_period).mean()
             
-            rs = gain / loss
+            # Separate gains and losses
+            gains = delta.where(delta > 0, 0)
+            losses = -delta.where(delta < 0, 0)
+            
+            # Calculate exponential moving averages
+            avg_gain = gains.ewm(span=self.rsi_period, adjust=False).mean()
+            avg_loss = losses.ewm(span=self.rsi_period, adjust=False).mean()
+            
+            # Calculate RS and RSI
+            rs = avg_gain / avg_loss
             rsi = 100 - (100 / (1 + rs))
             
-            last_value = rsi.iloc[-1] if not pd.isna(rsi.iloc[-1]) else 50.0
-            return float(last_value)
+            # Get the latest RSI value
+            current_rsi = float(rsi.iloc[-1])
+            
+            # Log intermediate values for debugging
+            logging.info(f"Latest price: {prices.iloc[-1]:.2f}")
+            logging.info(f"Latest gain EMA: {avg_gain.iloc[-1]:.4f}")
+            logging.info(f"Latest loss EMA: {avg_loss.iloc[-1]:.4f}")
+            logging.info(f"Calculated RSI: {current_rsi:.2f}")
+            
+            return current_rsi
             
         except Exception as e:
             logging.error(f"Error calculating RSI for {symbol}: {str(e)}")
