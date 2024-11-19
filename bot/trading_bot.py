@@ -386,10 +386,14 @@ class TradingBot:
                     
                     # Check for balance in both available_balance and hold
                     balance_value = 0.0
-                    if hasattr(account, 'available_balance'):
-                        balance_value = float(account.available_balance.value)
-                    elif hasattr(account, 'balance'):
-                        balance_value = float(account.balance)
+                    
+                    # Handle available balance
+                    if hasattr(account, 'available_balance') and isinstance(account.available_balance, dict):
+                        balance_value = float(account.available_balance.get('value', 0))
+                    
+                    # Add hold balance if it exists
+                    if hasattr(account, 'hold') and isinstance(account.hold, dict):
+                        balance_value += float(account.hold.get('value', 0))
                     
                     if balance_value > 0:
                         symbol = account.currency
