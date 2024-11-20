@@ -1,7 +1,6 @@
-discord.py
-python-dotenv
-coinbase-advanced-py
-pandas
-numpy
-flask
-requests 
+discord.py>=2.3.0
+python-dotenv>=1.0.0
+coinbase-advanced-py>=1.0.0
+pandas>=2.0.0
+numpy>=1.24.0
+requests>=2.31.0 
