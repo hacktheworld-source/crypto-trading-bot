@@ -22,18 +22,48 @@ async def heartbeat(trading_bot):
             await asyncio.sleep(60)
 
 def cleanup_old_processes():
-    """Kill any existing bot processes before starting"""
+    """Kill any existing bot processes and Flask servers"""
     current_pid = os.getpid()
-    for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+    killed_count = 0
+    
+    print(f"Current process ID: {current_pid}")
+    print("Searching for old bot processes...")
+    
+    for proc in psutil.process_iter(['pid', 'name', 'cmdline', 'connections']):
         try:
-            # Check if it's a Python process running our bot
-            if proc.info['name'] == 'python' and \
-               proc.pid != current_pid and \
-               any('main.py' in cmd for cmd in (proc.info['cmdline'] or [])):
-                print(f"Killing old bot process: {proc.pid}")
-                proc.kill()
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            pass
+            # Skip our own process
+            if proc.pid == current_pid:
+                continue
+                
+            # Check for Python processes
+            if proc.info['name'] == 'python' or proc.info['name'] == 'python3':
+                kill_process = False
+                
+                # Check command line for our files
+                if proc.info['cmdline']:
+                    if any(x in str(proc.info['cmdline']) for x in ['main.py', 'trading_bot.py', 'keep_alive.py']):
+                        kill_process = True
+                
+                # Check if process is using our port
+                if proc.info['connections']:
+                    if any(conn.laddr.port == 8080 for conn in proc.info['connections']):
+                        kill_process = True
+                
+                if kill_process:
+                    print(f"Killing process {proc.pid} ({' '.join(proc.info['cmdline'] or [])})")
+                    proc.kill()
+                    killed_count += 1
+                    
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess) as e:
+            print(f"Error checking process: {e}")
+            continue
+    
+    if killed_count > 0:
+        print(f"Killed {killed_count} old processes")
+        # Give processes time to fully terminate
+        time.sleep(2)
+    else:
+        print("No old processes found")
 
 def main():
     # Add this at the start of main()
