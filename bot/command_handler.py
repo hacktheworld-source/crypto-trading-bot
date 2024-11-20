@@ -180,22 +180,22 @@ class CommandHandler:
     def get_help(self):
         help_text = "Trading Bot Commands:\n```"
         
-        help_text += "\nReal Trading Commands:"
-        help_text += "\n!start         - Start the trading bot"
-        help_text += "\n!stop          - Stop the trading bot"
+        help_text += "\nTrading Commands:"
+        help_text += "\n!start real     - Start real money trading"
+        help_text += "\n!start paper    - Start paper trading"
+        help_text += "\n!stop [mode]    - Stop trading (paper/real/all)"
         help_text += "\n!status        - Show bot status and portfolio value"
         help_text += "\n!positions     - View all positions (real & paper)"
-        help_text += "\n!poshistory    - View position history"
-        help_text += "\n!performance   - View trading performance stats"
+        help_text += "\n!history       - View trade history"
         
         help_text += "\n\nPaper Trading Commands:"
         help_text += "\n!paper start [balance] - Start paper trading with optional balance"
-        help_text += "\n!paper balance         - Show paper trading balance"
-        help_text += "\n!paper reset           - Reset paper trading"
-        help_text += "\n!paper stats           - Show paper trading statistics"
-        help_text += "\n!paper trades          - Show paper trade history"
-        help_text += "\n!paper positions       - Show paper positions only"
-        help_text += "\n!paper settings        - Show/modify paper settings"
+        help_text += "\n!paper stop           - Stop paper trading"
+        help_text += "\n!paper balance        - Show paper trading balance"
+        help_text += "\n!paper reset [amount] - Reset paper trading with optional balance"
+        help_text += "\n!paper stats          - Show paper trading statistics"
+        help_text += "\n!paper trades         - Show paper trade history"
+        help_text += "\n!paper positions      - Show paper positions only"
         
         help_text += "\n\nAnalysis Commands:"
         help_text += "\n!price BTC     - Get current price"
@@ -438,11 +438,12 @@ class CommandHandler:
         
         response = "Paper Trading Statistics:\n```"
         response += f"Total Trades: {total_trades}\n"
-        response += f"Winning Trades: {winning_trades}\n"
-        response += f"Win Rate: {(winning_trades/total_trades*100):.1f}%\n"
+        if total_trades > 0:
+            response += f"Winning Trades: {winning_trades}\n"
+            response += f"Win Rate: {(winning_trades/total_trades*100):.1f}%\n"
         response += f"Total Profit: ${total_profit:,.2f}\n"
         response += f"Total Fees Paid: ${total_fees:.2f}\n"
-        response += f"Current Balance: ${paper_balance['cash_balance']:,.2f}\n"
+        response += f"Current Cash Balance: ${paper_balance['cash_balance']:,.2f}\n"
         response += f"Portfolio Value: ${paper_balance['total_value']:,.2f}\n"
         
         # Calculate return on initial investment
@@ -490,7 +491,6 @@ class CommandHandler:
             response += f"\n  Position Value: ${(current_price * pos.quantity):,.2f}"
             response += f"\n  Unrealized P/L: ${profit_info['profit_usd']:+,.2f} ({profit_info['profit_percentage']:+.2f}%)"
             response += f"\n  Fees Paid: ${profit_info['fees_paid']:.2f}"
-            response += f"\n  Holding Time: {datetime.now() - pos.entry_time}"
             response += "\n"
         response += "```"
         return response
