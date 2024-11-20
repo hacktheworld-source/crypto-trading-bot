@@ -9,6 +9,7 @@ from keep_alive import keep_alive
 import logging
 import signal
 import sys
+import psutil
 
 async def heartbeat(trading_bot):
     """Heartbeat coroutine to monitor bot health"""
@@ -20,7 +21,24 @@ async def heartbeat(trading_bot):
             logging.error(f"Heartbeat error: {e}")
             await asyncio.sleep(60)
 
+def cleanup_old_processes():
+    """Kill any existing bot processes before starting"""
+    current_pid = os.getpid()
+    for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+        try:
+            # Check if it's a Python process running our bot
+            if proc.info['name'] == 'python' and \
+               proc.pid != current_pid and \
+               any('main.py' in cmd for cmd in (proc.info['cmdline'] or [])):
+                print(f"Killing old bot process: {proc.pid}")
+                proc.kill()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+
 def main():
+    # Add this at the start of main()
+    cleanup_old_processes()
+    
     # Initialize Discord bot
     intents = discord.Intents.all()
     bot = commands.Bot(command_prefix='!', intents=intents)
