@@ -6,89 +6,19 @@ from discord.ext import commands
 import discord
 import asyncio
 from keep_alive import keep_alive
-import logging
-import signal
-import sys
-import psutil
-
-async def heartbeat(trading_bot):
-    """Heartbeat coroutine to monitor bot health"""
-    while True:
-        try:
-            await trading_bot.send_notification("🫀 Bot heartbeat check", is_update=True)
-            await asyncio.sleep(3600)  # Check every hour
-        except Exception as e:
-            logging.error(f"Heartbeat error: {e}")
-            await asyncio.sleep(60)
-
-def cleanup_old_processes():
-    """Kill any existing bot processes"""
-    current_pid = os.getpid()
-    killed_count = 0
-    
-    print(f"Current process ID: {current_pid}")
-    print("Searching for old bot processes...")
-    
-    for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
-        try:
-            # Skip our own process
-            if proc.pid == current_pid:
-                continue
-                
-            # Check for Python processes
-            if proc.info['name'] in ['python', 'python3']:
-                # Check command line for our files
-                cmdline = proc.info.get('cmdline', [])
-                if cmdline and any(x in str(cmdline) for x in ['main.py', 'trading_bot.py']):
-                    print(f"Killing process {proc.pid}")
-                    try:
-                        proc.kill()
-                        killed_count += 1
-                    except psutil.NoSuchProcess:
-                        pass
-                    
-        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess) as e:
-            print(f"Error checking process: {e}")
-            continue
-    
-    if killed_count > 0:
-        print(f"Killed {killed_count} old processes")
-        # Give processes time to fully terminate
-        time.sleep(2)
-    else:
-        print("No old processes found")
 
 def main():
-    # Add this at the start of main()
-    cleanup_old_processes()
-    
     # Initialize Discord bot
     intents = discord.Intents.all()
     bot = commands.Bot(command_prefix='!', intents=intents)
     trading_bot = TradingBot()
     command_handler = CommandHandler(trading_bot)
 
-    def signal_handler(sig, frame):
-        print("\nShutting down gracefully...")
-        if trading_bot:
-            trading_bot.stop_trading_loop()
-        if bot:
-            asyncio.create_task(bot.close())
-        sys.exit(0)
-
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
-
-    @bot.event
-    async def setup_hook():
-        """This is called when the bot starts"""
-        bot.loop.create_task(heartbeat(trading_bot))
-
     @bot.event
     async def on_ready():
         print(f'Bot is ready! Logged in as {bot.user}')
         
-        # Look for notifications channel
+        # Look for notifications channel in all guilds (servers) the bot is in
         notification_channel = None
         for guild in bot.guilds:
             channel = discord.utils.get(guild.text_channels, name='notifications')
@@ -299,20 +229,18 @@ def main():
         
         await ctx.send(response)
 
-    # Add this new command near your other commands:
-    @bot.command(name='shutdown')
-    async def shutdown(ctx):
-        """Completely shut down the bot"""
-        await ctx.send("🔄 Shutting down bot...")
-        await trading_bot.stop_trading_loop()  # Stop any trading activities
-        await bot.close()  # Disconnect from Discord
-        os._exit(0)  # Force terminate the process
-
+    # Add this before bot.run
+    keep_alive()  # Start the Flask server
+    
     # Start the bot
     try:
         bot.run(os.getenv('DISCORD_TOKEN'))
     except Exception as e:
         print(f"Error starting bot: {e}")
+    
+    # Keep the script running
+    while True:
+        time.sleep(1)
 
 if __name__ == "__main__":
     main() 

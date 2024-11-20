@@ -58,10 +58,6 @@ class TradingBot:
             
             self.discord_channel = None  # Will be set when bot starts
             
-            # Add rate limiting
-            self.last_api_call = {}
-            self.min_api_interval = 1.0  # Minimum seconds between API calls per symbol
-            
         except Exception as e:
             logging.error(f"Failed to initialize trading bot: {str(e)}")
             raise Exception(f"Bot initialization failed: {str(e)}")
@@ -103,7 +99,6 @@ class TradingBot:
         
     async def _trading_loop(self):
         """Main trading loop"""
-        consecutive_errors = 0
         while self.trading_active or self.paper_trading:
             try:
                 for symbol in self.watched_coins:
@@ -183,27 +178,10 @@ class TradingBot:
                 # Wait for next interval
                 await asyncio.sleep(self.trading_interval)
                 
-                consecutive_errors = 0  # Reset on success
-                
             except Exception as e:
-                consecutive_errors += 1
                 logging.error(f"Error in trading loop: {str(e)}")
                 await self.send_notification(f"❌ Error in trading loop: {str(e)}")
-                
-                # Exponential backoff on repeated errors
-                wait_time = min(60 * 2**consecutive_errors, 3600)  # Max 1 hour
-                await asyncio.sleep(wait_time)
-                
-                # Force reconnect after multiple failures
-                if consecutive_errors >= 3:
-                    try:
-                        self.client = RESTClient(
-                            api_key=os.environ['COINBASE_API_KEY'].strip(),
-                            api_secret=os.environ['COINBASE_API_SECRET'].strip()
-                        )
-                        logging.info("Reconnected to Coinbase API")
-                    except Exception as e:
-                        logging.error(f"Failed to reconnect: {e}")
+                await asyncio.sleep(60)  # Wait a minute before retrying
                 
         logging.info("Trading loop stopped")
 
@@ -616,21 +594,16 @@ class TradingBot:
             logging.error(f"Error getting account balance: {str(e)}")
             return {'balances': {}, 'total_usd_value': 0.0}
 
-    def get_current_price(self, symbol: str) -> Optional[float]:
-        """Rate-limited price check"""
-        now = datetime.now()
-        if symbol in self.last_api_call:
-            time_since_last = (now - self.last_api_call[symbol]).total_seconds()
-            if time_since_last < self.min_api_interval:
-                time.sleep(self.min_api_interval - time_since_last)
-        
+    def get_current_price(self, symbol: str) -> float:
         try:
-            price = float(self.client.get_product(f"{symbol}-USD").price)
-            self.last_api_call[symbol] = now
+            product_id = f"{symbol}-USD"
+            product = self.client.get_product(product_id)
+            price = float(product.price)
+            logging.info(f"Current price for {symbol}: ${price}")
             return price
         except Exception as e:
-            logging.error(f"Error getting price for {symbol}: {e}")
-            return None
+            logging.error(f"Error getting price for {symbol}: {str(e)}")
+            raise
 
     def analyze_volume(self, symbol: str) -> Dict[str, Any]:
         """Analyzes trading volume to confirm price trends"""
