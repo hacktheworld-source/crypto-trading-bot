@@ -5,6 +5,7 @@ from bot.command_handler import CommandHandler
 from discord.ext import commands
 import discord
 import asyncio
+from keep_alive import keep_alive
 
 def main():
     # Initialize Discord bot
@@ -228,6 +229,9 @@ def main():
         
         await ctx.send(response)
 
+    # Add this before bot.run
+    keep_alive()  # Start the Flask server
+    
     # Start the bot
     try:
         bot.run(os.getenv('DISCORD_TOKEN'))
