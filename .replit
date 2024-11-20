@@ -9,5 +9,4 @@ run = ["sh", "-c", "python main.py"]
 
 [[ports]]
 localPort = 8080
-externalPort = 80
-entrypoint = "main.py"
+externalPort = 80entrypoint = "main.py"

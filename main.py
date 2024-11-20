@@ -299,6 +299,15 @@ def main():
         
         await ctx.send(response)
 
+    # Add this new command near your other commands:
+    @bot.command(name='shutdown')
+    async def shutdown(ctx):
+        """Completely shut down the bot"""
+        await ctx.send("🔄 Shutting down bot...")
+        await trading_bot.stop_trading_loop()  # Stop any trading activities
+        await bot.close()  # Disconnect from Discord
+        os._exit(0)  # Force terminate the process
+
     # Start the bot
     try:
         bot.run(os.getenv('DISCORD_TOKEN'))
