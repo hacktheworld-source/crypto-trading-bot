@@ -22,37 +22,30 @@ async def heartbeat(trading_bot):
             await asyncio.sleep(60)
 
 def cleanup_old_processes():
-    """Kill any existing bot processes and Flask servers"""
+    """Kill any existing bot processes"""
     current_pid = os.getpid()
     killed_count = 0
     
     print(f"Current process ID: {current_pid}")
     print("Searching for old bot processes...")
     
-    for proc in psutil.process_iter(['pid', 'name', 'cmdline', 'connections']):
+    for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
         try:
             # Skip our own process
             if proc.pid == current_pid:
                 continue
                 
             # Check for Python processes
-            if proc.info['name'] == 'python' or proc.info['name'] == 'python3':
-                kill_process = False
-                
+            if proc.info['name'] in ['python', 'python3']:
                 # Check command line for our files
-                if proc.info['cmdline']:
-                    if any(x in str(proc.info['cmdline']) for x in ['main.py', 'trading_bot.py', 'keep_alive.py']):
-                        kill_process = True
-                
-                # Check if process is using our port
-                if proc.info['connections']:
-                    if any(conn.laddr.port == 8080 for conn in proc.info['connections']):
-                        kill_process = True
-                
-                if kill_process:
-                    print(f"Killing process {proc.pid} ({' '.join(proc.info['cmdline'] or [])})")
-                    proc.kill()
-                    killed_count += 1
+                cmdline = proc.info.get('cmdline', [])
+                if cmdline and any(x in str(cmdline) for x in ['main.py', 'trading_bot.py']):
+                    print(f"Killing process {proc.pid}")
+                    try:
+                        proc.kill()
+                        killed_count += 1
+                    except psutil.NoSuchProcess:
+                        pass
                     
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess) as e:
             print(f"Error checking process: {e}")
