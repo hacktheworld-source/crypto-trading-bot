@@ -58,6 +58,10 @@ class TradingBot:
             
             self.discord_channel = None  # Will be set when bot starts
             
+            # Add rate limiting
+            self.last_api_call = {}
+            self.min_api_interval = 1.0  # Minimum seconds between API calls per symbol
+            
         except Exception as e:
             logging.error(f"Failed to initialize trading bot: {str(e)}")
             raise Exception(f"Bot initialization failed: {str(e)}")
@@ -98,76 +102,126 @@ class TradingBot:
         return "Trading bot stopped successfully" if was_active else "Trading bot is already stopped"
         
     async def _trading_loop(self):
-        """Trading loop with unified decision making"""
-        logging.info("Trading loop started")
-        
+        """Main trading loop"""
+        consecutive_errors = 0
         while self.trading_active or self.paper_trading:
             try:
-                self._ensure_positions_watched()
-                message = "🔄 Trading Analysis Update\n\n"
-                
                 for symbol in self.watched_coins:
                     try:
-                        # Get prediction
-                        prediction = self._analyze_price_prediction(symbol)
-                        
-                        # Check current positions
-                        has_real_position = symbol in self.positions
-                        has_paper_position = symbol in self.paper_positions
-                        
-                        # Determine action based on prediction
-                        action = "HOLD"
-                        if prediction['prediction_score'] >= 50:  # Strong bullish signals
-                            if not (has_real_position or has_paper_position):
-                                # Calculate position size we can afford
-                                position_size = self._calculate_position_size(symbol, is_paper=self.paper_trading)
-                                if position_size > 0:  # Only if we can afford it
-                                    action = "BUY"
-                        elif prediction['prediction_score'] <= -50:  # Strong bearish signals
-                            if has_real_position or has_paper_position:
-                                action = "SELL"
-                        
-                        # Add analysis to message
-                        message += f"📊 {symbol} Analysis:\n"
-                        message += f"Price: ${prediction['current_price']:,.2f}\n"
-                        message += f"Prediction Score: {prediction['prediction_score']:+.1f}\n"
-                        if prediction['bullish_signals']:
-                            message += "Bullish Signals:\n - " + "\n - ".join(prediction['bullish_signals']) + "\n"
-                        if prediction['bearish_signals']:
-                            message += "Bearish Signals:\n - " + "\n - ".join(prediction['bearish_signals']) + "\n"
-                        message += f"Current Position: {'Yes' if (has_real_position or has_paper_position) else 'No'}\n"
-                        message += f"Decision: {action}\n"
-                        
-                        if action == "BUY":
-                            position_size = self._calculate_position_size(symbol, is_paper=self.paper_trading)
-                            if position_size > 0:
-                                message += f"Planned Position Size: ${position_size:.2f}\n"
-                                if self.paper_trading:
-                                    percentage = (position_size / self.paper_balance) * 100
-                                    message += f"Percentage of Paper Balance: {percentage:.1f}%\n"
-                        message += "\n"
-                        
-                        # Execute trades
-                        if self.paper_trading:
-                            if action == "BUY":
-                                await self._simulate_buy_order(symbol)
-                            elif action == "SELL" and has_paper_position:
-                                await self._simulate_sell_order(symbol)
+                        # Get current price and validate
+                        current_price = self.get_current_price(symbol)
+                        if current_price is None:
+                            logging.warning(f"Skipping analysis for {symbol} - Unable to get current price")
+                            continue
                             
+                        # Calculate RSI and validate
+                        rsi = self.calculate_rsi(symbol)
+                        if rsi is None:
+                            logging.warning(f"Skipping analysis for {symbol} - Unable to calculate RSI")
+                            continue
+                            
+                        # Get position info
+                        position = self.paper_positions.get(symbol) if self.paper_trading else self.positions.get(symbol)
+                        
+                        # Log analysis
+                        mode = "Paper" if self.paper_trading else "Real"
+                        logging.info(f"{mode} Analysis - {symbol}: Price=${current_price:.2f}, RSI={rsi:.2f}")
+                        
+                        # Check if we already have a position
+                        if position:
+                            # Validate position before making sell decision
+                            if not self._validate_position(position, current_price):
+                                logging.warning(f"Invalid position data for {symbol}, skipping sell analysis")
+                                continue
+                                
+                            # Calculate profit metrics
+                            profit_info = position.calculate_profit(current_price)
+                            
+                            # Check sell conditions
+                            if (rsi > self.rsi_overbought or 
+                                profit_info['profit_percentage'] <= -self.stop_loss_percentage or
+                                profit_info['profit_percentage'] >= self.take_profit_percentage):
+                                
+                                # Double check before selling
+                                confirmation_price = self.get_current_price(symbol)
+                                if confirmation_price is None or abs(confirmation_price - current_price) / current_price > 0.02:
+                                    logging.warning(f"Price changed significantly during sell analysis of {symbol}, aborting sell")
+                                    continue
+                                    
+                                await self._place_sell_order(symbol, position.quantity)
+                                
+                        else:
+                            # No position - check buy conditions
+                            if rsi < self.rsi_oversold:
+                                # Validate conditions before buying
+                                confirmation_price = self.get_current_price(symbol)
+                                if confirmation_price is None or abs(confirmation_price - current_price) / current_price > 0.02:
+                                    logging.warning(f"Price changed significantly during buy analysis of {symbol}, aborting buy")
+                                    continue
+                                    
+                                # Calculate quantity based on trade amount
+                                quantity = self.trade_amount / current_price
+                                
+                                # Check if we have enough balance
+                                if self.paper_trading:
+                                    if self.paper_balance < self.trade_amount:
+                                        logging.warning(f"Insufficient paper balance for {symbol}")
+                                        continue
+                                else:
+                                    balance = self.get_account_balance()
+                                    if balance['balances'].get('USD', {}).get('balance', 0) < self.trade_amount:
+                                        logging.warning(f"Insufficient real balance for {symbol}")
+                                        continue
+                                        
+                                await self._place_buy_order(symbol, quantity)
+                                
                     except Exception as e:
-                        error_msg = f"Error analyzing {symbol}: {str(e)}"
-                        logging.error(error_msg)
-                        message += f"❌ {error_msg}\n\n"
-                
-                # Send the update
-                await self.send_notification(message, is_update=True)
-                
+                        logging.error(f"Error analyzing {symbol}: {str(e)}")
+                        await self.send_notification(f"❌ Error analyzing {symbol}: {str(e)}")
+                        continue
+                        
                 # Wait for next interval
                 await asyncio.sleep(self.trading_interval)
                 
+                consecutive_errors = 0  # Reset on success
+                
             except Exception as e:
-                logging.error(f"Critical error in trading loop: {str(e)}")
-                await asyncio.sleep(60)
+                consecutive_errors += 1
+                logging.error(f"Error in trading loop: {str(e)}")
+                await self.send_notification(f"❌ Error in trading loop: {str(e)}")
+                
+                # Exponential backoff on repeated errors
+                wait_time = min(60 * 2**consecutive_errors, 3600)  # Max 1 hour
+                await asyncio.sleep(wait_time)
+                
+                # Force reconnect after multiple failures
+                if consecutive_errors >= 3:
+                    try:
+                        self.client = RESTClient(
+                            api_key=os.environ['COINBASE_API_KEY'].strip(),
+                            api_secret=os.environ['COINBASE_API_SECRET'].strip()
+                        )
+                        logging.info("Reconnected to Coinbase API")
+                    except Exception as e:
+                        logging.error(f"Failed to reconnect: {e}")
+                
+        logging.info("Trading loop stopped")
+
+    def _validate_position(self, position, current_price):
+        """Validate position data before making trading decisions"""
+        try:
+            if position is None:
+                return False
+            if not hasattr(position, 'entry_price') or position.entry_price is None:
+                return False
+            if not hasattr(position, 'quantity') or position.quantity <= 0:
+                return False
+            if current_price <= 0:
+                return False
+            return True
+        except Exception as e:
+            logging.error(f"Error validating position: {str(e)}")
+            return False
     
     def _check_and_trade(self, symbol):
         try:
@@ -562,16 +616,21 @@ class TradingBot:
             logging.error(f"Error getting account balance: {str(e)}")
             return {'balances': {}, 'total_usd_value': 0.0}
 
-    def get_current_price(self, symbol: str) -> float:
+    def get_current_price(self, symbol: str) -> Optional[float]:
+        """Rate-limited price check"""
+        now = datetime.now()
+        if symbol in self.last_api_call:
+            time_since_last = (now - self.last_api_call[symbol]).total_seconds()
+            if time_since_last < self.min_api_interval:
+                time.sleep(self.min_api_interval - time_since_last)
+        
         try:
-            product_id = f"{symbol}-USD"
-            product = self.client.get_product(product_id)
-            price = float(product.price)
-            logging.info(f"Current price for {symbol}: ${price}")
+            price = float(self.client.get_product(f"{symbol}-USD").price)
+            self.last_api_call[symbol] = now
             return price
         except Exception as e:
-            logging.error(f"Error getting price for {symbol}: {str(e)}")
-            raise
+            logging.error(f"Error getting price for {symbol}: {e}")
+            return None
 
     def analyze_volume(self, symbol: str) -> Dict[str, Any]:
         """Analyzes trading volume to confirm price trends"""

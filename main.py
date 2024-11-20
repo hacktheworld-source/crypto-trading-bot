@@ -6,6 +6,9 @@ from discord.ext import commands
 import discord
 import asyncio
 from keep_alive import keep_alive
+import logging
+import signal
+import sys
 
 def main():
     # Initialize Discord bot
@@ -229,8 +232,36 @@ def main():
         
         await ctx.send(response)
 
-    # Add this before bot.run
-    keep_alive()  # Start the Flask server
+    # Add near the top of main()
+    async def heartbeat():
+        while True:
+            try:
+                await trading_bot.send_notification("🫀 Bot heartbeat check", is_update=True)
+                await asyncio.sleep(3600)  # Check every hour
+            except Exception as e:
+                logging.error(f"Heartbeat error: {e}")
+                # Try to reconnect
+                try:
+                    await bot.close()
+                    await bot.start(os.getenv('DISCORD_TOKEN'))
+                except:
+                    pass
+                await asyncio.sleep(60)
+
+    # Add before bot.run
+    bot.loop.create_task(heartbeat())
+    
+    # Add at start of main()
+    def signal_handler(sig, frame):
+        print("\nShutting down gracefully...")
+        if trading_bot:
+            trading_bot.stop_trading_loop()
+        if bot:
+            asyncio.create_task(bot.close())
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
     
     # Start the bot
     try:
