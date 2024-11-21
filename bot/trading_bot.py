@@ -352,7 +352,7 @@ class TradingBot:
             logging.error(f"Error validating position: {str(e)}")
             return False
     
-    def _check_and_trade(self, symbol):
+    async def _check_and_trade(self, symbol):
         """Check trading conditions using weighted signal system"""
         try:
             # Get comprehensive analysis
