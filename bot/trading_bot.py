@@ -149,7 +149,19 @@ class TradingBot:
             stop_loss = self._calculate_stop_loss(symbol, position.entry_price)
             if current_price <= stop_loss:
                 logging.info(f"Stop loss triggered for {symbol} at {profit_info['profit_percentage']}%")
-                await self._place_sell_order(symbol, position.quantity)
+                
+                # Add decision factors for stop loss
+                decision_factors = [
+                    "🛑 Stop Loss Triggered",
+                    f"Entry Price: ${position.entry_price:.2f}",
+                    f"Stop Loss Level: ${stop_loss:.2f}",
+                    f"Current Price: ${current_price:.2f}",
+                    f"Loss: {profit_info['profit_percentage']:.2f}%",
+                    f"Market Sentiment: {prediction['sentiment']}"
+                ]
+                decision_factors.extend(prediction['bearish_signals'])
+                
+                await self._place_sell_order(symbol, position.quantity, decision_factors)
                 return
                 
             # Dynamic take profit based on market conditions
@@ -164,12 +176,34 @@ class TradingBot:
                 if prediction['prediction_score'] > 0:  # Still bullish
                     # Take partial profits
                     sell_quantity = position.quantity * 0.5
+                    
+                    decision_factors = [
+                        "💰 Taking Partial Profits",
+                        f"Entry Price: ${position.entry_price:.2f}",
+                        f"Current Price: ${current_price:.2f}",
+                        f"Profit: {profit_info['profit_percentage']:.2f}%",
+                        f"Market Still Bullish (Score: {prediction['prediction_score']:.1f})",
+                        f"Selling: 50% of position",
+                        f"Market Sentiment: {prediction['sentiment']}"
+                    ]
+                    decision_factors.extend(prediction['bullish_signals'])
+                    
                     logging.info(f"Taking partial profits for {symbol} at {profit_info['profit_percentage']}%")
-                    await self._place_sell_order(symbol, sell_quantity)
+                    await self._place_sell_order(symbol, sell_quantity, decision_factors)
                 else:
                     # Take full profits
+                    decision_factors = [
+                        "💰 Taking Full Profits",
+                        f"Entry Price: ${position.entry_price:.2f}",
+                        f"Current Price: ${current_price:.2f}",
+                        f"Profit: {profit_info['profit_percentage']:.2f}%",
+                        f"Bearish Signals Detected (Score: {prediction['prediction_score']:.1f})",
+                        f"Market Sentiment: {prediction['sentiment']}"
+                    ]
+                    decision_factors.extend(prediction['bearish_signals'])
+                    
                     logging.info(f"Taking full profits for {symbol} at {profit_info['profit_percentage']}%")
-                    await self._place_sell_order(symbol, position.quantity)
+                    await self._place_sell_order(symbol, position.quantity, decision_factors)
                     
         except Exception as e:
             logging.error(f"Error managing position for {symbol}: {str(e)}")
@@ -208,7 +242,14 @@ class TradingBot:
                     new_price = float(self.client.get_product(f"{symbol}-USD").price)
                     if abs(new_price - current_price) / current_price <= 0.01:  # 1% price movement max
                         quantity = position_size / current_price
-                        await self._place_buy_order(symbol, quantity)
+                        decision_factors = [
+                            f"Prediction Score: {prediction['prediction_score']:.1f}",
+                            "Price near support level",
+                            f"Volume: {self.analyze_volume(symbol)['volume_ratio']:.1f}x average"
+                        ]
+                        decision_factors.extend(prediction['bullish_signals'])
+                        
+                        await self._place_buy_order(symbol, quantity, decision_factors)
                         
         except Exception as e:
             logging.error(f"Error analyzing entry for {symbol}: {str(e)}")
@@ -1307,11 +1348,16 @@ class TradingBot:
             self.discord_channel = None  # Reset channel if we can't send messages
 
     async def send_trade_notification(self, action: str, symbol: str, price: float, quantity: float, 
-                                    is_paper: bool = False, profit_info: Dict[str, float] = None):
-        """Send a trade notification"""
+                                    is_paper: bool = False, profit_info: Dict[str, float] = None,
+                                    decision_factors: List[str] = None):
+        """Send a detailed trade notification"""
         try:
             trade_type = "Paper" if is_paper else "Real"
-            message = f"{trade_type} Trade: {action} {symbol}\n"
+            
+            # Use different emojis for buy/sell
+            emoji = "🔔" if action == "BUY" else "💰"
+            
+            message = f"{emoji} {trade_type} Trade: {action} {symbol}\n"
             message += f"Price: ${price:,.2f}\n"
             message += f"Quantity: {quantity:.8f}\n"
             message += f"Total: ${(price * quantity):,.2f}"
@@ -1319,6 +1365,12 @@ class TradingBot:
             if profit_info and action == 'SELL':
                 message += f"\nProfit: ${profit_info['profit_usd']:+,.2f} ({profit_info['profit_percentage']:+.2f}%)"
                 message += f"\nFees Paid: ${profit_info['fees_paid']:.2f}"
+            
+            # Add decision factors if provided
+            if decision_factors:
+                message += "\n\nDecision Factors:"
+                for factor in decision_factors:
+                    message += f"\n• {factor}"
             
             await self.send_notification(message)
         except Exception as e:
@@ -1447,10 +1499,13 @@ class TradingBot:
             window = 5
             
             for i in range(window, len(prices) - window):
-                if prices[i] == max(prices[i-window:i+window+1]):
-                    highs.append(float(prices[i]))
-                if prices[i] == min(prices[i-window:i+window+1]):
-                    lows.append(float(prices[i]))
+                price_window = prices.iloc[i-window:i+window+1]
+                current_price = prices.iloc[i]
+                
+                if current_price == price_window.max():
+                    highs.append(float(current_price))
+                if current_price == price_window.min():
+                    lows.append(float(current_price))
             
             return {
                 'highs': sorted(set(highs))[-5:],  # Last 5 unique highs
