@@ -101,6 +101,14 @@ class TradingBot:
         """Enhanced main trading loop with better analysis and risk management"""
         while self.trading_active or self.paper_trading:
             try:
+                # Add reconnection logic
+                if not self.client:
+                    logging.info("Attempting to reconnect to Coinbase...")
+                    self.client = RESTClient(
+                        api_key=os.environ['COINBASE_API_KEY'].strip(),
+                        api_secret=os.environ['COINBASE_API_SECRET'].strip()
+                    )
+                
                 # Send interval update
                 await self.send_interval_update()
                 
@@ -135,7 +143,8 @@ class TradingBot:
             except Exception as e:
                 logging.error(f"Error in trading loop: {str(e)}")
                 await self.send_notification(f"❌ Error in trading loop: {str(e)}")
-                await asyncio.sleep(60)
+                # Add longer sleep on error to prevent rapid reconnection attempts
+                await asyncio.sleep(300)  # 5 minutes
                 
         logging.info("Trading loop stopped")
 
@@ -1411,6 +1420,16 @@ class TradingBot:
                     
                 except Exception as e:
                     message += f"{symbol}: Error analyzing - {str(e)}\n\n"
+            
+            # Add position status to interval updates
+            message += "\nActive Positions:\n"
+            positions = self.paper_positions if self.paper_trading else self.positions
+            if positions:
+                for symbol, pos in positions.items():
+                    profit_info = pos.calculate_profit(current_price)
+                    message += f"• {symbol}: {profit_info['profit_percentage']:+.2f}%\n"
+            else:
+                message += "None\n"
             
             await self.send_notification(message, is_update=True)
         except Exception as e:
