@@ -1395,12 +1395,13 @@ class TradingBot:
             
             for symbol in self.watched_coins:
                 try:
-                    # Get all analysis
-                    current_price = float(self.client.get_product(f"{symbol}-USD").price)
-                    rsi = self.calculate_rsi(symbol)
+                    # Get comprehensive analysis
+                    sentiment = self.analyze_market_sentiment(symbol)  # Get full sentiment analysis
+                    prediction = self._analyze_price_prediction(symbol)
+                    current_price = prediction['current_price']
+                    rsi = prediction['rsi']
                     volume_data = self.analyze_volume(symbol)
                     ma_data = self.calculate_moving_averages(symbol)
-                    sentiment = self.analyze_market_sentiment(symbol)
                     
                     # Determine action
                     action = "HOLD"
@@ -1415,19 +1416,44 @@ class TradingBot:
                     message += f"RSI: {rsi:.2f}\n"
                     message += f"Volume: {volume_data['volume_ratio']:.2f}x average\n"
                     message += f"Trend: {ma_data['trend']}\n"
-                    message += f"Sentiment: {sentiment['overall_sentiment']}\n"
-                    message += f"Action: {action}\n\n"
+                    message += f"Sentiment: {sentiment['overall_sentiment']} (Score: {prediction['prediction_score']:.1f})\n"
+                    
+                    # Add momentum info
+                    message += f"Momentum: "
+                    message += f"Short-term: {sentiment['momentum']['short_term']}, "
+                    message += f"Medium-term: {sentiment['momentum']['medium_term']}, "
+                    message += f"Long-term: {sentiment['momentum']['long_term']}\n"
+                    
+                    message += f"Action: {action}\n"
+                    
+                    # Add signals if they exist
+                    if prediction['bullish_signals']:
+                        message += "Bullish Signals:\n• " + "\n• ".join(prediction['bullish_signals']) + "\n"
+                    if prediction['bearish_signals']:
+                        message += "Bearish Signals:\n• " + "\n• ".join(prediction['bearish_signals']) + "\n"
+                    message += "\n"
                     
                 except Exception as e:
                     message += f"{symbol}: Error analyzing - {str(e)}\n\n"
             
-            # Add position status to interval updates
+            # Add position status with more detail
             message += "\nActive Positions:\n"
             positions = self.paper_positions if self.paper_trading else self.positions
             if positions:
                 for symbol, pos in positions.items():
-                    profit_info = pos.calculate_profit(current_price)
-                    message += f"• {symbol}: {profit_info['profit_percentage']:+.2f}%\n"
+                    try:
+                        current_price = float(self.client.get_product(f"{symbol}-USD").price)
+                        profit_info = pos.calculate_profit(current_price)
+                        message += (
+                            f"• {symbol}:\n"
+                            f"  Entry: ${pos.entry_price:.2f}\n"
+                            f"  Current: ${current_price:.2f}\n"
+                            f"  P/L: {profit_info['profit_percentage']:+.2f}%\n"
+                            f"  Max Profit: {profit_info['highest_profit_percentage']:+.2f}%\n"
+                            f"  Max Drawdown: {profit_info['drawdown_percentage']:+.2f}%\n"
+                        )
+                    except Exception as e:
+                        message += f"• {symbol}: Error calculating position info - {str(e)}\n"
             else:
                 message += "None\n"
             
