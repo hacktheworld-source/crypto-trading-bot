@@ -119,7 +119,7 @@ class TradingBot:
                 for symbol in self.watched_coins:
                     try:
                         # Get comprehensive analysis
-                        prediction = await self._analyze_price_prediction(symbol)  # Add await here
+                        prediction = self._analyze_price_prediction(symbol)
                         current_price = prediction['current_price']
                         rsi = prediction['rsi']
                         volume_data = self.analyze_volume(symbol)
@@ -1033,10 +1033,6 @@ class TradingBot:
                 logging.info(f"Trading not active for {symbol}")
                 return False
             
-            # Log trading hours but don't restrict trading
-            if not self._is_good_trading_hour():
-                logging.info(f"Note: Trading outside normal hours for {symbol}")
-            
             # Get current price and position info
             current_price = float(self.client.get_product(f"{symbol}-USD").price)
             position = self.paper_positions.get(symbol) if self.paper_trading else self.positions.get(symbol)
@@ -1677,18 +1673,14 @@ class TradingBot:
         except Exception as e:
             logging.error(f"Error sending alert: {str(e)}")
 
-    async def _analyze_price_prediction(self, symbol: str) -> Dict[str, Any]:
-        """Make a unified price movement prediction with caching"""
+    def _analyze_price_prediction(self, symbol: str) -> Dict[str, Any]:
+        """Make a unified price movement prediction"""
         try:
-            # Get RSI (this is already synchronous)
+            # Get all indicators
             rsi = self.calculate_rsi(symbol)
-            
-            # Get other indicators (these are synchronous too)
             volume_data = self.analyze_volume(symbol)
             ma_data = self.calculate_moving_averages(symbol)
             sentiment = self.analyze_market_sentiment(symbol)
-            
-            # We removed the asyncio.gather() since these methods aren't async
             
             # Determine overall market prediction
             bullish_signals = []
@@ -1770,7 +1762,6 @@ class TradingBot:
                 'highs': sorted(set(highs))[-5:],  # Last 5 unique highs
                 'lows': sorted(set(lows))[:5]      # Last 5 unique lows
             }
-            
         except Exception as e:
             logging.error(f"Error getting highs/lows for {symbol}: {str(e)}")
             return {'highs': [], 'lows': []}
