@@ -10,6 +10,7 @@ from typing import Dict, Any, List, Union, Optional
 from decimal import Decimal
 from .position import Position
 import asyncio
+import discord
 
 # Set up logging
 logging.basicConfig(
@@ -139,15 +140,9 @@ class TradingBot:
                             'signals': signals
                         }
                         
-                        # Prevent buying in extreme conditions
-                        if rsi > 80:  # Extremely overbought
-                            logging.info(f"Skipping {symbol} - RSI too high ({rsi:.1f})")
-                            continue
-                        
-                        # Get position info
+                        # Execute trades based on signals
                         position = self.paper_positions.get(symbol) if self.paper_trading else self.positions.get(symbol)
                         
-                        # Execute trades based on signals
                         if position:
                             # Position Management
                             if signals['sell_signals'] >= signals['required_signals'] and self._should_trade(symbol, 'SELL'):
@@ -155,7 +150,7 @@ class TradingBot:
                         else:
                             # Entry Analysis
                             if signals['buy_signals'] >= signals['required_signals'] and self._should_trade(symbol, 'BUY'):
-                                await self._analyze_entry(symbol, prediction, current_price)
+                                await self._analyze_entry(symbol, prediction, current_price, signals)
                     
                     except Exception as e:
                         logging.error(f"Error analyzing {symbol}: {str(e)}")
@@ -262,8 +257,8 @@ class TradingBot:
             logging.error(f"Error managing position for {symbol}: {str(e)}")
             raise
 
-    async def _analyze_entry(self, symbol: str, prediction: Dict[str, Any], current_price: float):
-        """Enhanced entry analysis with multiple confirmations"""
+    async def _analyze_entry(self, symbol: str, prediction: Dict[str, Any], current_price: float, signals: Dict[str, Any]):
+        """Enhanced entry analysis using pre-calculated signals"""
         try:
             # Check if we can open new positions
             if not self._can_open_new_position():
@@ -273,41 +268,8 @@ class TradingBot:
             if not self._is_good_trading_hour():
                 return
             
-            # Get comprehensive analysis
-            volume_data = self.analyze_volume(symbol)
-            ma_data = self.calculate_moving_averages(symbol)
-            rsi = prediction['rsi']
-            
-            # Calculate buy signals
-            buy_signals = 0
-            required_signals = 3
-            
-            # RSI signals
-            if rsi <= self.rsi_oversold:
-                buy_signals += 2
-            elif rsi < 40:
-                buy_signals += 1
-                
-            # Trend signals
-            if ma_data['trend'] == 'Strong Uptrend':
-                buy_signals += 2
-            elif ma_data['trend'] == 'Weak Uptrend':
-                buy_signals += 1
-                
-            # Volume signals
-            if volume_data['volume_ratio'] > 1.5 and volume_data['price_change'] > 0:
-                buy_signals += 2
-            elif volume_data['volume_ratio'] > 1.2 and volume_data['price_change'] > 0:
-                buy_signals += 1
-            
-            # Prediction score signals
-            if prediction['prediction_score'] > 50:
-                buy_signals += 2
-            elif prediction['prediction_score'] > 30:
-                buy_signals += 1
-            
-            # Check if we have enough signals to enter
-            if buy_signals >= required_signals and self._should_trade(symbol, 'BUY'):
+            # Use the signals we already calculated
+            if signals['buy_signals'] >= signals['required_signals'] and self._should_trade(symbol, 'BUY'):
                 # Calculate position size
                 position_size = self._calculate_position_size(symbol, self.paper_trading)
                 if position_size > 0:
@@ -318,10 +280,10 @@ class TradingBot:
                         
                         # Prepare detailed decision factors
                         decision_factors = [
-                            f"Buy Strength: {min((buy_signals / required_signals) * 100, 100):.0f}%",
-                            f"RSI: {rsi:.2f}",
-                            f"Trend: {ma_data['trend']}",
-                            f"Volume: {volume_data['volume_ratio']:.1f}x average",
+                            f"Buy Strength: {signals['buy_strength']:.0f}%",
+                            f"RSI: {prediction['rsi']:.2f}",
+                            f"Trend: {prediction['trend']}",
+                            f"Volume: {prediction['volume_ratio']:.1f}x average",
                             f"Prediction Score: {prediction['prediction_score']:.1f}"
                         ]
                         decision_factors.extend(prediction['bullish_signals'])
@@ -1289,7 +1251,7 @@ class TradingBot:
                     'best_trade': max(self.position_history, key=lambda x: x['profit_percentage']),
                     'worst_trade': min(self.position_history, key=lambda x: x['profit_percentage']),
                     'average_hold_time': sum(
-                        [(pos['exit_time'] - pos['entry_time']) for pos in self.position_history],
+                        [(pos['exit_time'] - pos['entry_time']) for pos in self.position_history,
                         timedelta(0)
                     ) / len(self.position_history)
                 })
@@ -1592,29 +1554,37 @@ class TradingBot:
         logging.info(f"Discord notifications channel set")
 
     async def send_notification(self, message: str, is_update: bool = False, part: tuple = None):
-        """Send notification to Discord channel with improved handling for long messages"""
+        """Send notification to Discord channel with embeds"""
         try:
             if not self.discord_channel:
                 return
                 
-            # Format part number if provided
-            if part:
-                current, total = part
-                message = f"[Part {current}/{total}]\n{message}"
-                
-            # Add update indicator if it's an interval update
+            # Create embed
+            embed = discord.Embed(
+                description=message,
+                color=discord.Color.blue() if is_update else discord.Color.green()
+            )
+            
+            # Add header based on type
             if is_update:
                 timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                message = f"[{timestamp}] {message}"
-                
-            # Split message if too long
-            if len(message) > 2000:
-                chunks = [message[i:i+1900] for i in range(0, len(message), 1900)]
+                embed.title = f"Trading Update ({timestamp})"
+                if part:
+                    current, total = part
+                    embed.title += f" - Part {current}/{total}"
+            
+            # Split message if too long (Discord embed limit is 4096 characters)
+            if len(message) > 4000:
+                chunks = [message[i:i+3900] for i in range(0, len(message), 3900)]
                 for i, chunk in enumerate(chunks, 1):
-                    chunk_msg = f"[Part {i}/{len(chunks)}]\n{chunk}"
-                    await self.discord_channel.send(chunk_msg)
+                    embed = discord.Embed(
+                        title=f"Trading Update - Part {i}/{len(chunks)}",
+                        description=chunk,
+                        color=discord.Color.blue() if is_update else discord.Color.green()
+                    )
+                    await self.discord_channel.send(embed=embed)
             else:
-                await self.discord_channel.send(message)
+                await self.discord_channel.send(embed=embed)
                 
         except Exception as e:
             logging.error(f"Error sending notification: {str(e)}")
@@ -1649,7 +1619,7 @@ class TradingBot:
             logging.error(f"Error sending trade notification: {str(e)}")
 
     async def send_interval_update(self, analysis_results: Dict[str, Dict[str, Any]]):
-        """Send periodic update of all watched coins"""
+        """Send periodic update of analysis results"""
         try:
             if not self.watched_coins:
                 return
@@ -1658,13 +1628,12 @@ class TradingBot:
             
             for symbol, analysis in analysis_results.items():
                 try:
-                    # Extract analysis data
+                    signals = analysis['signals']
                     prediction = analysis['prediction']
                     current_price = analysis['current_price']
                     rsi = analysis['rsi']
                     volume_data = analysis['volume_data']
                     ma_data = analysis['ma_data']
-                    signals = analysis['signals']
                     
                     # Determine action based on signals
                     action = "HOLD"
@@ -1673,7 +1642,7 @@ class TradingBot:
                     elif signals['sell_signals'] >= signals['required_signals']:
                         action = "SELL SIGNAL"
                     
-                    # Format coin entry
+                    # Format update message
                     entry = f"{symbol}: ${current_price:.2f}\n"
                     entry += f"Action: {action}\n"
                     entry += f"Buy Strength: {signals['buy_strength']:.0f}%\n"
@@ -1690,30 +1659,8 @@ class TradingBot:
                     message += f"{symbol}: Error analyzing - {str(e)}\n\n"
                     continue
             
-            # Split into chunks if needed
-            if len(message) > 1900:  # Leave room for header
-                chunks = []
-                current_chunk = "Periodic Trading Update\n\n"
-                
-                # Split by coin entries
-                entries = message.split('\n\n')[1:]  # Skip header
-                
-                for entry in entries:
-                    if len(current_chunk) + len(entry) + 2 <= 1900:
-                        current_chunk += entry + "\n\n"
-                    else:
-                        chunks.append(current_chunk)
-                        current_chunk = "Periodic Trading Update\n\n" + entry + "\n\n"
-                
-                # Add the last chunk if not empty
-                if current_chunk.strip() != "Periodic Trading Update":
-                    chunks.append(current_chunk)
-                
-                # Send each chunk with proper numbering
-                for i, chunk in enumerate(chunks, 1):
-                    await self.send_notification(chunk, is_update=True, part=(i, len(chunks)))
-            else:
-                await self.send_notification(message, is_update=True)
+            # Send the formatted message
+            await self.send_notification(message, is_update=True)
                 
         except Exception as e:
             logging.error(f"Error in interval update: {str(e)}")
