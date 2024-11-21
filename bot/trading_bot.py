@@ -1075,13 +1075,29 @@ class TradingBot:
             max_positions = 5  # Add this as a configurable parameter
             current_positions = len(self.paper_positions if self.paper_trading else self.positions)
             if current_positions >= max_positions:
+                logging.info(f"Maximum positions ({max_positions}) reached")
                 return False
                 
             # Check total exposure
-            total_exposure = sum(pos.current_value for pos in (self.paper_positions if self.paper_trading else self.positions).values())
+            total_exposure = 0
+            positions = self.paper_positions if self.paper_trading else self.positions
+            
+            for symbol, pos in positions.items():
+                try:
+                    current_price = float(self.client.get_product(f"{symbol}-USD").price)
+                    position_value = pos.quantity * current_price
+                    total_exposure += position_value
+                except Exception as e:
+                    logging.error(f"Error calculating position value for {symbol}: {str(e)}")
+                    continue
+            
             max_exposure = self.paper_balance * 0.75 if self.paper_trading else self.max_position_size * 3
             
-            return total_exposure < max_exposure
+            if total_exposure >= max_exposure:
+                logging.info(f"Maximum exposure reached (${total_exposure:.2f} / ${max_exposure:.2f})")
+                return False
+                
+            return True
             
         except Exception as e:
             logging.error(f"Error checking position limits: {str(e)}")
