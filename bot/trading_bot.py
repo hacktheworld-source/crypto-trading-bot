@@ -1033,10 +1033,9 @@ class TradingBot:
                 logging.info(f"Trading not active for {symbol}")
                 return False
             
-            # Check trading hours
+            # Log trading hours but don't restrict trading
             if not self._is_good_trading_hour():
-                logging.info(f"Outside trading hours for {symbol}")
-                return False
+                logging.info(f"Note: Trading outside normal hours for {symbol}")
             
             # Get current price and position info
             current_price = float(self.client.get_product(f"{symbol}-USD").price)
@@ -1678,14 +1677,17 @@ class TradingBot:
         except Exception as e:
             logging.error(f"Error sending alert: {str(e)}")
 
-    def _analyze_price_prediction(self, symbol: str) -> Dict[str, Any]:
-        """Make a unified price movement prediction"""
+    async def _analyze_price_prediction(self, symbol: str) -> Dict[str, Any]:
+        """Make a unified price movement prediction with caching"""
         try:
-            # Get all indicators
-            rsi = self.calculate_rsi(symbol)
-            volume_data = self.analyze_volume(symbol)
-            ma_data = self.calculate_moving_averages(symbol)
-            sentiment = self.analyze_market_sentiment(symbol)
+            # Get all indicators in parallel
+            tasks = [
+                self.calculate_rsi(symbol),
+                self.analyze_volume(symbol),
+                self.calculate_moving_averages(symbol),
+                self.analyze_market_sentiment(symbol)
+            ]
+            rsi, volume_data, ma_data, sentiment = await asyncio.gather(*tasks)
             
             # Determine overall market prediction
             bullish_signals = []
@@ -1766,7 +1768,6 @@ class TradingBot:
             return {
                 'highs': sorted(set(highs))[-5:],  # Last 5 unique highs
                 'lows': sorted(set(lows))[:5]      # Last 5 unique lows
-            }
         except Exception as e:
             logging.error(f"Error getting highs/lows for {symbol}: {str(e)}")
             return {'highs': [], 'lows': []}
