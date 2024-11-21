@@ -262,10 +262,7 @@ class TradingBot:
         try:
             # Check if we can open new positions
             if not self._can_open_new_position():
-                return
-            
-            # Check trading hours
-            if not self._is_good_trading_hour():
+                logging.info(f"Cannot open new position for {symbol} - position limit reached")
                 return
             
             # Use the signals we already calculated
@@ -289,7 +286,11 @@ class TradingBot:
                         decision_factors.extend(prediction['bullish_signals'])
                         
                         await self._place_buy_order(symbol, quantity, decision_factors)
-                        
+                    else:
+                        logging.info(f"Price moved too much for {symbol}, aborting buy")
+                else:
+                    logging.info(f"Position size too small for {symbol}")
+                    
         except Exception as e:
             logging.error(f"Error analyzing entry for {symbol}: {str(e)}")
             raise
