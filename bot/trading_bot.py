@@ -711,7 +711,7 @@ class TradingBot:
             return True
             
         except Exception as e:
-            error_msg = f"Error placing {mode} sell order for {symbol}: {str(e)}"
+            error_msg = f"Error placing {mode} sell order for {symbol}: {str(e)}")
             logging.error(error_msg)
             await self.send_notification(f"❌ {error_msg}")
             return False
@@ -1026,14 +1026,16 @@ class TradingBot:
             return 0
 
     def _should_trade(self, symbol: str, action: str) -> bool:
-        """Enhanced validation for trading decisions"""
+        """Enhanced validation for trading decisions with logging"""
         try:
             # Check if trading is active
             if not (self.trading_active or self.paper_trading):
+                logging.info(f"Trading not active for {symbol}")
                 return False
             
             # Check trading hours
             if not self._is_good_trading_hour():
+                logging.info(f"Outside trading hours for {symbol}")
                 return False
             
             # Get current price and position info
@@ -1044,27 +1046,26 @@ class TradingBot:
             if action == 'BUY':
                 # Check if we already have a position
                 if position:
+                    logging.info(f"Already have position in {symbol}")
                     return False
                 
                 # Check if we have enough balance
                 required_balance = self._calculate_position_size(symbol, self.paper_trading)
                 if self.paper_trading:
                     if self.paper_balance < required_balance:
+                        logging.info(f"Insufficient paper balance for {symbol}")
                         return False
                 else:
                     if float(self.client.get_account('USD').available_balance.value) < required_balance:
+                        logging.info(f"Insufficient real balance for {symbol}")
                         return False
-                    
-            elif action == 'SELL':
-                # Check if we have a position to sell
-                if not position:
-                    return False
-                
+            
+            logging.info(f"Trade validated for {symbol} ({action})")
             return True
             
         except Exception as e:
             logging.error(f"Error in _should_trade for {symbol}: {str(e)}")
-            return False  # Default to not trading on error
+            return False
 
     def _is_good_trading_hour(self) -> bool:
         """Check if current hour is good for trading"""
