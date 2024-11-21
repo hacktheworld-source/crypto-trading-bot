@@ -98,78 +98,32 @@ class TradingBot:
         return "Trading bot stopped successfully" if was_active else "Trading bot is already stopped"
         
     async def _trading_loop(self):
-        """Main trading loop"""
+        """Enhanced main trading loop with better analysis and risk management"""
         while self.trading_active or self.paper_trading:
             try:
+                # Send interval update
+                await self.send_interval_update()
+                
                 for symbol in self.watched_coins:
                     try:
-                        # Get current price and validate
-                        current_price = self.get_current_price(symbol)
-                        if current_price is None:
-                            logging.warning(f"Skipping analysis for {symbol} - Unable to get current price")
-                            continue
-                            
-                        # Calculate RSI and validate
-                        rsi = self.calculate_rsi(symbol)
-                        if rsi is None:
-                            logging.warning(f"Skipping analysis for {symbol} - Unable to calculate RSI")
-                            continue
-                            
+                        # Get comprehensive analysis
+                        prediction = self._analyze_price_prediction(symbol)
+                        current_price = prediction['current_price']
+                        
                         # Get position info
                         position = self.paper_positions.get(symbol) if self.paper_trading else self.positions.get(symbol)
                         
                         # Log analysis
                         mode = "Paper" if self.paper_trading else "Real"
-                        logging.info(f"{mode} Analysis - {symbol}: Price=${current_price:.2f}, RSI={rsi:.2f}")
+                        logging.info(f"{mode} Analysis - {symbol}: ${current_price:.2f}, Score: {prediction['prediction_score']:.1f}")
                         
-                        # Check if we already have a position
                         if position:
-                            # Validate position before making sell decision
-                            if not self._validate_position(position, current_price):
-                                logging.warning(f"Invalid position data for {symbol}, skipping sell analysis")
-                                continue
-                                
-                            # Calculate profit metrics
-                            profit_info = position.calculate_profit(current_price)
-                            
-                            # Check sell conditions
-                            if (rsi > self.rsi_overbought or 
-                                profit_info['profit_percentage'] <= -self.stop_loss_percentage or
-                                profit_info['profit_percentage'] >= self.take_profit_percentage):
-                                
-                                # Double check before selling
-                                confirmation_price = self.get_current_price(symbol)
-                                if confirmation_price is None or abs(confirmation_price - current_price) / current_price > 0.02:
-                                    logging.warning(f"Price changed significantly during sell analysis of {symbol}, aborting sell")
-                                    continue
-                                    
-                                await self._place_sell_order(symbol, position.quantity)
-                                
+                            # Position Management
+                            await self._manage_position(symbol, position, prediction, current_price)
                         else:
-                            # No position - check buy conditions
-                            if rsi < self.rsi_oversold:
-                                # Validate conditions before buying
-                                confirmation_price = self.get_current_price(symbol)
-                                if confirmation_price is None or abs(confirmation_price - current_price) / current_price > 0.02:
-                                    logging.warning(f"Price changed significantly during buy analysis of {symbol}, aborting buy")
-                                    continue
-                                    
-                                # Calculate quantity based on trade amount
-                                quantity = self.trade_amount / current_price
-                                
-                                # Check if we have enough balance
-                                if self.paper_trading:
-                                    if self.paper_balance < self.trade_amount:
-                                        logging.warning(f"Insufficient paper balance for {symbol}")
-                                        continue
-                                else:
-                                    balance = self.get_account_balance()
-                                    if balance['balances'].get('USD', {}).get('balance', 0) < self.trade_amount:
-                                        logging.warning(f"Insufficient real balance for {symbol}")
-                                        continue
-                                        
-                                await self._place_buy_order(symbol, quantity)
-                                
+                            # Entry Analysis
+                            await self._analyze_entry(symbol, prediction, current_price)
+                            
                     except Exception as e:
                         logging.error(f"Error analyzing {symbol}: {str(e)}")
                         await self.send_notification(f"❌ Error analyzing {symbol}: {str(e)}")
@@ -181,10 +135,110 @@ class TradingBot:
             except Exception as e:
                 logging.error(f"Error in trading loop: {str(e)}")
                 await self.send_notification(f"❌ Error in trading loop: {str(e)}")
-                await asyncio.sleep(60)  # Wait a minute before retrying
+                await asyncio.sleep(60)
                 
         logging.info("Trading loop stopped")
 
+    async def _manage_position(self, symbol: str, position: Position, prediction: Dict[str, Any], current_price: float):
+        """Enhanced position management with dynamic exits"""
+        try:
+            profit_info = position.calculate_profit(current_price)
+            position.update_price(current_price)
+            
+            # Check for stop loss
+            stop_loss = self._calculate_stop_loss(symbol, position.entry_price)
+            if current_price <= stop_loss:
+                logging.info(f"Stop loss triggered for {symbol} at {profit_info['profit_percentage']}%")
+                await self._place_sell_order(symbol, position.quantity)
+                return
+                
+            # Dynamic take profit based on market conditions
+            if prediction['prediction_score'] < -50:  # Strong bearish signals
+                # Lower take profit threshold
+                take_profit_threshold = self.take_profit_percentage * 0.7
+            else:
+                take_profit_threshold = self.take_profit_percentage
+                
+            # Check if we should take profits
+            if profit_info['profit_percentage'] >= take_profit_threshold:
+                if prediction['prediction_score'] > 0:  # Still bullish
+                    # Take partial profits
+                    sell_quantity = position.quantity * 0.5
+                    logging.info(f"Taking partial profits for {symbol} at {profit_info['profit_percentage']}%")
+                    await self._place_sell_order(symbol, sell_quantity)
+                else:
+                    # Take full profits
+                    logging.info(f"Taking full profits for {symbol} at {profit_info['profit_percentage']}%")
+                    await self._place_sell_order(symbol, position.quantity)
+                    
+        except Exception as e:
+            logging.error(f"Error managing position for {symbol}: {str(e)}")
+            raise
+
+    async def _analyze_entry(self, symbol: str, prediction: Dict[str, Any], current_price: float):
+        """Enhanced entry analysis with multiple confirmations"""
+        try:
+            # Check if we can open new positions
+            if not self._can_open_new_position():
+                return
+                
+            # Check trading hours
+            if not self._is_good_trading_hour():
+                return
+                
+            # Check if price is near support
+            levels = self._get_recent_highs_lows(symbol)
+            is_near_support = any(
+                abs(current_price - low) / low < 0.02
+                for low in levels['lows']
+            )
+            
+            # Entry conditions
+            conditions_met = (
+                prediction['prediction_score'] > 30 and  # Strong bullish signals
+                is_near_support and
+                self.analyze_volume(symbol)['volume_ratio'] > 1.2
+            )
+            
+            if conditions_met:
+                # Calculate position size
+                position_size = self._calculate_position_size(symbol, self.paper_trading)
+                if position_size > 0:
+                    # Double check price hasn't moved significantly
+                    new_price = float(self.client.get_product(f"{symbol}-USD").price)
+                    if abs(new_price - current_price) / current_price <= 0.01:  # 1% price movement max
+                        quantity = position_size / current_price
+                        await self._place_buy_order(symbol, quantity)
+                        
+        except Exception as e:
+            logging.error(f"Error analyzing entry for {symbol}: {str(e)}")
+            raise
+
+    def _calculate_stop_loss(self, symbol: str, entry_price: float) -> float:
+        """Calculate dynamic stop loss based on ATR and volatility"""
+        try:
+            atr = self._calculate_atr(symbol)
+            volatility = self._calculate_volatility(symbol)
+            
+            # Base stop loss (ATR-based)
+            atr_stop = entry_price - (atr * 2)
+            
+            # Percentage-based stop loss
+            pct_stop = entry_price * (1 - self.stop_loss_percentage/100)
+            
+            # Use the more conservative stop loss
+            stop_loss = max(atr_stop, pct_stop)
+            
+            # Adjust for volatility
+            if volatility > 0.05:  # High volatility
+                stop_loss = entry_price - (atr * 2.5)  # Wider stop for volatile markets
+                
+            return stop_loss
+            
+        except Exception as e:
+            logging.error(f"Error calculating stop loss: {str(e)}")
+            return entry_price * (1 - self.stop_loss_percentage/100)  # Fallback to simple percentage
+    
     def _validate_position(self, position, current_price):
         """Validate position data before making trading decisions"""
         try:
@@ -654,141 +708,120 @@ class TradingBot:
             raise
 
     def _calculate_position_size(self, symbol: str, is_paper: bool = False) -> float:
-        """Calculate appropriate position size based on portfolio and risk"""
+        """Calculate appropriate position size based on risk and volatility"""
         try:
-            # Get available funds based on trading mode
+            # Get available funds
             if is_paper:
                 available_funds = self.paper_balance
                 portfolio_value = self.get_paper_balance()['total_value']
             else:
-                available_funds = float(self.get_account_balance()['balances'].get('USD', {}).get('balance', 0))
-                portfolio_value = self.get_account_balance()['total_usd_value']
+                balance = self.get_account_balance()
+                available_funds = float(balance['balances'].get('USD', {}).get('balance', 0))
+                portfolio_value = balance['total_usd_value']
             
-            # Never risk more than 2% of total portfolio on any single trade
+            # Calculate volatility
+            volatility = self._calculate_volatility(symbol)
+            
+            # Base position size (2% max risk per trade)
             max_risk_amount = portfolio_value * 0.02
             
-            # Calculate position size based on stop loss
+            # Adjust for volatility
+            volatility_multiplier = 1.0
+            if volatility > 0.05:  # High volatility
+                volatility_multiplier = 0.5
+            elif volatility > 0.03:  # Medium volatility
+                volatility_multiplier = 0.75
+            
+            # Calculate ATR for dynamic position sizing
+            atr = self._calculate_atr(symbol)
             current_price = float(self.client.get_product(f"{symbol}-USD").price)
-            risk_per_share = current_price * (self.stop_loss_percentage / 100)
             
-            # Consider current market conditions for position sizing
-            market_conditions = self._check_market_conditions(symbol)
-            sentiment_multiplier = 1.0
-            if market_conditions['sentiment_score'] > 50:  # Strong bullish sentiment
-                sentiment_multiplier = 1.2
-            elif market_conditions['sentiment_score'] < -50:  # Strong bearish sentiment
-                sentiment_multiplier = 0.8
+            # Use ATR to determine position size
+            if atr > 0:
+                risk_per_unit = atr * 2  # 2 ATR units for stop loss
+                position_size = (max_risk_amount / risk_per_unit) * current_price
+            else:
+                position_size = self.trade_amount
             
-            # Calculate base position size
+            # Apply volatility multiplier and other limits
             position_size = min(
-                max_risk_amount / risk_per_share * current_price,
+                position_size * volatility_multiplier,
                 available_funds * 0.5,  # Never use more than 50% of available funds
                 self.max_position_size
-            ) * sentiment_multiplier
+            )
             
             # Ensure minimum trade size
-            min_trade = 5.0 if not is_paper else 1.0  # Lower minimum for paper trading
+            min_trade = 5.0 if not is_paper else 1.0
             return max(min_trade, position_size) if position_size >= min_trade else 0
-                
+            
         except Exception as e:
             logging.error(f"Error calculating position size: {str(e)}")
             return 0
 
-    def _check_market_conditions(self, symbol: str) -> Dict[str, Any]:
-        """Analyze current market conditions for trading"""
-        try:
-            # Get sentiment analysis
-            sentiment = self.analyze_market_sentiment(symbol)
-            
-            # Get volatility (using price range as simple measure)
-            prices = self._get_historical_prices(symbol, 
-                                              start=datetime.now() - timedelta(days=7),
-                                              end=datetime.now())
-            price_range = (prices.max() - prices.min()) / prices.min() * 100
-            
-            # Check if market is too volatile
-            is_volatile = price_range > 10  # Consider >10% range as volatile
-            
-            # Check trading hours (some hours historically have more volatility)
-            current_hour = datetime.now().hour
-            is_high_activity = 13 <= current_hour <= 21  # 9 AM - 5 PM EST
-            
-            # Get overall market trend (using BTC as proxy)
-            if symbol != 'BTC':
-                btc_sentiment = self.analyze_market_sentiment('BTC')
-                market_aligned = (
-                    (sentiment['overall_sentiment'] == btc_sentiment['overall_sentiment']) or
-                    (sentiment['sentiment_score'] * btc_sentiment['sentiment_score'] > 0)
-                )
-            else:
-                market_aligned = True
-            
-            conditions = {
-                'sentiment': sentiment['overall_sentiment'],
-                'sentiment_score': sentiment['sentiment_score'],
-                'is_volatile': is_volatile,
-                'price_range_7d': price_range,
-                'is_high_activity': is_high_activity,
-                'market_aligned': market_aligned,
-                'suitable_for_trading': (
-                    not is_volatile and
-                    (is_high_activity or abs(sentiment['sentiment_score']) > 50) and
-                    market_aligned
-                )
-            }
-            
-            logging.info(f"Market conditions for {symbol}: {conditions}")
-            return conditions
-            
-        except Exception as e:
-            logging.error(f"Error checking market conditions: {str(e)}")
-            raise
-
     def _should_trade(self, symbol: str, action: str) -> bool:
-        """Enhanced trade confirmation with multiple timeframes"""
+        """Enhanced trade validation with support/resistance"""
         try:
-            # Get current price and volume data
             current_price = float(self.client.get_product(f"{symbol}-USD").price)
-            volume_data = self.analyze_volume(symbol)
             
-            # Check if we have enough funds
-            position_size = self._calculate_position_size(symbol)
-            if position_size < 5.0:  # Minimum trade size
-                return False
+            # Get support/resistance levels
+            levels = self._get_recent_highs_lows(symbol)
             
+            # Check if we're at a good price level
             if action == 'BUY':
-                # Price must be above 20 EMA on shorter timeframe for uptrend confirmation
-                ma_data = self.calculate_moving_averages(symbol)
-                price_above_ema = current_price > ma_data['ema_20']
+                # Check if price is near support
+                is_near_support = any(
+                    abs(current_price - low) / low < 0.02  # Within 2% of support
+                    for low in levels['lows']
+                )
                 
-                # Volume should be increasing
-                volume_confirming = volume_data['volume_ratio'] > 1.2
+                # Additional buy conditions
+                volume_confirming = self.analyze_volume(symbol)['volume_ratio'] > 1.2
+                good_hour = self._is_good_trading_hour()
+                can_open = self._can_open_new_position()
                 
-                # Check if we're buying near recent support
-                recent_low = min(self._get_historical_prices(symbol, 
-                    datetime.now() - timedelta(days=7), 
-                    datetime.now()
-                ))
-                not_chasing = current_price < (recent_low * 1.1)  # Within 10% of recent low
-                
-                return price_above_ema and volume_confirming and not_chasing
+                return (is_near_support and volume_confirming and 
+                       good_hour and can_open)
                 
             else:  # SELL
-                # Don't sell if we're near support levels
-                recent_low = min(self._get_historical_prices(symbol, 
-                    datetime.now() - timedelta(days=7), 
-                    datetime.now()
-                ))
-                near_support = current_price < (recent_low * 1.05)
+                # Check if price is near resistance
+                is_near_resistance = any(
+                    abs(current_price - high) / high < 0.02  # Within 2% of resistance
+                    for high in levels['highs']
+                )
                 
-                # Volume should confirm downtrend
-                volume_confirming = volume_data['volume_ratio'] > 1.2
-                
-                return not near_support and volume_confirming
+                # Calculate minimum profit needed
+                position = self.paper_positions.get(symbol) if self.paper_trading else self.positions.get(symbol)
+                if position:
+                    min_profit = self._calculate_min_profit_target(position.entry_price)
+                    profit_info = position.calculate_profit(current_price)
+                    
+                    # Don't sell at a loss unless stop loss hit
+                    if (profit_info['profit_percentage'] < 0 and 
+                        profit_info['profit_percentage'] > -self.stop_loss_percentage):
+                        return False
+                    
+                return is_near_resistance
                 
         except Exception as e:
-            logging.error(f"Error in trade decision: {str(e)}")
+            logging.error(f"Error in trade validation: {str(e)}")
             return False
+
+    def _is_good_trading_hour(self) -> bool:
+        """Check if current hour is good for trading"""
+        hour = datetime.utcnow().hour
+        return 13 <= hour <= 21  # 9 AM - 5 PM EST
+
+    def _can_open_new_position(self) -> bool:
+        """Check if we can open a new position"""
+        max_positions = 3
+        current_positions = len(self.paper_positions if self.paper_trading else self.positions)
+        return current_positions < max_positions
+
+    def _calculate_min_profit_target(self, entry_price: float) -> float:
+        """Calculate minimum profit needed to cover fees"""
+        total_fee_percentage = 0.012  # 0.6% entry + 0.6% exit
+        min_profit = total_fee_percentage * 1.5  # 50% buffer over fees
+        return min_profit
 
     def get_position_info(self, symbol: Optional[str] = None) -> Dict[str, Any]:
         """Get information about current positions and holdings"""
@@ -1400,3 +1433,95 @@ class TradingBot:
         except Exception as e:
             logging.error(f"Error making price prediction for {symbol}: {str(e)}")
             raise
+
+    def _get_recent_highs_lows(self, symbol: str, days: int = 30) -> Dict[str, List[float]]:
+        """Get recent significant highs and lows"""
+        try:
+            end = datetime.now()
+            start = end - timedelta(days=days)
+            prices = self._get_historical_prices(symbol, start, end)
+            
+            # Calculate rolling max/min with a 5-day window
+            highs = []
+            lows = []
+            window = 5
+            
+            for i in range(window, len(prices) - window):
+                if prices[i] == max(prices[i-window:i+window+1]):
+                    highs.append(float(prices[i]))
+                if prices[i] == min(prices[i-window:i+window+1]):
+                    lows.append(float(prices[i]))
+            
+            return {
+                'highs': sorted(set(highs))[-5:],  # Last 5 unique highs
+                'lows': sorted(set(lows))[:5]      # Last 5 unique lows
+            }
+        except Exception as e:
+            logging.error(f"Error getting highs/lows for {symbol}: {str(e)}")
+            return {'highs': [], 'lows': []}
+
+    def _calculate_atr(self, symbol: str, period: int = 14) -> float:
+        """Calculate Average True Range"""
+        try:
+            end = datetime.now()
+            start = end - timedelta(days=period * 2)  # Get extra data for calculation
+            
+            # Get OHLC data
+            response = self.client.get_candles(
+                product_id=f"{symbol}-USD",
+                start=int(start.timestamp()),
+                end=int(end.timestamp()),
+                granularity="ONE_DAY"
+            )
+            
+            if not response.candles:
+                raise Exception("No candle data received")
+            
+            # Calculate True Range
+            tr_values = []
+            prev_close = None
+            
+            for candle in response.candles:
+                high = float(candle.high)
+                low = float(candle.low)
+                close = float(candle.close)
+                
+                if prev_close is not None:
+                    tr = max(
+                        high - low,  # Current high - low
+                        abs(high - prev_close),  # Current high - prev close
+                        abs(low - prev_close)    # Current low - prev close
+                    )
+                    tr_values.append(tr)
+                
+                prev_close = close
+            
+            # Calculate ATR
+            if tr_values:
+                atr = sum(tr_values[-period:]) / min(len(tr_values), period)
+                return atr
+            
+            return 0
+            
+        except Exception as e:
+            logging.error(f"Error calculating ATR for {symbol}: {str(e)}")
+            return 0
+
+    def _calculate_volatility(self, symbol: str, days: int = 14) -> float:
+        """Calculate price volatility"""
+        try:
+            end = datetime.now()
+            start = end - timedelta(days=days)
+            prices = self._get_historical_prices(symbol, start, end)
+            
+            # Calculate daily returns
+            returns = prices.pct_change().dropna()
+            
+            # Calculate volatility (standard deviation of returns)
+            volatility = float(returns.std())
+            
+            return volatility
+            
+        except Exception as e:
+            logging.error(f"Error calculating volatility for {symbol}: {str(e)}")
+            return 0
