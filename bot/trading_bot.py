@@ -149,71 +149,88 @@ class TradingBot:
         logging.info("Trading loop stopped")
 
     async def _manage_position(self, symbol: str, position: Position, prediction: Dict[str, Any], current_price: float):
-        """Enhanced position management with dynamic exits"""
+        """Enhanced position management with weighted exit signals"""
         try:
             profit_info = position.calculate_profit(current_price)
             position.update_price(current_price)
             
-            # Check for stop loss
+            # Calculate exit signals
+            exit_signals = 0
+            required_exit_signals = 3
+            
+            # Get analysis data
+            volume_data = self.analyze_volume(symbol)
+            ma_data = self.calculate_moving_averages(symbol)
+            rsi = prediction['rsi']
+            
+            # RSI signals
+            if rsi >= self.rsi_overbought:
+                exit_signals += 2
+            elif rsi > 60:
+                exit_signals += 1
+                
+            # Trend reversal signals
+            if ma_data['trend'] == 'Strong Downtrend':
+                exit_signals += 2
+            elif ma_data['trend'] == 'Weak Downtrend':
+                exit_signals += 1
+                
+            # Volume signals
+            if volume_data['volume_ratio'] > 1.5 and volume_data['price_change'] < 0:
+                exit_signals += 2
+            elif volume_data['volume_ratio'] > 1.2 and volume_data['price_change'] < 0:
+                exit_signals += 1
+                
+            # Prediction score signals
+            if prediction['prediction_score'] < -50:
+                exit_signals += 2
+            elif prediction['prediction_score'] < -30:
+                exit_signals += 1
+                
+            # Check stop loss first
             stop_loss = self._calculate_stop_loss(symbol, position.entry_price)
             if current_price <= stop_loss:
-                logging.info(f"Stop loss triggered for {symbol} at {profit_info['profit_percentage']}%")
-                
-                # Add decision factors for stop loss
                 decision_factors = [
                     "🛑 Stop Loss Triggered",
                     f"Entry Price: ${position.entry_price:.2f}",
                     f"Stop Loss Level: ${stop_loss:.2f}",
                     f"Current Price: ${current_price:.2f}",
-                    f"Loss: {profit_info['profit_percentage']:.2f}%",
-                    f"Market Sentiment: {prediction['sentiment']}"
+                    f"Loss: {profit_info['profit_percentage']:.2f}%"
                 ]
-                decision_factors.extend(prediction['bearish_signals'])
-                
                 await self._place_sell_order(symbol, position.quantity, decision_factors)
                 return
                 
-            # Dynamic take profit based on market conditions
-            if prediction['prediction_score'] < -50:  # Strong bearish signals
-                # Lower take profit threshold
-                take_profit_threshold = self.take_profit_percentage * 0.7
-            else:
-                take_profit_threshold = self.take_profit_percentage
+            # Check take profit with dynamic threshold
+            take_profit_threshold = (
+                self.take_profit_percentage * 0.7  # Lower threshold if bearish
+                if prediction['prediction_score'] < -30
+                else self.take_profit_percentage
+            )
+            
+            # Handle exits based on signals and profit
+            if exit_signals >= required_exit_signals or profit_info['profit_percentage'] >= take_profit_threshold:
+                # Determine if we should take partial or full profits
+                should_partial_exit = (
+                    prediction['prediction_score'] > 0 and  # Still somewhat bullish
+                    profit_info['profit_percentage'] >= take_profit_threshold
+                )
                 
-            # Check if we should take profits
-            if profit_info['profit_percentage'] >= take_profit_threshold:
-                if prediction['prediction_score'] > 0:  # Still bullish
-                    # Take partial profits
-                    sell_quantity = position.quantity * 0.5
-                    
-                    decision_factors = [
-                        "💰 Taking Partial Profits",
-                        f"Entry Price: ${position.entry_price:.2f}",
-                        f"Current Price: ${current_price:.2f}",
-                        f"Profit: {profit_info['profit_percentage']:.2f}%",
-                        f"Market Still Bullish (Score: {prediction['prediction_score']:.1f})",
-                        f"Selling: 50% of position",
-                        f"Market Sentiment: {prediction['sentiment']}"
-                    ]
-                    decision_factors.extend(prediction['bullish_signals'])
-                    
-                    logging.info(f"Taking partial profits for {symbol} at {profit_info['profit_percentage']}%")
-                    await self._place_sell_order(symbol, sell_quantity, decision_factors)
-                else:
-                    # Take full profits
-                    decision_factors = [
-                        "💰 Taking Full Profits",
-                        f"Entry Price: ${position.entry_price:.2f}",
-                        f"Current Price: ${current_price:.2f}",
-                        f"Profit: {profit_info['profit_percentage']:.2f}%",
-                        f"Bearish Signals Detected (Score: {prediction['prediction_score']:.1f})",
-                        f"Market Sentiment: {prediction['sentiment']}"
-                    ]
-                    decision_factors.extend(prediction['bearish_signals'])
-                    
-                    logging.info(f"Taking full profits for {symbol} at {profit_info['profit_percentage']}%")
-                    await self._place_sell_order(symbol, position.quantity, decision_factors)
-                    
+                quantity = position.quantity * (0.5 if should_partial_exit else 1.0)
+                decision_factors = [
+                    "💰 Taking Profits",
+                    f"Exit Signals: {exit_signals}/{required_exit_signals}",
+                    f"Entry Price: ${position.entry_price:.2f}",
+                    f"Current Price: ${current_price:.2f}",
+                    f"Profit: {profit_info['profit_percentage']:.2f}%",
+                    f"RSI: {rsi:.2f}",
+                    f"Trend: {ma_data['trend']}",
+                    f"Volume: {volume_data['volume_ratio']:.1f}x average",
+                    f"Prediction Score: {prediction['prediction_score']:.1f}",
+                    f"{'Partial' if should_partial_exit else 'Full'} Exit"
+                ]
+                
+                await self._place_sell_order(symbol, quantity, decision_factors)
+                
         except Exception as e:
             logging.error(f"Error managing position for {symbol}: {str(e)}")
             raise
@@ -224,26 +241,51 @@ class TradingBot:
             # Check if we can open new positions
             if not self._can_open_new_position():
                 return
-                
+            
             # Check trading hours
             if not self._is_good_trading_hour():
                 return
+            
+            # Get comprehensive analysis
+            volume_data = self.analyze_volume(symbol)
+            ma_data = self.calculate_moving_averages(symbol)
+            rsi = prediction['rsi']
+            
+            # Calculate entry signals with weights
+            entry_signals = 0
+            required_signals = 3  # Need at least 3 signals to enter
+            
+            # Technical signals
+            if rsi <= self.rsi_oversold:
+                entry_signals += 2  # Strong weight for oversold RSI
+            elif rsi < 40:  # Still somewhat oversold
+                entry_signals += 1
                 
-            # Check if price is near support
+            # Trend signals
+            if ma_data['trend'] == 'Strong Uptrend':
+                entry_signals += 2
+            elif ma_data['trend'] == 'Weak Uptrend':
+                entry_signals += 1
+                
+            # Volume signals
+            if volume_data['volume_ratio'] > 1.5 and volume_data['price_change'] > 0:
+                entry_signals += 2  # Strong volume with price increase
+            elif volume_data['volume_ratio'] > 1.2:
+                entry_signals += 1
+                
+            # Support level confirmation
             levels = self._get_recent_highs_lows(symbol)
-            is_near_support = any(
-                abs(current_price - low) / low < 0.02
-                for low in levels['lows']
-            )
-            
-            # Entry conditions
-            conditions_met = (
-                prediction['prediction_score'] > 30 and  # Strong bullish signals
-                is_near_support and
-                self.analyze_volume(symbol)['volume_ratio'] > 1.2
-            )
-            
-            if conditions_met:
+            if any(abs(current_price - low) / low < 0.02 for low in levels['lows']):
+                entry_signals += 1
+                
+            # Prediction score confirmation
+            if prediction['prediction_score'] > 50:
+                entry_signals += 2
+            elif prediction['prediction_score'] > 30:
+                entry_signals += 1
+                
+            # Check if we have enough signals to enter
+            if entry_signals >= required_signals:
                 # Calculate position size
                 position_size = self._calculate_position_size(symbol, self.paper_trading)
                 if position_size > 0:
@@ -251,10 +293,15 @@ class TradingBot:
                     new_price = float(self.client.get_product(f"{symbol}-USD").price)
                     if abs(new_price - current_price) / current_price <= 0.01:  # 1% price movement max
                         quantity = position_size / current_price
+                        
+                        # Prepare detailed decision factors
                         decision_factors = [
+                            f"Entry Signals Score: {entry_signals}/{required_signals}",
+                            f"RSI: {rsi:.2f}",
+                            f"Trend: {ma_data['trend']}",
+                            f"Volume: {volume_data['volume_ratio']:.1f}x average",
                             f"Prediction Score: {prediction['prediction_score']:.1f}",
-                            "Price near support level",
-                            f"Volume: {self.analyze_volume(symbol)['volume_ratio']:.1f}x average"
+                            "Price near support level" if any(abs(current_price - low) / low < 0.02 for low in levels['lows']) else "No nearby support"
                         ]
                         decision_factors.extend(prediction['bullish_signals'])
                         
@@ -1119,51 +1166,59 @@ class TradingBot:
                 'long_term': 'bullish' if price_change_long > 0 else 'bearish'
             }
             
-            # Calculate strength of trend
-            trend_strength = sum([
-                1 if momentum_signals['short_term'] == 'bullish' else -1,
-                1 if momentum_signals['medium_term'] == 'bullish' else -1,
-                1 if momentum_signals['long_term'] == 'bullish' else -1
-            ])
+            # Count bullish signals
+            bullish_signals = 0
+            total_signals = 4  # Total possible signals
             
-            # Analyze volume trend
-            volume_trend = 'bullish' if volume_data['volume_ratio'] > 1.0 else 'bearish'
+            # MA trend signal
+            if ma_data['trend'] in ['Strong Uptrend', 'Weak Uptrend']:
+                bullish_signals += 1
+            elif ma_data['trend'] == 'Downtrend':
+                bullish_signals -= 1
+                
+            # Volume trend signal
+            if volume_data['volume_ratio'] > 1.0 and volume_data['price_change'] > 0:
+                bullish_signals += 1
+            elif volume_data['volume_ratio'] > 1.0 and volume_data['price_change'] < 0:
+                bullish_signals -= 1
+                
+            # RSI signal
+            if rsi < 30:  # Oversold
+                bullish_signals += 1
+            elif rsi > 70:  # Overbought
+                bullish_signals -= 1
+                
+            # Momentum signal (weighted more heavily)
+            momentum_score = sum(
+                1 if momentum_signals[timeframe] == 'bullish' else -1
+                for timeframe in ['short_term', 'medium_term', 'long_term']
+            )
             
-            # Combine all signals
-            bullish_signals = sum([
-                1 if ma_data['trend'] in ['Strong Uptrend', 'Weak Uptrend'] else 0,
-                1 if volume_trend == 'bullish' else 0,
-                1 if rsi < 50 else 0,  # RSI below 50 suggests room for growth
-                1 if trend_strength > 0 else 0
-            ])
+            # Calculate final sentiment score (-100 to 100)
+            base_score = (bullish_signals / total_signals) * 100
+            momentum_influence = (momentum_score / 3) * 50  # Momentum can shift score by up to ±50
+            sentiment_score = base_score + momentum_influence
             
-            # Calculate overall sentiment score (-100 to 100)
-            sentiment_score = (bullish_signals / 4) * 100 - 50
+            # Determine sentiment category
+            overall_sentiment = (
+                'Strong Buy' if sentiment_score > 75 else
+                'Buy' if sentiment_score > 25 else
+                'Neutral (Bullish)' if sentiment_score > 0 else
+                'Neutral (Bearish)' if sentiment_score > -25 else
+                'Sell' if sentiment_score > -75 else
+                'Strong Sell'
+            )
             
-            analysis = {
+            return {
                 'sentiment_score': sentiment_score,
-                'overall_sentiment': 'Strong Buy' if sentiment_score > 75 else
-                                   'Buy' if sentiment_score > 25 else
-                                   'Neutral' if sentiment_score > -25 else
-                                   'Sell' if sentiment_score > -75 else
-                                   'Strong Sell',
+                'overall_sentiment': overall_sentiment,
+                'momentum': momentum_signals,
                 'price_changes': {
                     'short_term': price_change_short,
                     'medium_term': price_change_medium,
                     'long_term': price_change_long
-                },
-                'momentum': momentum_signals,
-                'trend_strength': trend_strength,
-                'volume_trend': volume_trend,
-                'technical_indicators': {
-                    'ma_trend': ma_data['trend'],
-                    'rsi': rsi,
-                    'volume_ratio': volume_data['volume_ratio']
                 }
             }
-            
-            logging.info(f"Market sentiment analysis for {symbol}: {analysis}")
-            return analysis
             
         except Exception as e:
             logging.error(f"Error analyzing market sentiment for {symbol}: {str(e)}")
@@ -1403,12 +1458,49 @@ class TradingBot:
                     volume_data = self.analyze_volume(symbol)
                     ma_data = self.calculate_moving_averages(symbol)
                     
+                    # Buy conditions (more flexible)
+                    buy_signals = 0
+                    required_buy_signals = 3  # Need at least 3 signals to buy
+                    
+                    # RSI as a factor, not requirement
+                    if rsi <= self.rsi_oversold:
+                        buy_signals += 2  # Strong weight
+                    elif rsi < 40:  # Still somewhat oversold
+                        buy_signals += 1
+                        
+                    # Other factors
+                    if prediction['prediction_score'] > 30:
+                        buy_signals += 1
+                    if volume_data['volume_ratio'] > 1.2:
+                        buy_signals += 1
+                    if ma_data['trend'] in ['Strong Uptrend', 'Weak Uptrend']:
+                        buy_signals += 1
+                        
+                    # Sell conditions (more flexible)
+                    sell_signals = 0
+                    required_sell_signals = 3  # Need at least 3 signals to sell
+                    
+                    # RSI as a factor, not requirement
+                    if rsi >= self.rsi_overbought:
+                        sell_signals += 2  # Strong weight
+                    elif rsi > 60:  # Still somewhat overbought
+                        sell_signals += 1
+                        
+                    # Other factors
+                    if prediction['prediction_score'] < -30:
+                        sell_signals += 1
+                    if volume_data['volume_ratio'] > 1.5 and volume_data['price_change'] < 0:
+                        sell_signals += 1
+                    if ma_data['trend'] == 'Downtrend':
+                        sell_signals += 1
+                    
                     # Determine action
                     action = "HOLD"
-                    if rsi <= self.rsi_oversold and self._should_trade(symbol, 'BUY'):
-                        action = "BUY SIGNAL"
-                    elif rsi >= self.rsi_overbought and self._should_trade(symbol, 'SELL'):
-                        action = "SELL SIGNAL"
+                    if can_trade:
+                        if buy_signals >= required_buy_signals:
+                            action = "BUY SIGNAL"
+                        elif sell_signals >= required_sell_signals:
+                            action = "SELL SIGNAL"
                     
                     # Add to message
                     message += f"{symbol}:\n"
@@ -1485,38 +1577,42 @@ class TradingBot:
             bullish_signals = []
             bearish_signals = []
             
-            # RSI signals
+            # Calculate prediction score components
+            technical_score = 0
+            total_technicals = 3  # RSI, Volume, Trend
+            
+            # RSI component
             if rsi <= self.rsi_oversold:
+                technical_score += 1
                 bullish_signals.append(f"RSI oversold ({rsi:.2f})")
             elif rsi >= self.rsi_overbought:
+                technical_score -= 1
                 bearish_signals.append(f"RSI overbought ({rsi:.2f})")
                 
-            # Volume signals
+            # Volume component
             if volume_data['volume_ratio'] > 1.5:
                 if volume_data['price_change'] > 0:
+                    technical_score += 1
                     bullish_signals.append(f"High volume upward movement ({volume_data['volume_ratio']:.1f}x)")
                 else:
+                    technical_score -= 1
                     bearish_signals.append(f"High volume downward movement ({volume_data['volume_ratio']:.1f}x)")
                     
-            # Trend signals
+            # Trend component
             if ma_data['trend'] in ['Strong Uptrend', 'Weak Uptrend']:
+                technical_score += 1
                 bullish_signals.append(f"Upward trend: {ma_data['trend']}")
             elif ma_data['trend'] == 'Downtrend':
+                technical_score -= 1
                 bearish_signals.append("Downward trend")
                 
-            # Sentiment signals
-            if sentiment['sentiment_score'] > 50:
-                bullish_signals.append(f"Bullish sentiment ({sentiment['sentiment_score']:.0f})")
-            elif sentiment['sentiment_score'] < -50:
-                bearish_signals.append(f"Bearish sentiment ({sentiment['sentiment_score']:.0f})")
-                
-            # Calculate overall prediction score (-100 to +100)
-            total_signals = len(bullish_signals) + len(bearish_signals)
-            if total_signals == 0:
-                prediction_score = 0
-            else:
-                prediction_score = ((len(bullish_signals) - len(bearish_signals)) / total_signals) * 100
-                
+            # Calculate final prediction score (-100 to 100)
+            technical_influence = (technical_score / total_technicals) * 100
+            sentiment_influence = sentiment['sentiment_score']
+            
+            # Combine technical and sentiment scores (60/40 weight)
+            prediction_score = (technical_influence * 0.6) + (sentiment_influence * 0.4)
+            
             return {
                 'prediction_score': prediction_score,
                 'bullish_signals': bullish_signals,
