@@ -119,7 +119,7 @@ class TradingBot:
                 for symbol in self.watched_coins:
                     try:
                         # Get comprehensive analysis
-                        prediction = self._analyze_price_prediction(symbol)
+                        prediction = await self._analyze_price_prediction(symbol)  # Add await here
                         current_price = prediction['current_price']
                         rsi = prediction['rsi']
                         volume_data = self.analyze_volume(symbol)
