@@ -251,6 +251,9 @@ class TradingBot:
             ma_data = self.calculate_moving_averages(symbol)
             rsi = prediction['rsi']
             
+            # Get support/resistance levels
+            levels = self._get_recent_highs_lows(symbol)
+            
             # Calculate entry signals with weights
             entry_signals = 0
             required_signals = 3
@@ -1615,7 +1618,6 @@ class TradingBot:
             for symbol in self.watched_coins:
                 try:
                     # Get comprehensive analysis
-                    sentiment = self.analyze_market_sentiment(symbol)
                     prediction = self._analyze_price_prediction(symbol)
                     current_price = prediction['current_price']
                     rsi = prediction['rsi']
@@ -1676,28 +1678,43 @@ class TradingBot:
                     elif sell_signals >= required_signals:
                         action = "SELL SIGNAL"
                     
-                    # Format message
-                    message += f"{symbol}: ${current_price:.2f}\n"
-                    message += f"Action: {action}\n"
+                    # Format coin entry
+                    entry = f"{symbol}: ${current_price:.2f}\n"
+                    entry += f"Action: {action}\n"
+                    entry += f"Buy Strength: {min((buy_signals / required_signals) * 100, 100):.0f}%\n"
+                    entry += f"Sell Strength: {min((sell_signals / required_signals) * 100, 100):.0f}%\n"
+                    entry += f"RSI: {rsi:.1f}\n"
+                    entry += f"Trend: {ma_data['trend']}\n"
+                    entry += f"Volume: {volume_data['volume_ratio']:.1f}x\n"
+                    entry += f"Score: {prediction['prediction_score']:.1f}\n\n"
                     
-                    # Instead of raw signal counts, show signal strength percentage
-                    buy_strength = min((buy_signals / required_signals) * 100, 100)  # Cap at 100%
-                    sell_strength = min((sell_signals / required_signals) * 100, 100)  # Cap at 100%
-                    
-                    message += f"Buy Strength: {buy_strength:.0f}%\n"
-                    message += f"Sell Strength: {sell_strength:.0f}%\n"
-                    message += f"RSI: {rsi:.1f}\n"
-                    message += f"Trend: {ma_data['trend']}\n"
-                    message += f"Volume: {volume_data['volume_ratio']:.1f}x\n"
-                    message += f"Score: {prediction['prediction_score']:.1f}\n\n"
+                    message += entry
                     
                 except Exception as e:
+                    logging.error(f"Error analyzing {symbol}: {str(e)}")
                     message += f"{symbol}: Error analyzing - {str(e)}\n\n"
                     continue
             
-            # Send the update in chunks if it's too long
-            if len(message) > 2000:
-                chunks = [message[i:i+1900] for i in range(0, len(message), 1900)]
+            # Split into chunks if needed
+            if len(message) > 1900:  # Leave room for header
+                chunks = []
+                current_chunk = "Periodic Trading Update\n\n"
+                
+                # Split by coin entries
+                entries = message.split('\n\n')[1:]  # Skip header
+                
+                for entry in entries:
+                    if len(current_chunk) + len(entry) + 2 <= 1900:
+                        current_chunk += entry + "\n\n"
+                    else:
+                        chunks.append(current_chunk)
+                        current_chunk = "Periodic Trading Update\n\n" + entry + "\n\n"
+                
+                # Add the last chunk if not empty
+                if current_chunk.strip() != "Periodic Trading Update":
+                    chunks.append(current_chunk)
+                
+                # Send each chunk with proper numbering
                 for i, chunk in enumerate(chunks, 1):
                     await self.send_notification(f"🔔 Alert: (Part {i}/{len(chunks)})\n{chunk}")
             else:
