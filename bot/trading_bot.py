@@ -532,200 +532,227 @@ class TradingBot:
             logging.error(f"Error fetching historical prices for {symbol}: {str(e)}")
             raise
             
-    async def _place_buy_order(self, symbol: str, quantity: float, decision_factors: List[str] = None) -> None:
-        """Place a buy order with optional decision factors"""
+    async def _place_buy_order(self, symbol: str, quantity: float, decision_factors: List[str]):
+        """Place a buy order with proper error handling and logging"""
         try:
-            product_id = f"{symbol}-USD"
-            current_price = float(self.client.get_product(product_id).price)
+            mode = "Paper" if self.paper_trading else "Real"
+            current_price = float(self.client.get_product(f"{symbol}-USD").price)
+            
+            # Calculate order details
+            amount_usd = quantity * current_price
+            fees = amount_usd * 0.006  # Assuming 0.6% fees
             
             if self.paper_trading:
                 # Paper trading logic
-                trade_amount = quantity * current_price
-                
-                # Calculate fees (0.6% Coinbase fee)
-                fee = trade_amount * 0.006
-                actual_trade_amount = trade_amount - fee
-                
-                # Check if we have enough paper balance
-                if self.paper_balance < trade_amount:
-                    logging.warning(f"Insufficient paper balance for {symbol} buy")
-                    return
-                
-                # Create new paper position
+                if amount_usd + fees > self.paper_balance:
+                    logging.warning(f"Insufficient paper balance for {symbol} buy order")
+                    return False
+                    
+                # Create paper position
                 self.paper_positions[symbol] = Position(
                     symbol=symbol,
-                    entry_price=current_price,
                     quantity=quantity,
-                    entry_time=datetime.now(),
-                    is_paper=True
-                )
-                
-                # Update paper balance
-                self.paper_balance -= trade_amount
-                
-                # Record trade
-                trade_record = {
-                    'timestamp': datetime.now(),
-                    'action': 'BUY',
-                    'symbol': symbol,
-                    'amount_usd': trade_amount,
-                    'price': current_price,
-                    'quantity': quantity,
-                    'fees': fee,
-                    'is_paper': True,
-                    'balance_after': self.paper_balance
-                }
-                self.paper_trade_history.append(trade_record)
-                
-            else:
-                # Real trading logic
-                self.client.create_order(
-                    product_id=product_id,
-                    side='BUY',
-                    order_configuration={
-                        'market_market_ioc': {
-                            'quote_size': str(quantity * current_price)
-                        }
-                    },
-                    client_order_id=str(int(time.time()))
-                
-                # Create new position
-                self.positions[symbol] = Position(
-                    symbol=symbol,
                     entry_price=current_price,
-                    quantity=quantity,
                     entry_time=datetime.now()
                 )
                 
-                self.trade_history.append({
+                # Update paper balance
+                self.paper_balance -= (amount_usd + fees)
+                
+                # Record paper trade
+                trade = {
                     'timestamp': datetime.now(),
-                    'action': 'BUY',
                     'symbol': symbol,
-                    'amount_usd': quantity * current_price
-                })
+                    'action': 'BUY',
+                    'price': current_price,
+                    'quantity': quantity,
+                    'amount_usd': amount_usd,
+                    'fees': fees,
+                    'balance_after': self.paper_balance
+                }
+                self.paper_trade_history.append(trade)
+                
+            else:
+                # Real trading logic
+                order = self.client.create_order(
+                    product_id=f"{symbol}-USD",
+                    side='BUY',
+                    order_configuration={
+                        'market_market_ioc': {
+                            'quote_size': str(amount_usd)
+                        }
+                    }
+                )
+                
+                if not order:
+                    raise Exception("Order creation failed")
+                    
+                # Create real position
+                self.positions[symbol] = Position(
+                    symbol=symbol,
+                    quantity=quantity,
+                    entry_price=current_price,
+                    entry_time=datetime.now()
+                )
+                
+                # Record real trade
+                trade = {
+                    'timestamp': datetime.now(),
+                    'symbol': symbol,
+                    'action': 'BUY',
+                    'price': current_price,
+                    'quantity': quantity,
+                    'amount_usd': amount_usd,
+                    'fees': fees,
+                    'order_id': order.order_id
+                }
+                self.trade_history.append(trade)
             
-            # Send notification
-            await self.send_trade_notification(
-                action='BUY',
-                symbol=symbol,
-                price=current_price,
-                quantity=quantity,
-                is_paper=self.paper_trading,
-                decision_factors=decision_factors
+            # Log and notify
+            decision_text = "\n".join(decision_factors)
+            message = (
+                f"🟢 {mode} BUY Order Placed\n"
+                f"Symbol: {symbol}\n"
+                f"Price: ${current_price:.2f}\n"
+                f"Quantity: {quantity:.8f}\n"
+                f"Total: ${amount_usd:.2f}\n"
+                f"Fees: ${fees:.2f}\n\n"
+                f"Decision Factors:\n{decision_text}"
             )
             
-            logging.info(f"Buy order placed for {symbol}: ${quantity * current_price:.2f}")
+            logging.info(f"{mode} buy order placed for {symbol}")
+            await self.send_notification(message)
+            return True
             
         except Exception as e:
-            logging.error(f"Error placing buy order for {symbol}: {str(e)}")
-            raise
+            error_msg = f"Error placing {mode} buy order for {symbol}: {str(e)}"
+            logging.error(error_msg)
+            await self.send_notification(f"❌ {error_msg}")
+            return False
 
-    async def _place_sell_order(self, symbol: str, quantity: float, decision_factors: List[str] = None) -> None:
-        """Place a sell order with optional decision factors"""
+    async def _place_sell_order(self, symbol: str, quantity: float, decision_factors: List[str]):
+        """Place a sell order with proper error handling and logging"""
         try:
-            product_id = f"{symbol}-USD"
-            current_price = float(self.client.get_product(product_id).price)
+            mode = "Paper" if self.paper_trading else "Real"
+            current_price = float(self.client.get_product(f"{symbol}-USD").price)
+            
+            # Get position for profit calculation
+            position = self.paper_positions.get(symbol) if self.paper_trading else self.positions.get(symbol)
+            if not position:
+                logging.warning(f"No {mode} position found for {symbol}, cannot sell")
+                return False
+            
+            # Validate quantity
+            if quantity > position.quantity:
+                logging.warning(f"Trying to sell more than available: {quantity} > {position.quantity}")
+                quantity = position.quantity
+            
+            # Calculate order details
+            total_value = quantity * current_price
+            fees = total_value * 0.006  # 0.6% fees
+            actual_value = total_value - fees
+            
+            # Calculate profit/loss
+            profit_info = position.calculate_profit(current_price)
             
             if self.paper_trading:
-                # Get current position
-                position = self.paper_positions.get(symbol)
-                if not position:
-                    logging.warning(f"No paper position found for {symbol}, cannot sell")
-                    return
-                
-                # Calculate total value and fees
-                total_value = quantity * current_price
-                fee = total_value * 0.006
-                actual_value = total_value - fee
-                
-                # Calculate profit/loss
-                profit_info = position.calculate_profit(current_price)
-                
+                # Paper trading logic
                 # Update paper balance
                 self.paper_balance += actual_value
                 
                 # Record trade
-                trade_record = {
+                trade = {
                     'timestamp': datetime.now(),
-                    'action': 'SELL',
                     'symbol': symbol,
-                    'amount_usd': total_value,
+                    'action': 'SELL',
                     'price': current_price,
                     'quantity': quantity,
-                    'fees': fee,
+                    'amount_usd': total_value,
+                    'fees': fees,
                     'profit': profit_info['profit_usd'],
                     'profit_percentage': profit_info['profit_percentage'],
                     'is_paper': True,
                     'balance_after': self.paper_balance
                 }
-                self.paper_trade_history.append(trade_record)
+                self.paper_trade_history.append(trade)
                 
-                # Update or remove position based on quantity sold
+                # Update or remove position
                 if quantity >= position.quantity:
                     del self.paper_positions[symbol]
                 else:
                     position.quantity -= quantity
-                
+                    
             else:
                 # Real trading logic
-                self.client.create_order(
-                    product_id=product_id,
+                order = self.client.create_order(
+                    product_id=f"{symbol}-USD",
                     side='SELL',
                     order_configuration={
                         'market_market_ioc': {
-                            'quote_size': str(quantity * current_price)
+                            'quote_size': str(total_value)
                         }
-                    },
-                    client_order_id=str(int(time.time()))
+                    }
                 )
                 
-                # Get position for profit calculation
-                position = self.positions.get(symbol)
-                if position:
-                    profit_info = position.calculate_profit(current_price)
-                    
-                    # Update or remove position based on quantity sold
-                    if quantity >= position.quantity:
-                        # Add to position history
-                        self.position_history.append({
-                            'symbol': symbol,
-                            'entry_price': position.entry_price,
-                            'exit_price': current_price,
-                            'quantity': position.quantity,
-                            'entry_time': position.entry_time,
-                            'exit_time': datetime.now(),
-                            'profit_usd': profit_info['profit_usd'],
-                            'profit_percentage': profit_info['profit_percentage'],
-                            'max_profit_percentage': profit_info['highest_profit_percentage'],
-                            'max_drawdown': profit_info['drawdown_percentage']
-                        })
-                        del self.positions[symbol]
-                    else:
-                        position.quantity -= quantity
+                if not order:
+                    raise Exception("Order creation failed")
                 
-                self.trade_history.append({
+                # Update or remove position
+                if quantity >= position.quantity:
+                    # Add to position history
+                    self.position_history.append({
+                        'symbol': symbol,
+                        'entry_price': position.entry_price,
+                        'exit_price': current_price,
+                        'quantity': position.quantity,
+                        'entry_time': position.entry_time,
+                        'exit_time': datetime.now(),
+                        'profit_usd': profit_info['profit_usd'],
+                        'profit_percentage': profit_info['profit_percentage'],
+                        'max_profit_percentage': profit_info['highest_profit_percentage'],
+                        'max_drawdown': profit_info['drawdown_percentage']
+                    })
+                    del self.positions[symbol]
+                else:
+                    position.quantity -= quantity
+                
+                # Record trade
+                trade = {
                     'timestamp': datetime.now(),
-                    'action': 'SELL',
                     'symbol': symbol,
-                    'amount_usd': quantity * current_price
-                })
+                    'action': 'SELL',
+                    'price': current_price,
+                    'quantity': quantity,
+                    'amount_usd': total_value,
+                    'fees': fees,
+                    'profit': profit_info['profit_usd'],
+                    'profit_percentage': profit_info['profit_percentage'],
+                    'order_id': order.order_id
+                }
+                self.trade_history.append(trade)
             
-            # Send notification
-            await self.send_trade_notification(
-                action='SELL',
-                symbol=symbol,
-                price=current_price,
-                quantity=quantity,
-                is_paper=self.paper_trading,
-                profit_info=profit_info if position else None,
-                decision_factors=decision_factors
+            # Log and notify
+            decision_text = "\n".join(decision_factors) if decision_factors else "Manual sell order"
+            message = (
+                f"💰 {mode} SELL Order Placed\n"
+                f"Symbol: {symbol}\n"
+                f"Price: ${current_price:.2f}\n"
+                f"Quantity: {quantity:.8f}\n"
+                f"Total: ${total_value:.2f}\n"
+                f"Fees: ${fees:.2f}\n"
+                f"Profit: ${profit_info['profit_usd']:+,.2f} ({profit_info['profit_percentage']:+.2f}%)\n\n"
+                f"Decision Factors:\n{decision_text}"
             )
             
-            logging.info(f"Sell order placed for {symbol}: ${quantity * current_price:.2f}")
+            logging.info(f"{mode} sell order placed for {symbol}")
+            await self.send_notification(message)
+            return True
             
         except Exception as e:
-            logging.error(f"Error placing sell order for {symbol}: {str(e)}")
-            raise
+            error_msg = f"Error placing {mode} sell order for {symbol}: {str(e)}"
+            logging.error(error_msg)
+            await self.send_notification(f"❌ {error_msg}")
+            return False
 
     def set_trade_amount(self, amount):
         try:
