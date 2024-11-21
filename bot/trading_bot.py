@@ -253,37 +253,38 @@ class TradingBot:
             
             # Calculate entry signals with weights
             entry_signals = 0
-            required_signals = 3  # Need at least 3 signals to enter
+            required_signals = 3
             
-            # Technical signals
-            if rsi <= self.rsi_oversold:
-                entry_signals += 2  # Strong weight for oversold RSI
-            elif rsi < 40:  # Still somewhat oversold
-                entry_signals += 1
-                
-            # Trend signals
-            if ma_data['trend'] == 'Strong Uptrend':
+            # RSI signals - Add overbought prevention
+            if rsi >= self.rsi_overbought:
+                return  # Don't buy when overbought
+            elif rsi <= self.rsi_oversold:
                 entry_signals += 2
-            elif ma_data['trend'] == 'Weak Uptrend':
+            elif rsi < 40:
                 entry_signals += 1
-                
-            # Volume signals
+            
+            # Volume signals - Require minimum volume
             if volume_data['volume_ratio'] > 1.5 and volume_data['price_change'] > 0:
-                entry_signals += 2  # Strong volume with price increase
-            elif volume_data['volume_ratio'] > 1.2:
+                entry_signals += 2
+            elif volume_data['volume_ratio'] > 1.2 and volume_data['price_change'] > 0:
                 entry_signals += 1
-                
-            # Support level confirmation
-            levels = self._get_recent_highs_lows(symbol)
-            if any(abs(current_price - low) / low < 0.02 for low in levels['lows']):
+            elif volume_data['volume_ratio'] < 1.0:
+                return  # Don't buy on below-average volume
+            
+            # Trend confirmation
+            if ma_data['trend'] == 'Strong Uptrend' and rsi < 60:  # Add RSI check
+                entry_signals += 2
+            elif ma_data['trend'] == 'Weak Uptrend' and rsi < 55:
                 entry_signals += 1
-                
-            # Prediction score confirmation
-            if prediction['prediction_score'] > 50:
+            
+            # Prediction score must be positive
+            if prediction['prediction_score'] < 0:
+                return
+            elif prediction['prediction_score'] > 50:
                 entry_signals += 2
             elif prediction['prediction_score'] > 30:
                 entry_signals += 1
-                
+            
             # Check if we have enough signals to enter
             if entry_signals >= required_signals:
                 # Calculate position size
