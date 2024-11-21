@@ -1680,14 +1680,15 @@ class TradingBot:
     async def _analyze_price_prediction(self, symbol: str) -> Dict[str, Any]:
         """Make a unified price movement prediction with caching"""
         try:
-            # Get all indicators in parallel
-            tasks = [
-                self.calculate_rsi(symbol),
-                self.analyze_volume(symbol),
-                self.calculate_moving_averages(symbol),
-                self.analyze_market_sentiment(symbol)
-            ]
-            rsi, volume_data, ma_data, sentiment = await asyncio.gather(*tasks)
+            # Get RSI (this is already synchronous)
+            rsi = self.calculate_rsi(symbol)
+            
+            # Get other indicators (these are synchronous too)
+            volume_data = self.analyze_volume(symbol)
+            ma_data = self.calculate_moving_averages(symbol)
+            sentiment = self.analyze_market_sentiment(symbol)
+            
+            # We removed the asyncio.gather() since these methods aren't async
             
             # Determine overall market prediction
             bullish_signals = []
