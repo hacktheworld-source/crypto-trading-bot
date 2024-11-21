@@ -109,41 +109,68 @@ class TradingBot:
                         api_secret=os.environ['COINBASE_API_SECRET'].strip()
                     )
                 
-                # Send interval update
-                await self.send_interval_update()
+                mode = "Paper" if self.paper_trading else "Real"
+                logging.info(f"{mode} trading loop iteration starting")
+                
+                # Process trades for each coin
+                analysis_results = {}  # Store analysis results to avoid recalculation
                 
                 for symbol in self.watched_coins:
                     try:
                         # Get comprehensive analysis
                         prediction = self._analyze_price_prediction(symbol)
                         current_price = prediction['current_price']
+                        rsi = prediction['rsi']
+                        volume_data = self.analyze_volume(symbol)
+                        ma_data = self.calculate_moving_averages(symbol)
+                        
+                        # Calculate signals using centralized method
+                        signals = self._calculate_signals(
+                            symbol, prediction, rsi, volume_data, ma_data
+                        )
+                        
+                        # Store analysis for interval update
+                        analysis_results[symbol] = {
+                            'prediction': prediction,
+                            'current_price': current_price,
+                            'rsi': rsi,
+                            'volume_data': volume_data,
+                            'ma_data': ma_data,
+                            'signals': signals
+                        }
+                        
+                        # Prevent buying in extreme conditions
+                        if rsi > 80:  # Extremely overbought
+                            logging.info(f"Skipping {symbol} - RSI too high ({rsi:.1f})")
+                            continue
                         
                         # Get position info
                         position = self.paper_positions.get(symbol) if self.paper_trading else self.positions.get(symbol)
                         
-                        # Log analysis
-                        mode = "Paper" if self.paper_trading else "Real"
-                        logging.info(f"{mode} Analysis - {symbol}: ${current_price:.2f}, Score: {prediction['prediction_score']:.1f}")
-                        
+                        # Execute trades based on signals
                         if position:
                             # Position Management
-                            await self._manage_position(symbol, position, prediction, current_price)
+                            if signals['sell_signals'] >= signals['required_signals'] and self._should_trade(symbol, 'SELL'):
+                                await self._manage_position(symbol, position, prediction, current_price)
                         else:
                             # Entry Analysis
-                            await self._analyze_entry(symbol, prediction, current_price)
-                            
+                            if signals['buy_signals'] >= signals['required_signals'] and self._should_trade(symbol, 'BUY'):
+                                await self._analyze_entry(symbol, prediction, current_price)
+                    
                     except Exception as e:
                         logging.error(f"Error analyzing {symbol}: {str(e)}")
                         await self.send_notification(f"❌ Error analyzing {symbol}: {str(e)}")
                         continue
-                        
+                    
+                # Send interval update using stored analysis results
+                await self.send_interval_update(analysis_results)
+                
                 # Wait for next interval
                 await asyncio.sleep(self.trading_interval)
                 
             except Exception as e:
                 logging.error(f"Error in trading loop: {str(e)}")
                 await self.send_notification(f"❌ Error in trading loop: {str(e)}")
-                # Add longer sleep on error to prevent rapid reconnection attempts
                 await asyncio.sleep(300)  # 5 minutes
                 
         logging.info("Trading loop stopped")
@@ -251,61 +278,51 @@ class TradingBot:
             ma_data = self.calculate_moving_averages(symbol)
             rsi = prediction['rsi']
             
-            # Get support/resistance levels
-            levels = self._get_recent_highs_lows(symbol)
-            
-            # Calculate entry signals with weights
-            entry_signals = 0
+            # Calculate buy signals
+            buy_signals = 0
             required_signals = 3
             
-            # RSI signals - Add overbought prevention
-            if rsi >= self.rsi_overbought:
-                return  # Don't buy when overbought
-            elif rsi <= self.rsi_oversold:
-                entry_signals += 2
+            # RSI signals
+            if rsi <= self.rsi_oversold:
+                buy_signals += 2
             elif rsi < 40:
-                entry_signals += 1
-            
-            # Volume signals - Require minimum volume
+                buy_signals += 1
+                
+            # Trend signals
+            if ma_data['trend'] == 'Strong Uptrend':
+                buy_signals += 2
+            elif ma_data['trend'] == 'Weak Uptrend':
+                buy_signals += 1
+                
+            # Volume signals
             if volume_data['volume_ratio'] > 1.5 and volume_data['price_change'] > 0:
-                entry_signals += 2
+                buy_signals += 2
             elif volume_data['volume_ratio'] > 1.2 and volume_data['price_change'] > 0:
-                entry_signals += 1
-            elif volume_data['volume_ratio'] < 1.0:
-                return  # Don't buy on below-average volume
+                buy_signals += 1
             
-            # Trend confirmation
-            if ma_data['trend'] == 'Strong Uptrend' and rsi < 60:  # Add RSI check
-                entry_signals += 2
-            elif ma_data['trend'] == 'Weak Uptrend' and rsi < 55:
-                entry_signals += 1
-            
-            # Prediction score must be positive
-            if prediction['prediction_score'] < 0:
-                return
-            elif prediction['prediction_score'] > 50:
-                entry_signals += 2
+            # Prediction score signals
+            if prediction['prediction_score'] > 50:
+                buy_signals += 2
             elif prediction['prediction_score'] > 30:
-                entry_signals += 1
+                buy_signals += 1
             
             # Check if we have enough signals to enter
-            if entry_signals >= required_signals:
+            if buy_signals >= required_signals and self._should_trade(symbol, 'BUY'):
                 # Calculate position size
                 position_size = self._calculate_position_size(symbol, self.paper_trading)
                 if position_size > 0:
                     # Double check price hasn't moved significantly
                     new_price = float(self.client.get_product(f"{symbol}-USD").price)
-                    if abs(new_price - current_price) / current_price <= 0.01:  # 1% price movement max
+                    if abs(new_price - current_price) / current_price <= 0.01:
                         quantity = position_size / current_price
                         
                         # Prepare detailed decision factors
                         decision_factors = [
-                            f"Signal Strength: {min((entry_signals / required_signals) * 100, 100):.0f}%",
+                            f"Buy Strength: {min((buy_signals / required_signals) * 100, 100):.0f}%",
                             f"RSI: {rsi:.2f}",
                             f"Trend: {ma_data['trend']}",
                             f"Volume: {volume_data['volume_ratio']:.1f}x average",
-                            f"Prediction Score: {prediction['prediction_score']:.1f}",
-                            "Price near support level" if any(abs(current_price - low) / low < 0.02 for low in levels['lows']) else "No nearby support"
+                            f"Prediction Score: {prediction['prediction_score']:.1f}"
                         ]
                         decision_factors.extend(prediction['bullish_signals'])
                         
@@ -571,7 +588,6 @@ class TradingBot:
                         }
                     },
                     client_order_id=str(int(time.time()))
-                )
                 
                 # Create new position
                 self.positions[symbol] = Position(
@@ -1066,11 +1082,24 @@ class TradingBot:
         hour = datetime.utcnow().hour
         return 13 <= hour <= 21  # 9 AM - 5 PM EST
 
-    def _can_open_new_position(self) -> bool:
-        """Check if we can open a new position"""
-        max_positions = 3
-        current_positions = len(self.paper_positions if self.paper_trading else self.positions)
-        return current_positions < max_positions
+    def _can_open_new_position(self):
+        """Enhanced position limit check"""
+        try:
+            # Check maximum number of positions
+            max_positions = 5  # Add this as a configurable parameter
+            current_positions = len(self.paper_positions if self.paper_trading else self.positions)
+            if current_positions >= max_positions:
+                return False
+                
+            # Check total exposure
+            total_exposure = sum(pos.current_value for pos in (self.paper_positions if self.paper_trading else self.positions).values())
+            max_exposure = self.paper_balance * 0.75 if self.paper_trading else self.max_position_size * 3
+            
+            return total_exposure < max_exposure
+            
+        except Exception as e:
+            logging.error(f"Error checking position limits: {str(e)}")
+            return False
 
     def _calculate_min_profit_target(self, entry_price: float) -> float:
         """Calculate minimum profit needed to cover fees"""
@@ -1607,7 +1636,7 @@ class TradingBot:
         except Exception as e:
             logging.error(f"Error sending trade notification: {str(e)}")
 
-    async def send_interval_update(self):
+    async def send_interval_update(self, analysis_results: Dict[str, Dict[str, Any]]):
         """Send periodic update of all watched coins"""
         try:
             if not self.watched_coins:
@@ -1615,74 +1644,28 @@ class TradingBot:
             
             message = "Periodic Trading Update\n\n"
             
-            for symbol in self.watched_coins:
+            for symbol, analysis in analysis_results.items():
                 try:
-                    # Get comprehensive analysis
-                    prediction = self._analyze_price_prediction(symbol)
-                    current_price = prediction['current_price']
-                    rsi = prediction['rsi']
-                    volume_data = self.analyze_volume(symbol)
-                    ma_data = self.calculate_moving_averages(symbol)
+                    # Extract analysis data
+                    prediction = analysis['prediction']
+                    current_price = analysis['current_price']
+                    rsi = analysis['rsi']
+                    volume_data = analysis['volume_data']
+                    ma_data = analysis['ma_data']
+                    signals = analysis['signals']
                     
-                    # Calculate signals
-                    buy_signals = 0
-                    sell_signals = 0
-                    required_signals = 3
-                    
-                    # RSI signals
-                    if rsi <= self.rsi_oversold:
-                        buy_signals += 2
-                    elif rsi < 40:
-                        buy_signals += 1
-                    elif rsi >= self.rsi_overbought:
-                        sell_signals += 2
-                    elif rsi > 60:
-                        sell_signals += 1
-                    
-                    # Trend signals
-                    if ma_data['trend'] == 'Strong Uptrend':
-                        buy_signals += 2
-                    elif ma_data['trend'] == 'Weak Uptrend':
-                        buy_signals += 1
-                    elif ma_data['trend'] == 'Strong Downtrend':
-                        sell_signals += 2
-                    elif ma_data['trend'] == 'Weak Downtrend':
-                        sell_signals += 1
-                    
-                    # Volume signals
-                    if volume_data['volume_ratio'] > 1.5:
-                        if volume_data['price_change'] > 0:
-                            buy_signals += 2
-                        elif volume_data['price_change'] < 0:
-                                sell_signals += 2
-                    elif volume_data['volume_ratio'] > 1.2:
-                        if volume_data['price_change'] > 0:
-                            buy_signals += 1
-                        elif volume_data['price_change'] < 0:
-                                sell_signals += 1
-                    
-                    # Prediction score signals
-                    if prediction['prediction_score'] > 50:
-                        buy_signals += 2
-                    elif prediction['prediction_score'] > 30:
-                        buy_signals += 1
-                    elif prediction['prediction_score'] < -50:
-                        sell_signals += 2
-                    elif prediction['prediction_score'] < -30:
-                        sell_signals += 1
-                    
-                    # Determine action
+                    # Determine action based on signals
                     action = "HOLD"
-                    if buy_signals >= required_signals:
+                    if signals['buy_signals'] >= signals['required_signals']:
                         action = "BUY SIGNAL"
-                    elif sell_signals >= required_signals:
+                    elif signals['sell_signals'] >= signals['required_signals']:
                         action = "SELL SIGNAL"
                     
                     # Format coin entry
                     entry = f"{symbol}: ${current_price:.2f}\n"
                     entry += f"Action: {action}\n"
-                    entry += f"Buy Strength: {min((buy_signals / required_signals) * 100, 100):.0f}%\n"
-                    entry += f"Sell Strength: {min((sell_signals / required_signals) * 100, 100):.0f}%\n"
+                    entry += f"Buy Strength: {signals['buy_strength']:.0f}%\n"
+                    entry += f"Sell Strength: {signals['sell_strength']:.0f}%\n"
                     entry += f"RSI: {rsi:.1f}\n"
                     entry += f"Trend: {ma_data['trend']}\n"
                     entry += f"Volume: {volume_data['volume_ratio']:.1f}x\n"
@@ -1691,7 +1674,7 @@ class TradingBot:
                     message += entry
                     
                 except Exception as e:
-                    logging.error(f"Error analyzing {symbol}: {str(e)}")
+                    logging.error(f"Error formatting update for {symbol}: {str(e)}")
                     message += f"{symbol}: Error analyzing - {str(e)}\n\n"
                     continue
             
@@ -1716,9 +1699,9 @@ class TradingBot:
                 
                 # Send each chunk with proper numbering
                 for i, chunk in enumerate(chunks, 1):
-                    await self.send_notification(f"🔔 Alert: (Part {i}/{len(chunks)})\n{chunk}")
+                    await self.send_notification(chunk, is_update=True, part=(i, len(chunks)))
             else:
-                await self.send_notification(f"🔔 Alert: (Part 1/1)\n{message}")
+                await self.send_notification(message, is_update=True)
                 
         except Exception as e:
             logging.error(f"Error in interval update: {str(e)}")
@@ -1904,3 +1887,82 @@ class TradingBot:
         except Exception as e:
             logging.error(f"Error validating signals: {str(e)}")
             return {'can_buy': False, 'can_sell': False, 'signal_strength': 0.0}
+
+    def _calculate_signals(self, symbol: str, prediction: Dict[str, Any], rsi: float, 
+                          volume_data: Dict[str, Any], ma_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Centralized signal calculation logic"""
+        try:
+            buy_signals = 0
+            sell_signals = 0
+            required_signals = 3
+            
+            # RSI signals
+            if rsi <= self.rsi_oversold:
+                buy_signals += 2
+            elif rsi < 40:
+                buy_signals += 1
+            elif rsi >= self.rsi_overbought:
+                sell_signals += 2
+            elif rsi > 60:
+                sell_signals += 1
+                
+            # Trend signals
+            if ma_data['trend'] == 'Strong Uptrend':
+                buy_signals += 2
+            elif ma_data['trend'] == 'Weak Uptrend':
+                buy_signals += 1
+            elif ma_data['trend'] == 'Strong Downtrend':
+                sell_signals += 2
+            elif ma_data['trend'] == 'Weak Downtrend':
+                sell_signals += 1
+                
+            # Volume signals
+            if volume_data['volume_ratio'] > 1.5:
+                if volume_data['price_change'] > 0:
+                    buy_signals += 2
+                else:
+                    sell_signals += 2
+            elif volume_data['volume_ratio'] > 1.2:
+                if volume_data['price_change'] > 0:
+                    buy_signals += 1
+                else:
+                    sell_signals += 1
+                    
+            # Prediction score signals
+            if prediction['prediction_score'] > 50:
+                buy_signals += 2
+            elif prediction['prediction_score'] > 30:
+                buy_signals += 1
+            elif prediction['prediction_score'] < -50:
+                sell_signals += 2
+            elif prediction['prediction_score'] < -30:
+                sell_signals += 1
+                
+            # Market condition checks
+            if rsi > 85:  # Extremely overbought
+                buy_signals = 0
+            elif rsi < 15:  # Extremely oversold
+                sell_signals = 0
+                
+            # Volume confirmation
+            if volume_data['volume_ratio'] < 1.0:
+                buy_signals = max(0, buy_signals - 1)
+                sell_signals = max(0, sell_signals - 1)
+                
+            return {
+                'buy_signals': buy_signals,
+                'sell_signals': sell_signals,
+                'required_signals': required_signals,
+                'buy_strength': min((buy_signals / required_signals) * 100, 100),
+                'sell_strength': min((sell_signals / required_signals) * 100, 100)
+            }
+            
+        except Exception as e:
+            logging.error(f"Error calculating signals for {symbol}: {str(e)}")
+            return {
+                'buy_signals': 0,
+                'sell_signals': 0,
+                'required_signals': 3,
+                'buy_strength': 0,
+                'sell_strength': 0
+            }
