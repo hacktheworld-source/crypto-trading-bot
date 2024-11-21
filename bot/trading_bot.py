@@ -1396,7 +1396,7 @@ class TradingBot:
             for symbol in self.watched_coins:
                 try:
                     # Get comprehensive analysis
-                    sentiment = self.analyze_market_sentiment(symbol)  # Get full sentiment analysis
+                    sentiment = self.analyze_market_sentiment(symbol)
                     prediction = self._analyze_price_prediction(symbol)
                     current_price = prediction['current_price']
                     rsi = prediction['rsi']
@@ -1416,7 +1416,8 @@ class TradingBot:
                     message += f"RSI: {rsi:.2f}\n"
                     message += f"Volume: {volume_data['volume_ratio']:.2f}x average\n"
                     message += f"Trend: {ma_data['trend']}\n"
-                    message += f"Sentiment: {sentiment['overall_sentiment']} (Score: {prediction['prediction_score']:.1f})\n"
+                    message += f"Sentiment: {sentiment['overall_sentiment']} (Score: {sentiment['sentiment_score']:.1f})\n"
+                    message += f"Prediction Score: {prediction['prediction_score']:.1f}\n"
                     
                     # Add momentum info
                     message += f"Momentum: "
