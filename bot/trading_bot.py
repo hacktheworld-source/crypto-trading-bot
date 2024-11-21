@@ -1768,6 +1768,8 @@ class TradingBot:
             return {
                 'highs': sorted(set(highs))[-5:],  # Last 5 unique highs
                 'lows': sorted(set(lows))[:5]      # Last 5 unique lows
+            }
+            
         except Exception as e:
             logging.error(f"Error getting highs/lows for {symbol}: {str(e)}")
             return {'highs': [], 'lows': []}
