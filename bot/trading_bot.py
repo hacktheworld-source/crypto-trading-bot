@@ -353,14 +353,70 @@ class TradingBot:
             return False
     
     def _check_and_trade(self, symbol):
+        """Check trading conditions using weighted signal system"""
         try:
-            rsi = self.calculate_rsi(symbol)
+            # Get comprehensive analysis
+            prediction = self._analyze_price_prediction(symbol)
+            current_price = prediction['current_price']
+            rsi = prediction['rsi']
+            volume_data = self.analyze_volume(symbol)
+            ma_data = self.calculate_moving_averages(symbol)
             
-            if rsi <= self.rsi_oversold and self._should_trade(symbol, 'BUY'):
-                self._place_buy_order(symbol)
-            elif rsi >= self.rsi_overbought and self._should_trade(symbol, 'SELL'):
-                self._place_sell_order(symbol)
+            # Calculate entry/exit signals
+            entry_signals = 0
+            exit_signals = 0
+            required_signals = 3
             
+            # Entry signals
+            if rsi <= self.rsi_oversold:
+                entry_signals += 2
+            elif rsi < 40:
+                entry_signals += 1
+                
+            if prediction['prediction_score'] > 30:
+                entry_signals += 1
+            if volume_data['volume_ratio'] > 1.2:
+                entry_signals += 1
+            if ma_data['trend'] in ['Strong Uptrend', 'Weak Uptrend']:
+                entry_signals += 1
+                
+            # Exit signals
+            if rsi >= self.rsi_overbought:
+                exit_signals += 2
+            elif rsi > 60:
+                exit_signals += 1
+                
+            if prediction['prediction_score'] < -30:
+                exit_signals += 1
+            if volume_data['volume_ratio'] > 1.5 and volume_data['price_change'] < 0:
+                exit_signals += 1
+            if ma_data['trend'] == 'Downtrend':
+                exit_signals += 1
+            
+            # Check if we should trade
+            if entry_signals >= required_signals and self._should_trade(symbol, 'BUY'):
+                quantity = self._calculate_position_size(symbol, self.paper_trading) / current_price
+                decision_factors = [
+                    f"Entry Signals: {entry_signals}/{required_signals}",
+                    f"RSI: {rsi:.2f}",
+                    f"Trend: {ma_data['trend']}",
+                    f"Volume: {volume_data['volume_ratio']:.1f}x average",
+                    f"Prediction Score: {prediction['prediction_score']:.1f}"
+                ]
+                await self._place_buy_order(symbol, quantity, decision_factors)
+                
+            elif exit_signals >= required_signals and self._should_trade(symbol, 'SELL'):
+                position = self.paper_positions.get(symbol) if self.paper_trading else self.positions.get(symbol)
+                if position:
+                    decision_factors = [
+                        f"Exit Signals: {exit_signals}/{required_signals}",
+                        f"RSI: {rsi:.2f}",
+                        f"Trend: {ma_data['trend']}",
+                        f"Volume: {volume_data['volume_ratio']:.1f}x average",
+                        f"Prediction Score: {prediction['prediction_score']:.1f}"
+                    ]
+                    await self._place_sell_order(symbol, position.quantity, decision_factors)
+        
         except Exception as e:
             logging.error(f"Error checking and trading {symbol}: {str(e)}")
             raise
@@ -455,97 +511,202 @@ class TradingBot:
             logging.error(f"Error fetching historical prices for {symbol}: {str(e)}")
             raise
             
-    def _place_buy_order(self, symbol: str) -> None:
+    async def _place_buy_order(self, symbol: str, quantity: float, decision_factors: List[str] = None) -> None:
+        """Place a buy order with optional decision factors"""
         try:
             product_id = f"{symbol}-USD"
             current_price = float(self.client.get_product(product_id).price)
-            quantity = self.trade_amount / current_price
             
-            self.client.create_order(
-                product_id=product_id,
-                side='BUY',
-                order_configuration={
-                    'market_market_ioc': {
-                        'quote_size': str(self.trade_amount)
-                    }
-                },
-                client_order_id=str(int(time.time()))
-            )
+            if self.paper_trading:
+                # Paper trading logic
+                trade_amount = quantity * current_price
+                
+                # Calculate fees (0.6% Coinbase fee)
+                fee = trade_amount * 0.006
+                actual_trade_amount = trade_amount - fee
+                
+                # Check if we have enough paper balance
+                if self.paper_balance < trade_amount:
+                    logging.warning(f"Insufficient paper balance for {symbol} buy")
+                    return
+                
+                # Create new paper position
+                self.paper_positions[symbol] = Position(
+                    symbol=symbol,
+                    entry_price=current_price,
+                    quantity=quantity,
+                    entry_time=datetime.now(),
+                    is_paper=True
+                )
+                
+                # Update paper balance
+                self.paper_balance -= trade_amount
+                
+                # Record trade
+                trade_record = {
+                    'timestamp': datetime.now(),
+                    'action': 'BUY',
+                    'symbol': symbol,
+                    'amount_usd': trade_amount,
+                    'price': current_price,
+                    'quantity': quantity,
+                    'fees': fee,
+                    'is_paper': True,
+                    'balance_after': self.paper_balance
+                }
+                self.paper_trade_history.append(trade_record)
+                
+            else:
+                # Real trading logic
+                self.client.create_order(
+                    product_id=product_id,
+                    side='BUY',
+                    order_configuration={
+                        'market_market_ioc': {
+                            'quote_size': str(quantity * current_price)
+                        }
+                    },
+                    client_order_id=str(int(time.time()))
+                )
+                
+                # Create new position
+                self.positions[symbol] = Position(
+                    symbol=symbol,
+                    entry_price=current_price,
+                    quantity=quantity,
+                    entry_time=datetime.now()
+                )
+                
+                self.trade_history.append({
+                    'timestamp': datetime.now(),
+                    'action': 'BUY',
+                    'symbol': symbol,
+                    'amount_usd': quantity * current_price
+                })
             
-            # Create new position
-            self.positions[symbol] = Position(
+            # Send notification
+            await self.send_trade_notification(
+                action='BUY',
                 symbol=symbol,
-                entry_price=current_price,
+                price=current_price,
                 quantity=quantity,
-                entry_time=datetime.now()
+                is_paper=self.paper_trading,
+                decision_factors=decision_factors
             )
             
-            self.trade_history.append({
-                'timestamp': datetime.now(),
-                'action': 'BUY',
-                'symbol': symbol,
-                'amount_usd': self.trade_amount
-            })
-            logging.info(f"Buy order placed for {symbol}: ${self.trade_amount}")
+            logging.info(f"Buy order placed for {symbol}: ${quantity * current_price:.2f}")
             
         except Exception as e:
             logging.error(f"Error placing buy order for {symbol}: {str(e)}")
             raise
-            
-    def _place_sell_order(self, symbol: str) -> None:
+
+    async def _place_sell_order(self, symbol: str, quantity: float, decision_factors: List[str] = None) -> None:
+        """Place a sell order with optional decision factors"""
         try:
-            # Get current position
-            position = self.positions.get(symbol)
-            if not position:
-                logging.warning(f"No position found for {symbol}, cannot sell")
-                return
-                
             product_id = f"{symbol}-USD"
             current_price = float(self.client.get_product(product_id).price)
             
-            self.client.create_order(
-                product_id=product_id,
-                side='SELL',
-                order_configuration={
-                    'market_market_ioc': {
-                        'quote_size': str(self.trade_amount)
-                    }
-                },
-                client_order_id=str(int(time.time()))
+            if self.paper_trading:
+                # Get current position
+                position = self.paper_positions.get(symbol)
+                if not position:
+                    logging.warning(f"No paper position found for {symbol}, cannot sell")
+                    return
+                
+                # Calculate total value and fees
+                total_value = quantity * current_price
+                fee = total_value * 0.006
+                actual_value = total_value - fee
+                
+                # Calculate profit/loss
+                profit_info = position.calculate_profit(current_price)
+                
+                # Update paper balance
+                self.paper_balance += actual_value
+                
+                # Record trade
+                trade_record = {
+                    'timestamp': datetime.now(),
+                    'action': 'SELL',
+                    'symbol': symbol,
+                    'amount_usd': total_value,
+                    'price': current_price,
+                    'quantity': quantity,
+                    'fees': fee,
+                    'profit': profit_info['profit_usd'],
+                    'profit_percentage': profit_info['profit_percentage'],
+                    'is_paper': True,
+                    'balance_after': self.paper_balance
+                }
+                self.paper_trade_history.append(trade_record)
+                
+                # Update or remove position based on quantity sold
+                if quantity >= position.quantity:
+                    del self.paper_positions[symbol]
+                else:
+                    position.quantity -= quantity
+                
+            else:
+                # Real trading logic
+                self.client.create_order(
+                    product_id=product_id,
+                    side='SELL',
+                    order_configuration={
+                        'market_market_ioc': {
+                            'quote_size': str(quantity * current_price)
+                        }
+                    },
+                    client_order_id=str(int(time.time()))
+                )
+                
+                # Get position for profit calculation
+                position = self.positions.get(symbol)
+                if position:
+                    profit_info = position.calculate_profit(current_price)
+                    
+                    # Update or remove position based on quantity sold
+                    if quantity >= position.quantity:
+                        # Add to position history
+                        self.position_history.append({
+                            'symbol': symbol,
+                            'entry_price': position.entry_price,
+                            'exit_price': current_price,
+                            'quantity': position.quantity,
+                            'entry_time': position.entry_time,
+                            'exit_time': datetime.now(),
+                            'profit_usd': profit_info['profit_usd'],
+                            'profit_percentage': profit_info['profit_percentage'],
+                            'max_profit_percentage': profit_info['highest_profit_percentage'],
+                            'max_drawdown': profit_info['drawdown_percentage']
+                        })
+                        del self.positions[symbol]
+                    else:
+                        position.quantity -= quantity
+                
+                self.trade_history.append({
+                    'timestamp': datetime.now(),
+                    'action': 'SELL',
+                    'symbol': symbol,
+                    'amount_usd': quantity * current_price
+                })
+            
+            # Send notification
+            await self.send_trade_notification(
+                action='SELL',
+                symbol=symbol,
+                price=current_price,
+                quantity=quantity,
+                is_paper=self.paper_trading,
+                profit_info=profit_info if position else None,
+                decision_factors=decision_factors
             )
             
-            # Calculate final profit
-            profit_info = position.calculate_profit(current_price)
-            
-            # Add to position history
-            self.position_history.append({
-                'symbol': symbol,
-                'entry_price': position.entry_price,
-                'exit_price': current_price,
-                'quantity': position.quantity,
-                'entry_time': position.entry_time,
-                'exit_time': datetime.now(),
-                'profit_usd': profit_info['profit_usd'],
-                'profit_percentage': profit_info['profit_percentage'],
-                'max_profit_percentage': profit_info['highest_profit_percentage'],
-                'max_drawdown': profit_info['drawdown_percentage']
-            })
-            
-            # Remove the position
-            del self.positions[symbol]
-            
-            self.trade_history.append({
-                'timestamp': datetime.now(),
-                'action': 'SELL',
-                'symbol': symbol,
-                'amount_usd': self.trade_amount
-            })
-            logging.info(f"Sell order placed for {symbol}: ${self.trade_amount}")
+            logging.info(f"Sell order placed for {symbol}: ${quantity * current_price:.2f}")
             
         except Exception as e:
             logging.error(f"Error placing sell order for {symbol}: {str(e)}")
             raise
-            
+
     def set_trade_amount(self, amount):
         try:
             amount = float(amount)
@@ -856,52 +1017,45 @@ class TradingBot:
             return 0
 
     def _should_trade(self, symbol: str, action: str) -> bool:
-        """Enhanced trade validation with support/resistance"""
+        """Enhanced validation for trading decisions"""
         try:
+            # Check if trading is active
+            if not (self.trading_active or self.paper_trading):
+                return False
+            
+            # Check trading hours
+            if not self._is_good_trading_hour():
+                return False
+            
+            # Get current price and position info
             current_price = float(self.client.get_product(f"{symbol}-USD").price)
+            position = self.paper_positions.get(symbol) if self.paper_trading else self.positions.get(symbol)
             
-            # Get support/resistance levels
-            levels = self._get_recent_highs_lows(symbol)
-            
-            # Check if we're at a good price level
+            # Validate based on action
             if action == 'BUY':
-                # Check if price is near support
-                is_near_support = any(
-                    abs(current_price - low) / low < 0.02  # Within 2% of support
-                    for low in levels['lows']
-                )
-                
-                # Additional buy conditions
-                volume_confirming = self.analyze_volume(symbol)['volume_ratio'] > 1.2
-                good_hour = self._is_good_trading_hour()
-                can_open = self._can_open_new_position()
-                
-                return (is_near_support and volume_confirming and 
-                       good_hour and can_open)
-                
-            else:  # SELL
-                # Check if price is near resistance
-                is_near_resistance = any(
-                    abs(current_price - high) / high < 0.02  # Within 2% of resistance
-                    for high in levels['highs']
-                )
-                
-                # Calculate minimum profit needed
-                position = self.paper_positions.get(symbol) if self.paper_trading else self.positions.get(symbol)
+                # Check if we already have a position
                 if position:
-                    min_profit = self._calculate_min_profit_target(position.entry_price)
-                    profit_info = position.calculate_profit(current_price)
-                    
-                    # Don't sell at a loss unless stop loss hit
-                    if (profit_info['profit_percentage'] < 0 and 
-                        profit_info['profit_percentage'] > -self.stop_loss_percentage):
+                    return False
+                
+                # Check if we have enough balance
+                required_balance = self._calculate_position_size(symbol, self.paper_trading)
+                if self.paper_trading:
+                    if self.paper_balance < required_balance:
+                        return False
+                else:
+                    if float(self.client.get_account('USD').available_balance.value) < required_balance:
                         return False
                     
-                return is_near_resistance
+            elif action == 'SELL':
+                # Check if we have a position to sell
+                if not position:
+                    return False
                 
+            return True
+            
         except Exception as e:
-            logging.error(f"Error in trade validation: {str(e)}")
-            return False
+            logging.error(f"Error in _should_trade for {symbol}: {str(e)}")
+            return False  # Default to not trading on error
 
     def _is_good_trading_hour(self) -> bool:
         """Check if current hour is good for trading"""
@@ -1289,7 +1443,7 @@ class TradingBot:
             logging.error(f"Error simulating buy order for {symbol}: {str(e)}")
             raise
 
-    def _simulate_sell_order(self, symbol: str) -> None:
+    def _simulate_sell_order(self, symbol: str, quantity: float) -> None:
         """Simulate a sell order with paper trading"""
         try:
             position = self.paper_positions.get(symbol)
@@ -1297,11 +1451,16 @@ class TradingBot:
                 logging.warning(f"No paper position found for {symbol}, cannot sell")
                 return
             
+            # Validate quantity
+            if quantity > position.quantity:
+                logging.warning(f"Trying to sell more than available: {quantity} > {position.quantity}")
+                quantity = position.quantity
+            
             product_id = f"{symbol}-USD"
             current_price = float(self.client.get_product(product_id).price)
             
             # Calculate total value and fees
-            total_value = position.quantity * current_price
+            total_value = quantity * current_price
             fee = total_value * 0.006
             actual_value = total_value - fee
             
@@ -1318,15 +1477,19 @@ class TradingBot:
                 'symbol': symbol,
                 'amount_usd': total_value,
                 'price': current_price,
-                'quantity': position.quantity,
+                'quantity': quantity,
                 'fees': fee,
                 'profit': profit_info['profit_usd'],
                 'profit_percentage': profit_info['profit_percentage'],
-                'is_paper': True
+                'is_paper': True,
+                'balance_after': self.paper_balance
             })
             
-            # Remove position
-            del self.paper_positions[symbol]
+            # Update or remove position based on quantity sold
+            if quantity >= position.quantity:
+                del self.paper_positions[symbol]
+            else:
+                position.quantity -= quantity
             
             logging.info(f"Paper sell order placed for {symbol}: ${total_value:.2f} (Profit: ${profit_info['profit_usd']:.2f})")
             
@@ -1458,101 +1621,85 @@ class TradingBot:
                     volume_data = self.analyze_volume(symbol)
                     ma_data = self.calculate_moving_averages(symbol)
                     
-                    # Buy conditions (more flexible)
+                    # Calculate signals
                     buy_signals = 0
-                    required_buy_signals = 3  # Need at least 3 signals to buy
-                    
-                    # RSI as a factor, not requirement
-                    if rsi <= self.rsi_oversold:
-                        buy_signals += 2  # Strong weight
-                    elif rsi < 40:  # Still somewhat oversold
-                        buy_signals += 1
-                        
-                    # Other factors
-                    if prediction['prediction_score'] > 30:
-                        buy_signals += 1
-                    if volume_data['volume_ratio'] > 1.2:
-                        buy_signals += 1
-                    if ma_data['trend'] in ['Strong Uptrend', 'Weak Uptrend']:
-                        buy_signals += 1
-                        
-                    # Sell conditions (more flexible)
                     sell_signals = 0
-                    required_sell_signals = 3  # Need at least 3 signals to sell
+                    required_signals = 3
                     
-                    # RSI as a factor, not requirement
-                    if rsi >= self.rsi_overbought:
-                        sell_signals += 2  # Strong weight
-                    elif rsi > 60:  # Still somewhat overbought
+                    # RSI signals
+                    if rsi <= self.rsi_oversold:
+                        buy_signals += 2
+                    elif rsi < 40:
+                        buy_signals += 1
+                    elif rsi >= self.rsi_overbought:
+                        sell_signals += 2
+                    elif rsi > 60:
                         sell_signals += 1
-                        
-                    # Other factors
-                    if prediction['prediction_score'] < -30:
+                    
+                    # Trend signals
+                    if ma_data['trend'] == 'Strong Uptrend':
+                        buy_signals += 2
+                    elif ma_data['trend'] == 'Weak Uptrend':
+                        buy_signals += 1
+                    elif ma_data['trend'] == 'Strong Downtrend':
+                        sell_signals += 2
+                    elif ma_data['trend'] == 'Weak Downtrend':
                         sell_signals += 1
-                    if volume_data['volume_ratio'] > 1.5 and volume_data['price_change'] < 0:
-                        sell_signals += 1
-                    if ma_data['trend'] == 'Downtrend':
+                    
+                    # Volume signals
+                    if volume_data['volume_ratio'] > 1.5:
+                        if volume_data['price_change'] > 0:
+                            buy_signals += 2
+                        elif volume_data['price_change'] < 0:
+                                sell_signals += 2
+                    elif volume_data['volume_ratio'] > 1.2:
+                        if volume_data['price_change'] > 0:
+                            buy_signals += 1
+                        elif volume_data['price_change'] < 0:
+                                sell_signals += 1
+                    
+                    # Prediction score signals
+                    if prediction['prediction_score'] > 50:
+                        buy_signals += 2
+                    elif prediction['prediction_score'] > 30:
+                        buy_signals += 1
+                    elif prediction['prediction_score'] < -50:
+                        sell_signals += 2
+                    elif prediction['prediction_score'] < -30:
                         sell_signals += 1
                     
                     # Determine action
                     action = "HOLD"
-                    if can_trade:
-                        if buy_signals >= required_buy_signals:
-                            action = "BUY SIGNAL"
-                        elif sell_signals >= required_sell_signals:
-                            action = "SELL SIGNAL"
+                    if buy_signals >= required_signals:
+                        action = "BUY SIGNAL"
+                    elif sell_signals >= required_signals:
+                        action = "SELL SIGNAL"
                     
-                    # Add to message
-                    message += f"{symbol}:\n"
-                    message += f"Price: ${current_price:,.2f}\n"
-                    message += f"RSI: {rsi:.2f}\n"
-                    message += f"Volume: {volume_data['volume_ratio']:.2f}x average\n"
-                    message += f"Trend: {ma_data['trend']}\n"
-                    message += f"Sentiment: {sentiment['overall_sentiment']} (Score: {sentiment['sentiment_score']:.1f})\n"
-                    message += f"Prediction Score: {prediction['prediction_score']:.1f}\n"
-                    
-                    # Add momentum info
-                    message += f"Momentum: "
-                    message += f"Short-term: {sentiment['momentum']['short_term']}, "
-                    message += f"Medium-term: {sentiment['momentum']['medium_term']}, "
-                    message += f"Long-term: {sentiment['momentum']['long_term']}\n"
-                    
+                    # Format message
+                    message += f"{symbol}: ${current_price:.2f}\n"
                     message += f"Action: {action}\n"
-                    
-                    # Add signals if they exist
-                    if prediction['bullish_signals']:
-                        message += "Bullish Signals:\n• " + "\n• ".join(prediction['bullish_signals']) + "\n"
-                    if prediction['bearish_signals']:
-                        message += "Bearish Signals:\n• " + "\n• ".join(prediction['bearish_signals']) + "\n"
-                    message += "\n"
+                    message += f"Buy Signals: {buy_signals}/{required_signals}\n"
+                    message += f"Sell Signals: {sell_signals}/{required_signals}\n"
+                    message += f"RSI: {rsi:.1f}\n"
+                    message += f"Trend: {ma_data['trend']}\n"
+                    message += f"Volume: {volume_data['volume_ratio']:.1f}x\n"
+                    message += f"Score: {prediction['prediction_score']:.1f}\n\n"
                     
                 except Exception as e:
                     message += f"{symbol}: Error analyzing - {str(e)}\n\n"
+                    continue
             
-            # Add position status with more detail
-            message += "\nActive Positions:\n"
-            positions = self.paper_positions if self.paper_trading else self.positions
-            if positions:
-                for symbol, pos in positions.items():
-                    try:
-                        current_price = float(self.client.get_product(f"{symbol}-USD").price)
-                        profit_info = pos.calculate_profit(current_price)
-                        message += (
-                            f"• {symbol}:\n"
-                            f"  Entry: ${pos.entry_price:.2f}\n"
-                            f"  Current: ${current_price:.2f}\n"
-                            f"  P/L: {profit_info['profit_percentage']:+.2f}%\n"
-                            f"  Max Profit: {profit_info['highest_profit_percentage']:+.2f}%\n"
-                            f"  Max Drawdown: {profit_info['drawdown_percentage']:+.2f}%\n"
-                        )
-                    except Exception as e:
-                        message += f"• {symbol}: Error calculating position info - {str(e)}\n"
+            # Send the update in chunks if it's too long
+            if len(message) > 2000:
+                chunks = [message[i:i+1900] for i in range(0, len(message), 1900)]
+                for i, chunk in enumerate(chunks, 1):
+                    await self.send_notification(f"🔔 Alert: (Part {i}/{len(chunks)})\n{chunk}")
             else:
-                message += "None\n"
-            
-            await self.send_notification(message, is_update=True)
+                await self.send_notification(f"🔔 Alert: (Part 1/1)\n{message}")
+                
         except Exception as e:
-            logging.error(f"Error sending interval update: {str(e)}")
+            logging.error(f"Error in interval update: {str(e)}")
+            await self.send_notification(f"❌ Error in interval update: {str(e)}")
 
     async def send_alert(self, symbol: str, alert_type: str, details: str):
         """Send an alert notification"""
@@ -1722,3 +1869,15 @@ class TradingBot:
         except Exception as e:
             logging.error(f"Error calculating volatility for {symbol}: {str(e)}")
             return 0
+
+    def _validate_signals(self, buy_signals: int, sell_signals: int, required_signals: int) -> Dict[str, bool]:
+        """Validate trading signals"""
+        try:
+            return {
+                'can_buy': buy_signals >= required_signals,
+                'can_sell': sell_signals >= required_signals,
+                'signal_strength': max(buy_signals, sell_signals) / required_signals
+            }
+        except Exception as e:
+            logging.error(f"Error validating signals: {str(e)}")
+            return {'can_buy': False, 'can_sell': False, 'signal_strength': 0.0}
