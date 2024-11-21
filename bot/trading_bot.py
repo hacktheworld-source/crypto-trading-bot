@@ -297,7 +297,7 @@ class TradingBot:
                         
                         # Prepare detailed decision factors
                         decision_factors = [
-                            f"Entry Signals Score: {entry_signals}/{required_signals}",
+                            f"Signal Strength: {min((entry_signals / required_signals) * 100, 100):.0f}%",
                             f"RSI: {rsi:.2f}",
                             f"Trend: {ma_data['trend']}",
                             f"Volume: {volume_data['volume_ratio']:.1f}x average",
@@ -1679,8 +1679,13 @@ class TradingBot:
                     # Format message
                     message += f"{symbol}: ${current_price:.2f}\n"
                     message += f"Action: {action}\n"
-                    message += f"Buy Signals: {buy_signals}/{required_signals}\n"
-                    message += f"Sell Signals: {sell_signals}/{required_signals}\n"
+                    
+                    # Instead of raw signal counts, show signal strength percentage
+                    buy_strength = min((buy_signals / required_signals) * 100, 100)  # Cap at 100%
+                    sell_strength = min((sell_signals / required_signals) * 100, 100)  # Cap at 100%
+                    
+                    message += f"Buy Strength: {buy_strength:.0f}%\n"
+                    message += f"Sell Strength: {sell_strength:.0f}%\n"
                     message += f"RSI: {rsi:.1f}\n"
                     message += f"Trend: {ma_data['trend']}\n"
                     message += f"Volume: {volume_data['volume_ratio']:.1f}x\n"
