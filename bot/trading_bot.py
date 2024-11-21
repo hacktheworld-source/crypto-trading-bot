@@ -1069,10 +1069,10 @@ class TradingBot:
         return 13 <= hour <= 21  # 9 AM - 5 PM EST
 
     def _can_open_new_position(self):
-        """Enhanced position limit check"""
+        """Enhanced position limit check with better diversification"""
         try:
-            # Check maximum number of positions
-            max_positions = 5  # Add this as a configurable parameter
+            # Increase maximum positions
+            max_positions = 10  # Allow more concurrent positions
             current_positions = len(self.paper_positions if self.paper_trading else self.positions)
             if current_positions >= max_positions:
                 logging.info(f"Maximum positions ({max_positions}) reached")
@@ -1091,17 +1091,25 @@ class TradingBot:
                     logging.error(f"Error calculating position value for {symbol}: {str(e)}")
                     continue
             
-            # Calculate max exposure based on balance
+            # Calculate max exposure based on balance with better diversification
             if self.paper_trading:
-                max_exposure = self.paper_balance * 0.75  # Use up to 75% of paper balance
+                # Use up to 90% of paper balance, but limit individual positions
+                max_exposure = self.paper_balance * 0.90
+                max_position_value = max_exposure / max_positions  # Ensure even distribution
             else:
-                max_exposure = self.max_position_size * 3  # Use up to 3x max position size for total exposure
+                max_exposure = self.max_position_size * 5  # Allow more total exposure
+                max_position_value = self.max_position_size
             
             if total_exposure >= max_exposure:
                 logging.info(f"Maximum exposure reached (${total_exposure:.2f} / ${max_exposure:.2f})")
                 return False
                 
-            # Add detailed logging
+            # Calculate position size based on available exposure
+            available_exposure = max_exposure - total_exposure
+            if available_exposure < max_position_value * 0.25:  # Minimum viable position size
+                logging.info(f"Insufficient remaining exposure (${available_exposure:.2f})")
+                return False
+                
             logging.info(f"Can open new position: {current_positions}/{max_positions} positions, "
                         f"${total_exposure:.2f}/${max_exposure:.2f} exposure")
             return True
