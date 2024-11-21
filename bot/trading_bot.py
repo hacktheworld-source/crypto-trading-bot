@@ -1591,48 +1591,33 @@ class TradingBot:
         self.discord_channel = channel
         logging.info(f"Discord notifications channel set")
 
-    async def send_notification(self, message: str, is_update: bool = False):
-        """Send a notification to Discord channel, splitting long messages if needed"""
-        if not self.discord_channel:
-            logging.info(f"Notification (no channel): {message}")
-            return
-        
+    async def send_notification(self, message: str, is_update: bool = False, part: tuple = None):
+        """Send notification to Discord channel with improved handling for long messages"""
         try:
-            # Format based on type
-            prefix = "📊 Trading Update:" if is_update else "🔔 Alert:"
-            
-            # Split message into chunks of 1900 chars (leaving room for formatting)
-            chunks = []
-            current_chunk = ""
-            
-            # Split message by newlines to keep coin analysis together
-            lines = message.split('\n')
-            
-            for line in lines:
-                # If adding this line would exceed limit, start new chunk
-                if len(current_chunk) + len(line) + 8 > 1900:  # 8 for ```\n and \n```
-                    if current_chunk:
-                        chunks.append(current_chunk)
-                    current_chunk = line
-                else:
-                    current_chunk += '\n' + line if current_chunk else line
-                    
-            # Add the last chunk
-            if current_chunk:
-                chunks.append(current_chunk)
-            
-            # Send each chunk as a separate message
-            for i, chunk in enumerate(chunks):
-                formatted_chunk = f"{prefix} (Part {i+1}/{len(chunks)})\n```{chunk}```"
-                await self.discord_channel.send(formatted_chunk)
-                # Small delay between messages to avoid rate limits
-                await asyncio.sleep(0.5)
-            
-            logging.info(f"Notification sent in {len(chunks)} parts")
-            
+            if not self.discord_channel:
+                return
+                
+            # Format part number if provided
+            if part:
+                current, total = part
+                message = f"[Part {current}/{total}]\n{message}"
+                
+            # Add update indicator if it's an interval update
+            if is_update:
+                timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                message = f"[{timestamp}] {message}"
+                
+            # Split message if too long
+            if len(message) > 2000:
+                chunks = [message[i:i+1900] for i in range(0, len(message), 1900)]
+                for i, chunk in enumerate(chunks, 1):
+                    chunk_msg = f"[Part {i}/{len(chunks)}]\n{chunk}"
+                    await self.discord_channel.send(chunk_msg)
+            else:
+                await self.discord_channel.send(message)
+                
         except Exception as e:
             logging.error(f"Error sending notification: {str(e)}")
-            self.discord_channel = None  # Reset channel if we can't send messages
 
     async def send_trade_notification(self, action: str, symbol: str, price: float, quantity: float, 
                                     is_paper: bool = False, profit_info: Dict[str, float] = None,
