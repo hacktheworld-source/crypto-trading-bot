@@ -711,7 +711,7 @@ class TradingBot:
             return True
             
         except Exception as e:
-            error_msg = f"Error placing {mode} sell order for {symbol}: {str(e)}")
+            error_msg = f"Error placing {mode} sell order for {symbol}: {str(e)}"
             logging.error(error_msg)
             await self.send_notification(f"❌ {error_msg}")
             return False
@@ -1766,7 +1766,6 @@ class TradingBot:
             return {
                 'highs': sorted(set(highs))[-5:],  # Last 5 unique highs
                 'lows': sorted(set(lows))[:5]      # Last 5 unique lows
-            }
         except Exception as e:
             logging.error(f"Error getting highs/lows for {symbol}: {str(e)}")
             return {'highs': [], 'lows': []}
