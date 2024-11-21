@@ -1244,16 +1244,17 @@ class TradingBot:
                 profits = [pos['profit_usd'] for pos in self.position_history]
                 winning_trades = len([p for p in profits if p > 0])
                 
+                # Calculate average hold time
+                hold_times = [(pos['exit_time'] - pos['entry_time']) for pos in self.position_history]
+                avg_hold_time = sum(hold_times, timedelta(0)) / len(hold_times)
+                
                 stats.update({
                     'total_profit_usd': sum(profits),
                     'win_rate': (winning_trades / len(profits)) * 100,
                     'average_profit': sum(profits) / len(profits),
                     'best_trade': max(self.position_history, key=lambda x: x['profit_percentage']),
                     'worst_trade': min(self.position_history, key=lambda x: x['profit_percentage']),
-                    'average_hold_time': sum(
-                        [(pos['exit_time'] - pos['entry_time']) for pos in self.position_history,
-                        timedelta(0)
-                    ) / len(self.position_history)
+                    'average_hold_time': avg_hold_time
                 })
                 
             return stats
