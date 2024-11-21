@@ -1091,12 +1091,19 @@ class TradingBot:
                     logging.error(f"Error calculating position value for {symbol}: {str(e)}")
                     continue
             
-            max_exposure = self.paper_balance * 0.75 if self.paper_trading else self.max_position_size * 3
+            # Calculate max exposure based on balance
+            if self.paper_trading:
+                max_exposure = self.paper_balance * 0.75  # Use up to 75% of paper balance
+            else:
+                max_exposure = self.max_position_size * 3  # Use up to 3x max position size for total exposure
             
             if total_exposure >= max_exposure:
                 logging.info(f"Maximum exposure reached (${total_exposure:.2f} / ${max_exposure:.2f})")
                 return False
                 
+            # Add detailed logging
+            logging.info(f"Can open new position: {current_positions}/{max_positions} positions, "
+                        f"${total_exposure:.2f}/${max_exposure:.2f} exposure")
             return True
             
         except Exception as e:
