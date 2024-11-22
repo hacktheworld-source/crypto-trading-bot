@@ -140,17 +140,16 @@ class TradingBot:
                             'signals': signals
                         }
                         
-                        # Execute trades based on signals
+                        # Check existing positions first
                         position = self.paper_positions.get(symbol) if self.paper_trading else self.positions.get(symbol)
-                        
                         if position:
-                            # Position Management
-                            if signals['sell_signals'] >= signals['required_signals'] and self._should_trade(symbol, 'SELL'):
-                                await self._manage_position(symbol, position, prediction, current_price)
-                        else:
-                            # Entry Analysis
-                            if signals['buy_signals'] >= signals['required_signals'] and self._should_trade(symbol, 'BUY'):
-                                await self._analyze_entry(symbol, prediction, current_price, signals)
+                            # FIXED: Actually call position management
+                            await self._manage_position(symbol, position, prediction, current_price)
+                            continue  # Skip entry analysis if we have a position
+                        
+                        # Entry Analysis (only if no position exists)
+                        if signals['buy_signals'] >= signals['required_signals'] and self._should_trade(symbol, 'BUY'):
+                            await self._analyze_entry(symbol, prediction, current_price, signals)
                     
                     except Exception as e:
                         logging.error(f"Error analyzing {symbol}: {str(e)}")
