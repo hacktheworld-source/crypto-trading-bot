@@ -250,8 +250,15 @@ class TradingBot:
                     f"{'Partial' if should_partial_exit else 'Full'} Exit"
                 ]
                 
-                await self._place_sell_order(symbol, quantity, decision_factors)
+                success = await self._place_sell_order(symbol, quantity, decision_factors)
                 
+                # If partial exit was successful, reset entry price for remaining position
+                if success and should_partial_exit and quantity < position.quantity:
+                    position.entry_price = current_price  # Reset entry price to current price
+                    position.highest_price = current_price  # Reset highest price
+                    position.lowest_price = current_price  # Reset lowest price
+                    logging.info(f"Reset entry price for remaining {symbol} position to ${current_price:.2f}")
+
         except Exception as e:
             logging.error(f"Error managing position for {symbol}: {str(e)}")
             raise
