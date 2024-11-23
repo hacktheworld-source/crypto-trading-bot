@@ -233,7 +233,8 @@ class TradingBot:
                 # Determine if we should take partial or full profits
                 should_partial_exit = (
                     prediction['prediction_score'] > 0 and  # Still somewhat bullish
-                    profit_info['profit_percentage'] >= take_profit_threshold
+                    profit_info['profit_percentage'] >= take_profit_threshold and
+                    not position.partial_exit_taken  # New flag to track partial exits
                 )
                 
                 quantity = position.quantity * (0.5 if should_partial_exit else 1.0)
@@ -250,15 +251,14 @@ class TradingBot:
                     f"{'Partial' if should_partial_exit else 'Full'} Exit"
                 ]
                 
-                success = await self._place_sell_order(symbol, quantity, decision_factors)
+                # If doing partial exit, update the position's entry price and mark partial exit taken
+                if should_partial_exit:
+                    position.partial_exit_taken = True
+                    # Update entry price to current price for remaining position
+                    position.entry_price = current_price
+                    
+                await self._place_sell_order(symbol, quantity, decision_factors)
                 
-                # If partial exit was successful, reset entry price for remaining position
-                if success and should_partial_exit and quantity < position.quantity:
-                    position.entry_price = current_price  # Reset entry price to current price
-                    position.highest_price = current_price  # Reset highest price
-                    position.lowest_price = current_price  # Reset lowest price
-                    logging.info(f"Reset entry price for remaining {symbol} position to ${current_price:.2f}")
-
         except Exception as e:
             logging.error(f"Error managing position for {symbol}: {str(e)}")
             raise
@@ -273,30 +273,29 @@ class TradingBot:
             
             # Use the signals we already calculated
             if signals['buy_signals'] >= signals['required_signals'] and self._should_trade(symbol, 'BUY'):
-                # Calculate position size
-                position_size = self._calculate_position_size(symbol, self.paper_trading)
-                if position_size > 0:
-                    # Double check price hasn't moved significantly
-                    new_price = float(self.client.get_product(f"{symbol}-USD").price)
-                    if abs(new_price - current_price) / current_price <= 0.01:
-                        quantity = position_size / current_price
-                        
-                        # Prepare detailed decision factors
-                        decision_factors = [
-                            f"Buy Strength: {signals['buy_strength']:.0f}%",
-                            f"RSI: {prediction['rsi']:.2f}",
-                            f"Trend: {prediction['trend']}",
-                            f"Volume: {prediction['volume_ratio']:.1f}x average",
-                            f"Prediction Score: {prediction['prediction_score']:.1f}"
-                        ]
-                        decision_factors.extend(prediction['bullish_signals'])
-                        
-                        await self._place_buy_order(symbol, quantity, decision_factors)
-                    else:
-                        logging.info(f"Price moved too much for {symbol}, aborting buy")
-                else:
-                    logging.info(f"Position size too small for {symbol}")
+                # Calculate position size using standardized method
+                quantity = self._calculate_position_size(symbol, self.paper_trading)
+                if quantity == 0:
+                    logging.warning(f"Position size too small for {symbol}")
+                    return
+                
+                # Double check price hasn't moved significantly
+                new_price = float(self.client.get_product(f"{symbol}-USD").price)
+                if abs(new_price - current_price) / current_price <= 0.01:  # 1% price movement tolerance
+                    # Prepare detailed decision factors
+                    decision_factors = [
+                        f"Buy Strength: {signals['buy_strength']:.0f}%",
+                        f"RSI: {prediction['rsi']:.2f}",
+                        f"Trend: {prediction['trend']}",
+                        f"Volume: {prediction['volume_ratio']:.1f}x average",
+                        f"Prediction Score: {prediction['prediction_score']:.1f}"
+                    ]
+                    decision_factors.extend(prediction['bullish_signals'])
                     
+                    await self._place_buy_order(symbol, quantity, decision_factors)
+                else:
+                    logging.info(f"Price moved too much for {symbol}, aborting buy")
+                
         except Exception as e:
             logging.error(f"Error analyzing entry for {symbol}: {str(e)}")
             raise
@@ -502,27 +501,29 @@ class TradingBot:
             raise
             
     async def _place_buy_order(self, symbol: str, quantity: float, decision_factors: List[str]):
+        """Place a buy order with proper error handling and logging"""
         try:
             mode = "Paper" if self.paper_trading else "Real"
             current_price = float(self.client.get_product(f"{symbol}-USD").price)
+            
+            # Calculate order details
             amount_usd = quantity * current_price
-
+            
             if self.paper_trading:
                 # Paper trading logic
-                fees = amount_usd * 0.006  # 0.6% fees
+                fees = amount_usd * 0.006  # Simulate 0.6% fees
                 
                 if amount_usd + fees > self.paper_balance:
                     logging.warning(f"Insufficient paper balance for {symbol} buy order")
                     return False
-                
+                    
                 # Create paper position
                 self.paper_positions[symbol] = Position(
                     symbol=symbol,
                     quantity=quantity,
                     entry_price=current_price,
                     entry_time=datetime.now(),
-                    is_paper=True,
-                    entry_fees=fees
+                    is_paper=True
                 )
                 
                 # Update paper balance
@@ -537,57 +538,74 @@ class TradingBot:
                     'quantity': quantity,
                     'amount_usd': amount_usd,
                     'fees': fees,
-                    'balance_after': self.paper_balance
+                    'balance_after': self.paper_balance,
+                    'is_paper': True
                 }
                 self.paper_trade_history.append(trade)
+                
             else:
-                # Real trading with actual Coinbase data
-                order = self.client.create_order(
-                    product_id=f"{symbol}-USD",
-                    side='BUY',
-                    order_configuration={
-                        'market_market_ioc': {
-                            'quote_size': str(amount_usd)
+                # Real trading logic
+                try:
+                    # Place market buy order
+                    order = self.client.create_order(
+                        product_id=f"{symbol}-USD",
+                        side='BUY',
+                        order_configuration={
+                            'market_market_ioc': {
+                                'base_size': str(quantity)  # Use base_size for exact quantity
+                            }
                         }
+                    )
+                    
+                    if not order:
+                        raise Exception("Order creation failed")
+                    
+                    # Get fill details
+                    filled_order = self.client.get_order(order.order_id)
+                    
+                    # Get actual execution details
+                    actual_quantity = float(filled_order.filled_size)
+                    actual_price = float(filled_order.filled_value) / actual_quantity
+                    actual_amount = float(filled_order.filled_value)
+                    actual_fees = float(filled_order.fee)
+                    
+                    # Create real position with actual fill data
+                    self.positions[symbol] = Position(
+                        symbol=symbol,
+                        quantity=actual_quantity,
+                        entry_price=actual_price,
+                        entry_time=datetime.now(),
+                        is_paper=False
+                    )
+                    
+                    # Record real trade with actual data
+                    trade = {
+                        'timestamp': datetime.now(),
+                        'symbol': symbol,
+                        'action': 'BUY',
+                        'price': actual_price,
+                        'quantity': actual_quantity,
+                        'amount_usd': actual_amount,
+                        'fees': actual_fees,
+                        'order_id': order.order_id,
+                        'is_paper': False
                     }
-                )
-
-                if not order:
-                    raise Exception("Order creation failed")
-
-                # Get actual filled details from the order
-                filled_details = self.client.get_order(order.order_id)
-                actual_quantity = float(filled_details.filled_size)
-                actual_price = float(filled_details.average_filled_price)
-                actual_fees = float(filled_details.fee)
-
-                # Create real position with actual values
-                self.positions[symbol] = Position(
-                    symbol=symbol,
-                    quantity=actual_quantity,
-                    entry_price=actual_price,
-                    entry_time=datetime.now(),
-                    is_paper=False,
-                    entry_fees=actual_fees
-                )
-
-                # Record real trade with actual values
-                trade = {
-                    'timestamp': datetime.now(),
-                    'symbol': symbol,
-                    'action': 'BUY',
-                    'price': actual_price,
-                    'quantity': actual_quantity,
-                    'amount_usd': float(filled_details.filled_value),
-                    'fees': actual_fees,
-                    'order_id': order.order_id
-                }
-                self.trade_history.append(trade)
-
+                    self.trade_history.append(trade)
+                    
+                    # Update local variables for notification
+                    current_price = actual_price
+                    quantity = actual_quantity
+                    amount_usd = actual_amount
+                    fees = actual_fees
+                    
+                except Exception as e:
+                    logging.error(f"Error executing real trade: {str(e)}")
+                    return False
+            
             # Log and notify
             decision_text = "\n".join(decision_factors)
             message = (
-                f"🟢 {mode} BUY Order Placed\n"
+                f"💰 {mode} BUY Order {'Simulated' if self.paper_trading else 'Executed'}\n"
                 f"Symbol: {symbol}\n"
                 f"Price: ${current_price:.2f}\n"
                 f"Quantity: {quantity:.8f}\n"
@@ -599,7 +617,7 @@ class TradingBot:
             logging.info(f"{mode} buy order placed for {symbol}")
             await self.send_notification(message)
             return True
-
+            
         except Exception as e:
             error_msg = f"Error placing {mode} buy order for {symbol}: {str(e)}"
             logging.error(error_msg)
@@ -607,79 +625,127 @@ class TradingBot:
             return False
 
     async def _place_sell_order(self, symbol: str, quantity: float, decision_factors: List[str]):
+        """Place a sell order with proper error handling and logging"""
         try:
             mode = "Paper" if self.paper_trading else "Real"
             current_price = float(self.client.get_product(f"{symbol}-USD").price)
+            
+            # Get position for profit calculation
             position = self.paper_positions.get(symbol) if self.paper_trading else self.positions.get(symbol)
-
+            if not position:
+                logging.warning(f"No {mode} position found for {symbol}, cannot sell")
+                return False
+            
+            # Validate quantity
+            if quantity > position.quantity:
+                logging.warning(f"Trying to sell more than available: {quantity} > {position.quantity}")
+                quantity = position.quantity
+            
             if self.paper_trading:
-                # Paper trading logic remains the same
-                # ... existing paper trading code ...
+                # Paper trading logic - calculate our own fees and profits
+                total_value = quantity * current_price
+                fees = total_value * 0.006
+                actual_value = total_value - fees
+                profit_info = position.calculate_profit(current_price)
+                
             else:
-                # Real trading with actual Coinbase data
-                order = self.client.create_order(
-                    product_id=f"{symbol}-USD",
-                    side='SELL',
-                    order_configuration={
-                        'market_market_ioc': {
-                            'base_size': str(quantity)
+                # Real trading - get actual order details from Coinbase
+                try:
+                    order = self.client.create_order(
+                        product_id=f"{symbol}-USD",
+                        side='SELL',
+                        order_configuration={
+                            'market_market_ioc': {
+                                'base_size': str(quantity)  # Use base_size for exact quantity
+                            }
                         }
+                    )
+                    
+                    if not order:
+                        raise Exception("Order creation failed")
+                    
+                    # Wait for order to be filled and get fill details
+                    filled_order = self.client.get_order(order.order_id)
+                    
+                    # Calculate actual values from the fill
+                    total_value = float(filled_order.filled_value)
+                    fees = float(filled_order.fee)
+                    actual_value = total_value - fees
+                    
+                    # Calculate profit using actual fill price
+                    entry_value = position.quantity * position.entry_price
+                    entry_fees = entry_value * 0.006  # Entry fees
+                    
+                    profit_info = {
+                        'profit_usd': actual_value - entry_value - entry_fees - fees,
+                        'profit_percentage': ((actual_value - entry_value - entry_fees - fees) / entry_value) * 100,
+                        'fees_paid': entry_fees + fees
                     }
-                )
-
-                if not order:
-                    raise Exception("Order creation failed")
-
-                # Get actual filled details
-                filled_details = self.client.get_order(order.order_id)
-                actual_price = float(filled_details.average_filled_price)
-                actual_quantity = float(filled_details.filled_size)
-                actual_fees = float(filled_details.fee)  # Gets real exit fee from Coinbase
-                actual_value = float(filled_details.filled_value)
-
-                # Calculate actual profit using Coinbase data
-                entry_value = position.quantity * position.entry_price
-                exit_value = actual_value
-                total_fees = actual_fees + position.entry_fees  # Adds both entry and exit fees
-                actual_profit = exit_value - entry_value - total_fees
-                profit_percentage = (actual_profit / entry_value) * 100
-
-                # Record trade with actual values
-                trade = {
-                    'timestamp': datetime.now(),
-                    'symbol': symbol,
-                    'action': 'SELL',
-                    'price': actual_price,
-                    'quantity': actual_quantity,
-                    'amount_usd': actual_value,
-                    'fees': actual_fees,
-                    'profit': actual_profit,
-                    'profit_percentage': profit_percentage,
-                    'order_id': order.order_id
-                }
-                self.trade_history.append(trade)
-
-                # Update or remove position
-                if quantity >= position.quantity:
-                    # Add to position history with actual values
+                    
+                except Exception as e:
+                    logging.error(f"Error executing real trade: {str(e)}")
+                    return False
+            
+            # Update or remove position
+            if quantity >= position.quantity:
+                if self.paper_trading:
+                    del self.paper_positions[symbol]
+                else:
+                    # Add to position history with actual trade data
                     self.position_history.append({
                         'symbol': symbol,
                         'entry_price': position.entry_price,
-                        'exit_price': actual_price,
+                        'exit_price': current_price,
                         'quantity': position.quantity,
                         'entry_time': position.entry_time,
                         'exit_time': datetime.now(),
-                        'profit_usd': actual_profit,
-                        'profit_percentage': profit_percentage,
-                        'fees_paid': total_fees
+                        'profit_usd': profit_info['profit_usd'],
+                        'profit_percentage': profit_info['profit_percentage'],
+                        'fees_paid': profit_info['fees_paid'],
+                        'max_profit_percentage': position.highest_profit_percentage,
+                        'max_drawdown': position.drawdown_percentage
                     })
                     del self.positions[symbol]
-                else:
-                    position.quantity -= quantity
-
-            # ... rest of notification logic ...
+            else:
+                position.quantity -= quantity
+            
+            # Record trade
+            trade_record = {
+                'timestamp': datetime.now(),
+                'symbol': symbol,
+                'action': 'SELL',
+                'price': current_price,
+                'quantity': quantity,
+                'amount_usd': total_value,
+                'fees': fees,
+                'profit': profit_info['profit_usd'],
+                'profit_percentage': profit_info['profit_percentage'],
+                'is_paper': self.paper_trading
+            }
+            
+            if self.paper_trading:
+                self.paper_trade_history.append(trade_record)
+                self.paper_balance += actual_value
+            else:
+                self.trade_history.append(trade_record)
+            
+            # Log and notify
+            decision_text = "\n".join(decision_factors)
+            message = (
+                f"💰 {mode} SELL Order {'Simulated' if self.paper_trading else 'Executed'}\n"
+                f"Symbol: {symbol}\n"
+                f"Price: ${current_price:.2f}\n"
+                f"Quantity: {quantity:.8f}\n"
+                f"Total: ${total_value:.2f}\n"
+                f"Fees: ${fees:.2f}\n"
+                f"Profit: ${profit_info['profit_usd']:+.2f} ({profit_info['profit_percentage']:+.2f}%)\n\n"
+                f"Decision Factors:\n{decision_text}"
+            )
+            
+            logging.info(f"{mode} sell order placed for {symbol}")
+            await self.send_notification(message)
             return True
-
+            
         except Exception as e:
             error_msg = f"Error placing {mode} sell order for {symbol}: {str(e)}"
             logging.error(error_msg)
@@ -945,53 +1011,72 @@ class TradingBot:
             raise
 
     def _calculate_position_size(self, symbol: str, is_paper: bool = False) -> float:
-        """Calculate appropriate position size based on risk and volatility"""
+        """Calculate appropriate position size based on risk and portfolio value"""
         try:
-            # Get available funds and portfolio value (same logic for both modes)
+            # Get available funds and portfolio value
             if is_paper:
-                balance = self.get_paper_balance()
-                available_funds = balance['cash_balance']
-                portfolio_value = balance['total_value']
+                available_funds = self.paper_balance
+                portfolio_value = self.get_paper_balance()['total_value']
             else:
                 balance = self.get_account_balance()
                 available_funds = float(balance['balances'].get('USD', {}).get('balance', 0))
                 portfolio_value = balance['total_usd_value']
             
-            # Calculate volatility
+            # Risk per trade (2% of portfolio)
+            risk_amount = portfolio_value * 0.02
+            
+            # Get current price and ATR
+            current_price = float(self.client.get_product(f"{symbol}-USD").price)
+            atr = self._calculate_atr(symbol)
             volatility = self._calculate_volatility(symbol)
             
-            # Base position size (3% max risk per trade for both modes)
-            max_risk_amount = portfolio_value * 0.03  # Increased from 2% to 3%
-            
-            # Adjust for volatility (same for both modes)
-            volatility_multiplier = 1.0
-            if volatility > 0.05:  # High volatility
-                volatility_multiplier = 0.5
-            elif volatility > 0.03:  # Medium volatility
-                volatility_multiplier = 0.75
-            
-            # Calculate ATR for dynamic position sizing
-            atr = self._calculate_atr(symbol)
-            current_price = float(self.client.get_product(f"{symbol}-USD").price)
-            
-            # Use ATR to determine position size
+            # Base position size on ATR for stop loss
             if atr > 0:
-                risk_per_unit = atr * 2  # 2 ATR units for stop loss
-                position_size = (max_risk_amount / risk_per_unit) * current_price
+                # Use 2 ATR units for stop loss
+                stop_distance = atr * 2
+                max_quantity = risk_amount / stop_distance
             else:
-                # If ATR calculation fails, use portfolio-based sizing
-                position_size = portfolio_value * 0.15  # Increased from 10% to 15%
+                # Fallback to percentage-based
+                stop_distance = current_price * (self.stop_loss_percentage / 100)
+                max_quantity = risk_amount / stop_distance
             
-            # Apply common limits for both modes
-            position_size = min(
-                position_size * volatility_multiplier,
-                available_funds * 0.6,  # Increased from 50% to 60% of available funds
-                portfolio_value * 0.25   # Increased from 20% to 25% max per position
+            # Adjust for volatility
+            if volatility > 0.05:  # High volatility
+                max_quantity *= 0.5
+            elif volatility > 0.03:  # Medium volatility
+                max_quantity *= 0.75
+            
+            # Calculate position value
+            position_value = max_quantity * current_price
+            
+            # Apply limits
+            position_value = min(
+                position_value,
+                available_funds * 0.5,  # Max 50% of available funds
+                self.max_position_size,  # Max position size limit
+                portfolio_value * 0.1    # Max 10% of portfolio in single position
             )
             
-            # Ensure minimum trade size
-            min_trade = 10.0  # $10 minimum for both modes
-            return max(min_trade, position_size) if position_size >= min_trade else 0
+            # Ensure minimum position size
+            min_position = 10.0 if not is_paper else 1.0
+            if position_value < min_position:
+                return 0
+            
+            # Convert value to quantity
+            quantity = position_value / current_price
+            
+            # Log position sizing details
+            logging.info(
+                f"Position size calculation for {symbol}:\n"
+                f"Portfolio Value: ${portfolio_value:.2f}\n"
+                f"Risk Amount: ${risk_amount:.2f}\n"
+                f"ATR: {atr:.4f}\n"
+                f"Volatility: {volatility:.4f}\n"
+                f"Final Quantity: {quantity:.8f}\n"
+                f"Position Value: ${position_value:.2f}"
+            )
+            
+            return quantity
             
         except Exception as e:
             logging.error(f"Error calculating position size: {str(e)}")
@@ -1039,77 +1124,42 @@ class TradingBot:
         hour = datetime.utcnow().hour
         return 13 <= hour <= 21  # 9 AM - 5 PM EST
 
-    def _can_open_new_position(self):
-        """Enhanced position limit check with dynamic position limits"""
+    def _can_open_new_position(self) -> bool:
+        """Check if we can open a new position based on portfolio management rules"""
         try:
-            # Calculate dynamic position limit (5-10 positions)
+            # Get current positions and portfolio value
             positions = self.paper_positions if self.paper_trading else self.positions
-            current_positions = len(positions)
             
-            # Get market conditions for all current positions
-            total_sentiment = 0
-            positive_positions = 0
+            # Maximum number of concurrent positions
+            max_positions = 5
+            if len(positions) >= max_positions:
+                logging.info(f"Maximum positions ({max_positions}) reached")
+                return False
             
-            for symbol in positions:
+            # Calculate total exposure
+            total_exposure = 0
+            for symbol, pos in positions.items():
                 try:
-                    prediction = self._analyze_price_prediction(symbol)
-                    if prediction['prediction_score'] > 0:
-                        positive_positions += 1
-                    total_sentiment += prediction['prediction_score']
+                    current_price = float(self.client.get_product(f"{symbol}-USD").price)
+                    position_value = pos.quantity * current_price
+                    total_exposure += position_value
                 except Exception as e:
-                    logging.error(f"Error analyzing {symbol}: {str(e)}")
+                    logging.error(f"Error calculating position value for {symbol}: {str(e)}")
                     continue
             
-            # Calculate average sentiment (-100 to 100)
-            avg_sentiment = total_sentiment / max(len(positions), 1)
-            
-            # Calculate success rate of current positions
-            success_rate = positive_positions / max(len(positions), 1)
-            
-            # Determine max positions based on market conditions
-            base_limit = 7  # Target average of 7 positions
-            
-            # Adjust limit based on sentiment and success
-            sentiment_adjustment = 1 if avg_sentiment > 30 else -1 if avg_sentiment < -30 else 0
-            success_adjustment = 1 if success_rate > 0.7 else -1 if success_rate < 0.3 else 0
-            
-            # Calculate final position limit (5-10 range)
-            max_positions = min(max(base_limit + sentiment_adjustment + success_adjustment, 5), 10)
-            
-            if current_positions >= max_positions:
-                logging.info(f"Maximum positions ({current_positions}/{max_positions}) reached")
-                logging.info(f"Market sentiment: {avg_sentiment:.1f}, Success rate: {success_rate:.1f}")
-                return False
-            
-            # Rest of the exposure checks remain the same
+            # Get portfolio value
             if self.paper_trading:
-                balance = self.get_paper_balance()
-                total_value = balance['total_value']
-                available_funds = balance['cash_balance']
+                portfolio_value = self.get_paper_balance()['total_value']
             else:
-                balance = self.get_account_balance()
-                total_value = balance['total_usd_value']
-                available_funds = float(balance['balances'].get('USD', {}).get('balance', 0))
+                portfolio_value = self.get_account_balance()['total_usd_value']
             
-            max_exposure = total_value * 0.85
-            min_available = total_value * 0.15
+            # Maximum total exposure (50% of portfolio)
+            max_exposure = portfolio_value * 0.5
             
-            current_exposure = sum(
-                float(self.client.get_product(f"{pos.symbol}-USD").price) * pos.quantity
-                for pos in positions.values()
-            )
-            
-            if current_exposure >= max_exposure:
-                logging.info(f"Maximum exposure reached (${current_exposure:.2f} / ${max_exposure:.2f})")
+            if total_exposure >= max_exposure:
+                logging.info(f"Maximum exposure reached (${total_exposure:.2f} / ${max_exposure:.2f})")
                 return False
             
-            if available_funds < min_available:
-                logging.info(f"Insufficient available funds (${available_funds:.2f} < ${min_available:.2f})")
-                return False
-            
-            logging.info(f"Can open new position: {current_positions}/{max_positions} positions, "
-                        f"${current_exposure:.2f}/${max_exposure:.2f} exposure")
-            logging.info(f"Market sentiment: {avg_sentiment:.1f}, Success rate: {success_rate:.1f}")
             return True
             
         except Exception as e:
