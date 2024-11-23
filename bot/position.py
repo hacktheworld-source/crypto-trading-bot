@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Dict, Any
 
 class Position:
-    def __init__(self, symbol: str, entry_price: float, quantity: float, entry_time: datetime, is_paper: bool = False):
+    def __init__(self, symbol: str, entry_price: float, quantity: float, entry_time: datetime, is_paper: bool = False, entry_fees: float = 0):
         self.symbol = symbol
         self.entry_price = entry_price
         self.quantity = quantity
@@ -10,6 +10,7 @@ class Position:
         self.highest_price = entry_price
         self.lowest_price = entry_price
         self.is_paper = is_paper
+        self.entry_fees = entry_fees
         
     def update_price(self, current_price: float) -> None:
         self.highest_price = max(self.highest_price, current_price)
