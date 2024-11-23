@@ -1597,26 +1597,61 @@ class TradingBot:
             raise
 
     def get_paper_balance(self) -> Dict[str, float]:
-        """Get paper trading account balance"""
+        """Get paper trading account balance with accurate P/L calculation"""
         try:
+            # Start with current cash balance
             total_value = self.paper_balance
             
-            # Add value of all paper positions
+            # Calculate P/L from closed trades
+            closed_trades_pl = sum(
+                trade.get('profit', 0) 
+                for trade in self.paper_trade_history 
+                if trade['action'] == 'SELL'
+            )
+            
+            # Calculate unrealized P/L from current positions
+            unrealized_pl = 0.0
+            total_fees = 0.0
+            
             for symbol, position in self.paper_positions.items():
                 try:
                     current_price = float(self.client.get_product(f"{symbol}-USD").price)
                     position_value = position.quantity * current_price
                     total_value += position_value
+                    
+                    # Get unrealized profit info
+                    profit_info = position.calculate_profit(current_price)
+                    unrealized_pl += profit_info['profit_usd']
+                    total_fees += profit_info['fees_paid']
+                    
                 except Exception as e:
                     logging.error(f"Error calculating paper position value for {symbol}: {str(e)}")
-                
+            
+            # Add fees from trade history
+            total_fees += sum(trade.get('fees', 0) for trade in self.paper_trade_history)
+            
+            # Calculate total P/L (closed + unrealized)
+            total_profit = closed_trades_pl + unrealized_pl
+            
+            # Calculate percentage based on initial balance of 1000
+            profit_percentage = (total_profit / 1000.0) * 100
+            
             return {
                 'cash_balance': self.paper_balance,
-                'total_value': total_value
+                'total_value': total_value,
+                'total_profit': total_profit,
+                'profit_percentage': profit_percentage,
+                'total_fees': total_fees
             }
         except Exception as e:
             logging.error(f"Error getting paper balance: {str(e)}")
-            return {'cash_balance': 0.0, 'total_value': 0.0}
+            return {
+                'cash_balance': 0.0,
+                'total_value': 0.0,
+                'total_profit': 0.0,
+                'profit_percentage': 0.0,
+                'total_fees': 0.0
+            }
 
     def reset_paper_trading(self, initial_balance: float = 1000.0) -> None:
         """Reset paper trading with new balance"""

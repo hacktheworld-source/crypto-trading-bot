@@ -408,12 +408,7 @@ class CommandHandler:
         response = "Paper Trading Account:\n```"
         response += f"Cash Balance: ${balance['cash_balance']:.2f}\n"
         response += f"Total Value: ${balance['total_value']:.2f}\n"
-        
-        # Calculate profit/loss
-        profit = balance['total_value'] - 1000.0  # Assuming $1000 starting balance
-        profit_percentage = (profit / 1000.0) * 100
-        
-        response += f"Total P/L: ${profit:+.2f} ({profit_percentage:+.2f}%)"
+        response += f"Total P/L: ${balance['total_profit']:+.2f} ({balance['profit_percentage']:+.2f}%)"
         response += "```"
         return response
         
