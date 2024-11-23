@@ -508,9 +508,38 @@ class TradingBot:
             amount_usd = quantity * current_price
 
             if self.paper_trading:
-                # Paper trading logic remains the same
-                fees = amount_usd * 0.006
-                # ... rest of paper trading logic ...
+                # Paper trading logic
+                fees = amount_usd * 0.006  # 0.6% fees
+                
+                if amount_usd + fees > self.paper_balance:
+                    logging.warning(f"Insufficient paper balance for {symbol} buy order")
+                    return False
+                
+                # Create paper position
+                self.paper_positions[symbol] = Position(
+                    symbol=symbol,
+                    quantity=quantity,
+                    entry_price=current_price,
+                    entry_time=datetime.now(),
+                    is_paper=True,
+                    entry_fees=fees
+                )
+                
+                # Update paper balance
+                self.paper_balance -= (amount_usd + fees)
+                
+                # Record paper trade
+                trade = {
+                    'timestamp': datetime.now(),
+                    'symbol': symbol,
+                    'action': 'BUY',
+                    'price': current_price,
+                    'quantity': quantity,
+                    'amount_usd': amount_usd,
+                    'fees': fees,
+                    'balance_after': self.paper_balance
+                }
+                self.paper_trade_history.append(trade)
             else:
                 # Real trading with actual Coinbase data
                 order = self.client.create_order(
@@ -530,14 +559,16 @@ class TradingBot:
                 filled_details = self.client.get_order(order.order_id)
                 actual_quantity = float(filled_details.filled_size)
                 actual_price = float(filled_details.average_filled_price)
-                actual_fees = float(filled_details.fee)  # Gets real entry fee from Coinbase
+                actual_fees = float(filled_details.fee)
 
                 # Create real position with actual values
                 self.positions[symbol] = Position(
                     symbol=symbol,
                     quantity=actual_quantity,
                     entry_price=actual_price,
-                    entry_time=datetime.now()
+                    entry_time=datetime.now(),
+                    is_paper=False,
+                    entry_fees=actual_fees
                 )
 
                 # Record real trade with actual values
@@ -553,7 +584,20 @@ class TradingBot:
                 }
                 self.trade_history.append(trade)
 
-            # ... rest of notification logic ...
+            # Log and notify
+            decision_text = "\n".join(decision_factors)
+            message = (
+                f"🟢 {mode} BUY Order Placed\n"
+                f"Symbol: {symbol}\n"
+                f"Price: ${current_price:.2f}\n"
+                f"Quantity: {quantity:.8f}\n"
+                f"Total: ${amount_usd:.2f}\n"
+                f"Fees: ${fees:.2f}\n\n"
+                f"Decision Factors:\n{decision_text}"
+            )
+            
+            logging.info(f"{mode} buy order placed for {symbol}")
+            await self.send_notification(message)
             return True
 
         except Exception as e:
