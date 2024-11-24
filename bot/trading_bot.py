@@ -1986,23 +1986,37 @@ class TradingBot:
             logging.error(f"Error validating signals: {str(e)}")
             return {'can_buy': False, 'can_sell': False, 'signal_strength': 0.0}
 
-    def _calculate_signals(self, symbol: str, prediction: Dict[str, Any], rsi: float, 
-                          volume_data: Dict[str, Any], ma_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Centralized signal calculation logic"""
+    def _calculate_signals(self, symbol: str, prediction: dict, rsi: float, volume_data: dict, ma_data: dict) -> dict:
         try:
             buy_signals = 0
             sell_signals = 0
             required_signals = 3
             
-            # RSI signals
-            if rsi <= self.rsi_oversold:
-                buy_signals += 2
-            elif rsi < 40:
-                buy_signals += 1
-            elif rsi >= self.rsi_overbought:
+            # RSI signals - More balanced
+            if rsi >= 80:  # Extremely overbought
                 sell_signals += 2
-            elif rsi > 60:
+                buy_signals = 0  # Still prevent buying at extreme levels
+            elif rsi >= 70:  # Overbought
                 sell_signals += 1
+                buy_signals = max(0, buy_signals - 1)  # Reduce but don't eliminate buy signals
+            elif rsi <= 30:  # Oversold
+                buy_signals += 2
+            elif rsi <= 40:  # Approaching oversold
+                buy_signals += 1
+            elif rsi >= 65:  # Approaching overbought
+                sell_signals += 1
+            
+            # Volume signals
+            if volume_data['volume_ratio'] > 2.0:
+                if volume_data['price_change'] > 0:
+                    buy_signals += 2
+                else:
+                    sell_signals += 2
+            elif volume_data['volume_ratio'] > 1.2:
+                if volume_data['price_change'] > 0:
+                    buy_signals += 1
+                else:
+                    sell_signals += 1
                 
             # Trend signals
             if ma_data['trend'] == 'Strong Uptrend':
@@ -2013,19 +2027,7 @@ class TradingBot:
                 sell_signals += 2
             elif ma_data['trend'] == 'Weak Downtrend':
                 sell_signals += 1
-                
-            # Volume signals
-            if volume_data['volume_ratio'] > 1.5:
-                if volume_data['price_change'] > 0:
-                    buy_signals += 2
-                else:
-                    sell_signals += 2
-            elif volume_data['volume_ratio'] > 1.2:
-                if volume_data['price_change'] > 0:
-                    buy_signals += 1
-                else:
-                    sell_signals += 1
-                    
+            
             # Prediction score signals
             if prediction['prediction_score'] > 50:
                 buy_signals += 2
@@ -2035,18 +2037,11 @@ class TradingBot:
                 sell_signals += 2
             elif prediction['prediction_score'] < -30:
                 sell_signals += 1
-                
-            # Market condition checks
-            if rsi > 85:  # Extremely overbought
-                buy_signals = 0
-            elif rsi < 15:  # Extremely oversold
-                sell_signals = 0
-                
-            # Volume confirmation
-            if volume_data['volume_ratio'] < 1.0:
-                buy_signals = max(0, buy_signals - 1)
-                sell_signals = max(0, sell_signals - 1)
-                
+            
+            # Only add extra requirements in extreme conditions
+            if rsi > 75 or volume_data['volume_ratio'] > 5:
+                required_signals += 1
+            
             return {
                 'buy_signals': buy_signals,
                 'sell_signals': sell_signals,
@@ -2054,7 +2049,7 @@ class TradingBot:
                 'buy_strength': min((buy_signals / required_signals) * 100, 100),
                 'sell_strength': min((sell_signals / required_signals) * 100, 100)
             }
-
+            
         except Exception as e:
             logging.error(f"Error calculating signals for {symbol}: {str(e)}")
             return {
