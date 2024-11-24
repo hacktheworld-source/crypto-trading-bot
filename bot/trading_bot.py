@@ -2036,6 +2036,7 @@ class TradingBot:
                 'required_signals': required_signals,
                 'buy_strength': min((buy_signals / required_signals) * 100, 100),
                 'sell_strength': min((sell_signals / required_signals) * 100, 100)
+            }
             
         except Exception as e:
             logging.error(f"Error calculating signals for {symbol}: {str(e)}")
