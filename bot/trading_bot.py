@@ -1647,23 +1647,64 @@ class TradingBot:
             logging.error(f"Error simulating sell order for {symbol}: {str(e)}")
             raise
 
-    def get_paper_balance(self):
-        positions_value = 0.0
-        for symbol, position in self.paper_positions.items():
-            current_price = float(self.client.get_product(f"{symbol}-USD").price)
-            pos_value = position.quantity * current_price
-            positions_value += pos_value
-        return {
-            'cash_balance': self.paper_balance,
-            'positions_value': positions_value,
-            'total_value': self.paper_balance + positions_value,
-            'realized_pl': self.paper_realized_pl,
-            'unrealized_pl': 0.0,
-            'total_pl': self.paper_realized_pl,
-            'pl_percentage': (self.paper_realized_pl / self.paper_initial_balance) * 100 if self.paper_initial_balance > 0 else 0,
-            'total_fees': self.paper_total_fees,
-            'initial_balance': self.paper_initial_balance
-        }
+    def get_paper_balance(self) -> Dict[str, float]:
+        """Get paper trading account balance with accurate P/L calculation"""
+        try:
+            # Get current cash
+            cash_balance = self.paper_balance
+            positions_value = 0.0
+            unrealized_pl = 0.0
+            
+            # Calculate positions value and unrealized P/L
+            for symbol, position in self.paper_positions.items():
+                current_price = float(self.client.get_product(f"{symbol}-USD").price)
+                
+                # Calculate current position value
+                pos_value = position.quantity * current_price
+                positions_value += pos_value
+                
+                # Calculate unrealized P/L including fees
+                profit_info = position.calculate_profit(current_price)
+                unrealized_pl += profit_info['profit_usd']
+            
+            # Calculate total value (should equal initial balance + total P/L)
+            total_value = cash_balance + positions_value
+            total_pl = self.paper_realized_pl + unrealized_pl
+            
+            # Verify total value matches P/L calculation
+            expected_total = self.paper_initial_balance + total_pl
+            if abs(total_value - expected_total) > 0.01:  # Allow for small rounding differences
+                logging.warning(f"Total value discrepancy detected: {total_value} vs {expected_total}")
+                total_value = expected_total  # Use P/L-based calculation as it's more accurate
+            
+            # Calculate P/L percentage based on initial balance
+            pl_percentage = (total_pl / self.paper_initial_balance) * 100 if self.paper_initial_balance > 0 else 0
+            
+            return {
+                'cash_balance': round(cash_balance, 2),
+                'positions_value': round(positions_value, 2),
+                'total_value': round(total_value, 2),
+                'realized_pl': round(self.paper_realized_pl, 2),
+                'unrealized_pl': round(unrealized_pl, 2),
+                'total_pl': round(total_pl, 2),
+                'pl_percentage': round(pl_percentage, 2),
+                'total_fees': round(self.paper_total_fees, 2),
+                'initial_balance': self.paper_initial_balance
+            }
+            
+        except Exception as e:
+            logging.error(f"Error calculating paper balance: {str(e)}")
+            return {
+                'cash_balance': self.paper_balance,
+                'positions_value': 0.0,
+                'total_value': self.paper_balance,
+                'realized_pl': 0.0,
+                'unrealized_pl': 0.0,
+                'total_pl': 0.0,
+                'pl_percentage': 0.0,
+                'total_fees': self.paper_total_fees,
+                'initial_balance': self.paper_initial_balance
+            }
 
     def reset_paper_trading(self, initial_balance: float = 1000.0) -> None:
         """Reset paper trading with new balance"""
@@ -1927,7 +1968,6 @@ class TradingBot:
                         high - low,  # Current high - low
                         abs(high - prev_close),  # Current high - prev close
                         abs(low - prev_close)    # Current low - prev close
-                    )
                     tr_values.append(tr)
                 
                 prev_close = close
@@ -2036,7 +2076,6 @@ class TradingBot:
                 'required_signals': required_signals,
                 'buy_strength': min((buy_signals / required_signals) * 100, 100),
                 'sell_strength': min((sell_signals / required_signals) * 100, 100)
-            }
             
         except Exception as e:
             logging.error(f"Error calculating signals for {symbol}: {str(e)}")
