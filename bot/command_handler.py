@@ -75,7 +75,10 @@ class CommandHandler:
         if self.trading_bot.trading_active:
             return "❌ Cannot start paper trading while real trading is active. Stop real trading first with '!stop real'"
         
+        # Reset paper trading with initial balance
         self.trading_bot.reset_paper_trading(initial_balance)
+        
+        # Start the trading loop
         return self.trading_bot.start_trading_loop(paper=True)
         
     def stop_trading(self, mode: str = 'all'):
@@ -142,11 +145,13 @@ class CommandHandler:
         
         # Paper Trading Account
         status += "\n\n📝 Paper Trading Account:"
-        status += f"\n  Paper Cash: ${paper_balance['cash_balance']:.2f}"
-        paper_profit = paper_balance['total_value'] - 1000.0
-        paper_profit_pct = (paper_profit / 1000.0) * 100
-        status += f"\n  Paper Portfolio Value: ${paper_balance['total_value']:.2f}"
-        status += f"\n  Paper P/L: ${paper_profit:+.2f} ({paper_profit_pct:+.2f}%)"
+        status += f"\n  Cash Balance: ${paper_balance['cash_balance']:.2f}"
+        status += f"\n  Position Value: ${paper_balance['positions_value']:.2f}"
+        status += f"\n  Total Value: ${paper_balance['total_value']:.2f}"
+        status += f"\n  Realized P/L: ${paper_balance['realized_pl']:+.2f}"
+        status += f"\n  Unrealized P/L: ${paper_balance['unrealized_pl']:+.2f}"
+        status += f"\n  Total P/L: ${paper_balance['total_pl']:+.2f} ({paper_balance['pl_percentage']:+.2f}%)"
+        status += f"\n  Total Fees: ${paper_balance['total_fees']:.2f}"
         
         # Trading History Summary
         status += "\n\n📜 Trading History:"
@@ -407,8 +412,12 @@ class CommandHandler:
         
         response = "Paper Trading Account:\n```"
         response += f"Cash Balance: ${balance['cash_balance']:.2f}\n"
+        response += f"Position Value: ${balance['positions_value']:.2f}\n"
         response += f"Total Value: ${balance['total_value']:.2f}\n"
-        response += f"Total P/L: ${balance['total_profit']:+.2f} ({balance['profit_percentage']:+.2f}%)"
+        response += f"Realized P/L: ${balance['realized_pl']:+.2f}\n"
+        response += f"Unrealized P/L: ${balance['unrealized_pl']:+.2f}\n"
+        response += f"Total P/L: ${balance['total_pl']:+.2f} ({balance['pl_percentage']:+.2f}%)\n"
+        response += f"Total Fees: ${balance['total_fees']:.2f}"
         response += "```"
         return response
         
@@ -441,8 +450,8 @@ class CommandHandler:
         response += f"Current Cash Balance: ${paper_balance['cash_balance']:,.2f}\n"
         response += f"Portfolio Value: ${paper_balance['total_value']:,.2f}\n"
         
-        # Calculate return on initial investment
-        roi = ((paper_balance['total_value'] - 1000.0) / 1000.0) * 100
+        # Calculate ROI using actual initial balance
+        roi = ((paper_balance['total_value'] - paper_balance['initial_balance']) / paper_balance['initial_balance']) * 100
         response += f"Total Return: {roi:+.2f}%"
         response += "```"
         return response

@@ -57,6 +57,11 @@ class TradingBot:
             self.paper_trade_history: List[Dict[str, Any]] = []
             self.paper_portfolio_value = self.paper_balance
             
+            # Add these new attributes
+            self.paper_initial_balance = 0.0  # Will be set when paper trading starts
+            self.paper_realized_pl = 0.0      # Track realized P/L
+            self.paper_total_fees = 0.0       # Track total fees paid
+            
             self.discord_channel = None  # Will be set when bot starts
             
         except Exception as e:
@@ -506,6 +511,16 @@ class TradingBot:
             mode = "Paper" if self.paper_trading else "Real"
             current_price = float(self.client.get_product(f"{symbol}-USD").price)
             
+            # Add at start of method
+            if self.paper_trading:
+                total_cost = quantity * current_price * (1 + 0.006)  # Include fees
+                if total_cost > self.max_position_size:
+                    logging.warning(f"Order exceeds maximum position size (${self.max_position_size})")
+                    return False
+                if total_cost > self.paper_balance:
+                    logging.warning(f"Insufficient paper balance for {symbol} buy order")
+                    return False
+            
             # Calculate order details
             amount_usd = quantity * current_price
             
@@ -647,6 +662,13 @@ class TradingBot:
                 fees = total_value * 0.006
                 actual_value = total_value - fees
                 profit_info = position.calculate_profit(current_price)
+                
+                # Update realized P/L and fees
+                self.paper_realized_pl += profit_info['profit_usd']
+                self.paper_total_fees += fees
+                
+                # Update paper balance
+                self.paper_balance += actual_value
                 
             else:
                 # Real trading - get actual order details from Coinbase
@@ -1131,11 +1153,13 @@ class TradingBot:
             positions = self.paper_positions if self.paper_trading else self.positions
             
             # Maximum number of concurrent positions
-            max_positions = 5
-            if len(positions) >= max_positions:
+            max_positions = 10
+            current_positions = len(positions)
+            
+            if current_positions >= max_positions:
                 logging.info(f"Maximum positions ({max_positions}) reached")
                 return False
-            
+                
             # Calculate total exposure
             total_exposure = 0
             for symbol, pos in positions.items():
@@ -1153,8 +1177,13 @@ class TradingBot:
             else:
                 portfolio_value = self.get_account_balance()['total_usd_value']
             
-            # Maximum total exposure (50% of portfolio)
-            max_exposure = portfolio_value * 0.5
+            # Maximum total exposure (80% of portfolio)
+            max_exposure = portfolio_value * 0.8
+            
+            # Dynamic position sizing - larger positions allowed when fewer positions
+            # but still capped for safety
+            max_position_pct = min(0.15, 0.8 / (current_positions + 1))
+            self.max_position_size = portfolio_value * max_position_pct
             
             if total_exposure >= max_exposure:
                 logging.info(f"Maximum exposure reached (${total_exposure:.2f} / ${max_exposure:.2f})")
@@ -1599,57 +1628,63 @@ class TradingBot:
     def get_paper_balance(self) -> Dict[str, float]:
         """Get paper trading account balance with accurate P/L calculation"""
         try:
-            # Start with current cash balance
-            total_value = self.paper_balance
+            # Get current cash
+            cash_balance = self.paper_balance
             
-            # Calculate unrealized P/L from current positions
+            # Calculate current position values and unrealized P/L
+            positions_value = 0.0
             unrealized_pl = 0.0
+            
             for symbol, position in self.paper_positions.items():
                 try:
                     current_price = float(self.client.get_product(f"{symbol}-USD").price)
-                    position_value = position.quantity * current_price
-                    total_value += position_value  # Add position value to total
+                    pos_value = position.quantity * current_price
+                    positions_value += pos_value
                     
-                    # Get unrealized profit info
                     profit_info = position.calculate_profit(current_price)
                     unrealized_pl += profit_info['profit_usd']
                     
                 except Exception as e:
                     logging.error(f"Error calculating paper position value for {symbol}: {str(e)}")
             
-            # Calculate total P/L by comparing current total value to initial balance
-            total_profit = total_value - 1000.0  # Compare to initial $1000
-            profit_percentage = (total_profit / 1000.0) * 100
-            
-            # Calculate total fees paid (both from history and current positions)
-            total_fees = sum(trade.get('fees', 0) for trade in self.paper_trade_history)
-            for position in self.paper_positions.values():
-                current_price = float(self.client.get_product(f"{position.symbol}-USD").price)
-                profit_info = position.calculate_profit(current_price)
-                total_fees += profit_info['fees_paid']
+            # Calculate total value and P/L
+            total_value = cash_balance + positions_value
+            total_pl = self.paper_realized_pl + unrealized_pl
+            pl_percentage = (total_pl / self.paper_initial_balance) * 100 if self.paper_initial_balance > 0 else 0
             
             return {
-                'cash_balance': self.paper_balance,
+                'cash_balance': cash_balance,
+                'positions_value': positions_value,
                 'total_value': total_value,
-                'total_profit': total_profit,
-                'profit_percentage': profit_percentage,
-                'total_fees': total_fees
+                'realized_pl': self.paper_realized_pl,
+                'unrealized_pl': unrealized_pl,
+                'total_pl': total_pl,
+                'pl_percentage': pl_percentage,
+                'total_fees': self.paper_total_fees,
+                'initial_balance': self.paper_initial_balance
             }
         except Exception as e:
             logging.error(f"Error getting paper balance: {str(e)}")
             return {
                 'cash_balance': 0.0,
+                'positions_value': 0.0,
                 'total_value': 0.0,
-                'total_profit': 0.0,
-                'profit_percentage': 0.0,
-                'total_fees': 0.0
+                'realized_pl': 0.0,
+                'unrealized_pl': 0.0,
+                'total_pl': 0.0,
+                'pl_percentage': 0.0,
+                'total_fees': 0.0,
+                'initial_balance': self.paper_initial_balance
             }
 
     def reset_paper_trading(self, initial_balance: float = 1000.0) -> None:
         """Reset paper trading with new balance"""
+        self.paper_initial_balance = initial_balance  # Store initial balance
         self.paper_balance = initial_balance
         self.paper_positions.clear()
         self.paper_trade_history.clear()
+        self.paper_realized_pl = 0.0
+        self.paper_total_fees = 0.0
         logging.info(f"Paper trading reset with ${initial_balance} balance")
 
     def set_discord_channel(self, channel):
@@ -2018,7 +2053,6 @@ class TradingBot:
                 'required_signals': required_signals,
                 'buy_strength': min((buy_signals / required_signals) * 100, 100),
                 'sell_strength': min((sell_signals / required_signals) * 100, 100)
-            }
             
         except Exception as e:
             logging.error(f"Error calculating signals for {symbol}: {str(e)}")
@@ -2029,3 +2063,22 @@ class TradingBot:
                 'buy_strength': 0,
                 'sell_strength': 0
             }
+
+    def _simulate_slippage(self, price: float, quantity: float, is_buy: bool) -> float:
+        """Simulate realistic slippage based on order size"""
+        try:
+            order_size = price * quantity
+            base_slippage = 0.001  # 0.1% base slippage
+            
+            # More slippage for larger orders
+            if order_size > 1000:
+                base_slippage *= (order_size / 1000) ** 0.5
+            
+            # Cap at 1%
+            slippage = min(base_slippage, 0.01)
+            
+            # Buys get worse prices, sells get worse prices
+            return price * (1 + slippage) if is_buy else price * (1 - slippage)
+        except Exception as e:
+            logging.error(f"Error simulating slippage: {str(e)}")
+            return price
