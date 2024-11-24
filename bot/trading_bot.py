@@ -1602,39 +1602,31 @@ class TradingBot:
             # Start with current cash balance
             total_value = self.paper_balance
             
-            # Calculate P/L from closed trades
-            closed_trades_pl = sum(
-                trade.get('profit', 0) 
-                for trade in self.paper_trade_history 
-                if trade['action'] == 'SELL'
-            )
-            
             # Calculate unrealized P/L from current positions
             unrealized_pl = 0.0
-            total_fees = 0.0
-            
             for symbol, position in self.paper_positions.items():
                 try:
                     current_price = float(self.client.get_product(f"{symbol}-USD").price)
                     position_value = position.quantity * current_price
-                    total_value += position_value
+                    total_value += position_value  # Add position value to total
                     
                     # Get unrealized profit info
                     profit_info = position.calculate_profit(current_price)
                     unrealized_pl += profit_info['profit_usd']
-                    total_fees += profit_info['fees_paid']
                     
                 except Exception as e:
                     logging.error(f"Error calculating paper position value for {symbol}: {str(e)}")
             
-            # Add fees from trade history
-            total_fees += sum(trade.get('fees', 0) for trade in self.paper_trade_history)
-            
-            # Calculate total P/L (closed + unrealized)
-            total_profit = closed_trades_pl + unrealized_pl
-            
-            # Calculate percentage based on initial balance of 1000
+            # Calculate total P/L by comparing current total value to initial balance
+            total_profit = total_value - 1000.0  # Compare to initial $1000
             profit_percentage = (total_profit / 1000.0) * 100
+            
+            # Calculate total fees paid (both from history and current positions)
+            total_fees = sum(trade.get('fees', 0) for trade in self.paper_trade_history)
+            for position in self.paper_positions.values():
+                current_price = float(self.client.get_product(f"{position.symbol}-USD").price)
+                profit_info = position.calculate_profit(current_price)
+                total_fees += profit_info['fees_paid']
             
             return {
                 'cash_balance': self.paper_balance,
