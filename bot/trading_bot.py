@@ -180,6 +180,18 @@ class TradingBot:
             profit_info = position.calculate_profit(current_price)
             position.update_price(current_price)
             
+            # Check percentage-based stop loss first
+            if profit_info['profit_percentage'] <= -self.stop_loss_percentage:
+                decision_factors = [
+                    "🛑 Stop Loss Triggered",
+                    f"Entry Price: ${position.entry_price:.2f}",
+                    f"Current Price: ${current_price:.2f}",
+                    f"Loss: {profit_info['profit_percentage']:.2f}%",
+                    f"Stop Loss: {self.stop_loss_percentage}%"
+                ]
+                await self._place_sell_order(symbol, position.quantity, decision_factors)
+                return
+            
             # Calculate exit signals
             exit_signals = 0
             required_exit_signals = 3
@@ -791,7 +803,7 @@ class TradingBot:
             return True
             
         except Exception as e:
-            error_msg = f"Error placing {mode} sell order for {symbol}: {str(e)}"
+            error_msg = f"Error placing {mode} sell order for {symbol}: {str(e)}")
             logging.error(error_msg)
             await self.send_notification(f"❌ {error_msg}")
             return False
@@ -1968,7 +1980,7 @@ class TradingBot:
                         high - low,  # Current high - low
                         abs(high - prev_close),  # Current high - prev close
                         abs(low - prev_close)    # Current low - prev close
-                    ) # stop forgetting this parenthesis!
+                    )  # Added missing parenthesis
                     tr_values.append(tr)
                     
                 prev_close = close
