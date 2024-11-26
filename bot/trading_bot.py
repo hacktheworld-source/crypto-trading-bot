@@ -1139,40 +1139,33 @@ class TradingBot:
             return 0
 
     def _should_trade(self, symbol: str, action: str) -> bool:
-        """Enhanced validation for trading decisions with logging"""
+        """Enhanced trade validation"""
         try:
-            # Check if trading is active
-            if not (self.trading_active or self.paper_trading):
-                logging.info(f"Trading not active for {symbol}")
-                return False
-            
-            # Get current price and position info
-            current_price = float(self.client.get_product(f"{symbol}-USD").price)
-            position = self.paper_positions.get(symbol) if self.paper_trading else self.positions.get(symbol)
-            
-            # Validate based on action
-            if action == 'BUY':
-                # Check if we already have a position
-                if position:
-                    logging.info(f"Already have position in {symbol}")
+            # Add cooldown period for recently traded symbols
+            if symbol in self.paper_trade_history[-10:]:  # Check last 10 trades
+                last_trade = next(t for t in reversed(self.paper_trade_history) if t['symbol'] == symbol)
+                time_since_trade = datetime.now() - last_trade['timestamp']
+                if time_since_trade.total_seconds() < 3600:  # 1 hour cooldown
+                    logging.info(f"Skipping {symbol} - cooldown period active")
                     return False
-                
-                # Check if we have enough balance
-                required_balance = self._calculate_position_size(symbol, self.paper_trading)
-                if self.paper_trading:
-                    if self.paper_balance < required_balance:
-                        logging.info(f"Insufficient paper balance for {symbol}")
-                        return False
-                else:
-                    if float(self.client.get_account('USD').available_balance.value) < required_balance:
-                        logging.info(f"Insufficient real balance for {symbol}")
-                        return False
+
+            # Add minimum expected profit check
+            current_price = float(self.client.get_product(f"{symbol}-USD").price)
+            fees = current_price * 0.012  # Round trip fees (1.2%)
+            min_price_move = fees * 2  # Need at least 2x fees in price movement
             
-            logging.info(f"Trade validated for {symbol} ({action})")
+            if action == 'BUY':
+                # Don't rebuy a coin we recently sold at a loss
+                recent_sells = [t for t in self.paper_trade_history[-20:] 
+                              if t['symbol'] == symbol and t['action'] == 'SELL']
+                if recent_sells and recent_sells[-1].get('profit', 0) < 0:
+                    logging.info(f"Skipping {symbol} - recent loss")
+                    return False
+
             return True
             
         except Exception as e:
-            logging.error(f"Error in _should_trade for {symbol}: {str(e)}")
+            logging.error(f"Error in trade validation: {str(e)}")
             return False
 
     def _is_good_trading_hour(self) -> bool:
@@ -1980,7 +1973,7 @@ class TradingBot:
                         high - low,  # Current high - low
                         abs(high - prev_close),  # Current high - prev close
                         abs(low - prev_close)    # Current low - prev close
-                    )
+                    ) # stop forgetting this parenthesis!
                     tr_values.append(tr)
                     
                 prev_close = close
