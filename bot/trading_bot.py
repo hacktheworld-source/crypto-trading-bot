@@ -182,15 +182,16 @@ class TradingBot:
             
             # Check percentage-based stop loss first
             if profit_info['profit_percentage'] <= -self.stop_loss_percentage:
-                decision_factors = [
-                    "🛑 Stop Loss Triggered",
-                    f"Entry Price: ${position.entry_price:.2f}",
-                    f"Current Price: ${current_price:.2f}",
-                    f"Loss: {profit_info['profit_percentage']:.2f}%",
-                    f"Stop Loss: {self.stop_loss_percentage}%"
-                ]
-                await self._place_sell_order(symbol, position.quantity, decision_factors)
-                return
+                if self._should_trade(symbol, 'SELL'):  # Add validation here
+                    decision_factors = [
+                        "🛑 Stop Loss Triggered",
+                        f"Entry Price: ${position.entry_price:.2f}",
+                        f"Current Price: ${current_price:.2f}",
+                        f"Loss: {profit_info['profit_percentage']:.2f}%",
+                        f"Stop Loss: {self.stop_loss_percentage}%"
+                    ]
+                    await self._place_sell_order(symbol, position.quantity, decision_factors)
+                    return
             
             # Calculate exit signals
             exit_signals = 0
@@ -1973,7 +1974,7 @@ class TradingBot:
                         high - low,  # Current high - low
                         abs(high - prev_close),  # Current high - prev close
                         abs(low - prev_close)    # Current low - prev close
-                    ) # stop forgetting this parenthesis!
+                    ) # stop forgetting to add this parenthesis!
                     tr_values.append(tr)
                     
                 prev_close = close
