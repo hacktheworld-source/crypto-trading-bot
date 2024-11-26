@@ -314,7 +314,7 @@ class TradingBot:
             logging.info(f"Analyzing entry for {symbol}")
             
             # Check if we should trade based on cooldown and minimum profit
-            if not await self._should_trade(symbol):
+            if not self._should_trade(symbol, 'BUY'):  # Add 'BUY' action here
                 logging.info(f"Skipping {symbol} - cooldown or recent loss")
                 return False
             
@@ -1147,9 +1147,15 @@ class TradingBot:
     def _should_trade(self, symbol: str, action: str) -> bool:
         """Enhanced trade validation"""
         try:
+            # Initialize trade history if empty
+            history = self.paper_trade_history if self.paper_trading else self.trade_history
+            if not history:
+                return True  # Allow first trade
+                
             # Add cooldown period for recently traded symbols
-            if symbol in self.paper_trade_history[-10:]:  # Check last 10 trades
-                last_trade = next(t for t in reversed(self.paper_trade_history) if t['symbol'] == symbol)
+            recent_trades = [t for t in history if t['symbol'] == symbol]
+            if recent_trades:
+                last_trade = recent_trades[-1]
                 time_since_trade = datetime.now() - last_trade['timestamp']
                 if time_since_trade.total_seconds() < 3600:  # 1 hour cooldown
                     logging.info(f"Skipping {symbol} - cooldown period active")
@@ -1162,16 +1168,18 @@ class TradingBot:
             
             if action == 'BUY':
                 # Don't rebuy a coin we recently sold at a loss
-                recent_sells = [t for t in self.paper_trade_history[-20:] 
+                recent_sells = [t for t in history[-20:] 
                               if t['symbol'] == symbol and t['action'] == 'SELL']
                 if recent_sells and recent_sells[-1].get('profit', 0) < 0:
                     logging.info(f"Skipping {symbol} - recent loss")
                     return False
 
+            # Add more logging
+            logging.info(f"Trade validation for {symbol} ({action}): PASSED")
             return True
             
         except Exception as e:
-            logging.error(f"Error in trade validation: {str(e)}")
+            logging.error(f"Error in trade validation for {symbol}: {str(e)}")
             return False
 
     def _is_good_trading_hour(self) -> bool:
