@@ -311,40 +311,47 @@ class TradingBot:
 
     async def _analyze_entry(self, symbol: str, prediction: Dict[str, Any], current_price: float, signals: Dict[str, Any]):
         try:
-            # Log entry analysis start
             logging.info(f"Analyzing entry for {symbol}")
             
-            # Check market regime first
+            # Check if we should trade based on cooldown and minimum profit
+            if not await self._should_trade(symbol):
+                logging.info(f"Skipping {symbol} - cooldown or recent loss")
+                return False
+            
+            # Get market regime but don't reject trades immediately
             regime = self._detect_market_regime(symbol)
-            logging.info(f"{symbol} market regime: {regime['regime']}, should trade: {regime['should_trade']}")
+            logging.info(f"{symbol} market regime: {regime['regime']}")
             
-            if not regime['should_trade']:
-                logging.info(f"Skipping {symbol} - unfavorable market regime: {regime['regime']}")
-                return False
-
-            # Check correlation risk
-            correlation_safe = self._check_correlation_risk(symbol)
-            logging.info(f"{symbol} correlation check: {'safe' if correlation_safe else 'risky'}")
-            
-            if not correlation_safe:
-                logging.info(f"Skipping {symbol} - correlation risk too high")
-                return False
-
-            # Calculate position size
+            # Calculate position size first
             position_size = self._calculate_position_size(symbol, current_price)
-            logging.info(f"Calculated position size for {symbol}: ${position_size:.2f}")
-            
-            if position_size == 0:
-                logging.info(f"Skipping {symbol} - position size too small")
+            if position_size < 50:  # Minimum trade size
+                logging.info(f"Skipping {symbol} - position size too small: ${position_size:.2f}")
                 return False
-
+            
+            # Check if we have enough signals
+            if signals['buy_signals'] < signals['required_signals']:
+                logging.info(f"Skipping {symbol} - insufficient buy signals: {signals['buy_signals']}/{signals['required_signals']}")
+                return False
+            
+            # Only check correlation risk for larger positions
+            correlation_safe = True
+            if position_size > 200:
+                correlation_safe = self._check_correlation_risk(symbol)
+                logging.info(f"{symbol} correlation check: {'safe' if correlation_safe else 'risky'}")
+            
             # Prepare decision factors
             decision_factors = [
                 f"Buy Signal Strength: {signals['buy_strength']:.1f}%",
                 f"Market Regime: {regime['regime'].title()}",
+                f"Position Size: ${position_size:.2f}",
                 f"Prediction Score: {prediction['prediction_score']:.1f}"
             ]
-
+            
+            # Adjust position size based on market regime
+            if regime['regime'] == 'volatile':
+                position_size *= 0.5  # Reduce position size in volatile markets
+                decision_factors.append("Position reduced due to volatility")
+            
             # Place the buy order
             quantity = position_size / current_price
             success = await self._place_buy_order(symbol, quantity, decision_factors)
@@ -355,7 +362,7 @@ class TradingBot:
                 logging.info(f"Failed to place buy order for {symbol}")
                 
             return success
-
+            
         except Exception as e:
             logging.error(f"Error in entry analysis for {symbol}: {str(e)}")
             return False
@@ -1786,7 +1793,7 @@ class TradingBot:
             if regime_info:
                 message += f"\n\nMarket Analysis:"
                 message += f"\n• Regime: {regime_info['regime'].title()}"
-                message += f"\n��� Volatility: {regime_info['volatility']*100:.1f}%"
+                message += f"\n Volatility: {regime_info['volatility']*100:.1f}%"
                 message += f"\n• Trend Strength: {regime_info.get('trend_strength', 'N/A')}"
             
             # Add decision factors if provided
