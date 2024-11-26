@@ -37,11 +37,6 @@ class CommandHandler:
         except Exception as e:
             return f"Error calculating RSI for {symbol}: {str(e)}"
             
-    def set_trade_amount(self, amount):
-        if self.trading_bot.set_trade_amount(amount):
-            return f"Successfully set trade amount to ${amount}"
-        return "Failed to set trade amount. Please provide a valid positive number."
-        
     def set_rsi_thresholds(self, oversold, overbought):
         if self.trading_bot.set_rsi_thresholds(oversold, overbought):
             return f"Successfully set RSI thresholds: oversold={oversold}, overbought={overbought}"
@@ -114,7 +109,6 @@ class CommandHandler:
         
         # Trading Configuration
         status += "\n\n⚙️ Configuration:"
-        status += f"\n  Trade Amount: ${bot.trade_amount:.2f}"
         status += f"\n  Stop Loss: {bot.stop_loss_percentage}%"
         status += f"\n  Take Profit: {bot.take_profit_percentage}%"
         status += f"\n  Max Position Size: ${bot.max_position_size:.2f}"
@@ -220,7 +214,6 @@ class CommandHandler:
         help_text += "\n  Sets: 5% stop loss, 10% take profit, $1000 max position"
         
         help_text += "\n\nConfiguration:"
-        help_text += "\n!setamount 100 - Set trade amount in USD"
         help_text += "\n!setrsi 30 70  - Set RSI thresholds (oversold overbought)"
         help_text += "\n!setinterval 5 - Set check interval in minutes"
         

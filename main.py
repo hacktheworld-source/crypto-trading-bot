@@ -60,12 +60,6 @@ def main():
         response = command_handler.get_rsi(symbol.upper())
         await ctx.send(response)
 
-    # Command to set trade amount
-    @bot.command(name='setamount')
-    async def set_amount(ctx, amount: float):
-        response = command_handler.set_trade_amount(amount)
-        await ctx.send(response)
-
     # Command to set RSI thresholds
     @bot.command(name='setrsi')
     async def set_rsi(ctx, oversold: float, overbought: float):

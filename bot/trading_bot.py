@@ -41,7 +41,6 @@ class TradingBot:
             self.rsi_overbought: float = 70.0
             self.rsi_oversold: float = 30.0
             self.trading_active: bool = False
-            self.trade_amount: float = 100.0
             self.trade_history: List[Dict[str, Any]] = []
             self.positions: Dict[str, Position] = {}  # Track active positions
             self.position_history: List[Dict[str, Any]] = []  # Track closed positions
@@ -826,17 +825,6 @@ class TradingBot:
             await self.send_notification(f"❌ {error_msg}")
             return False
 
-    def set_trade_amount(self, amount):
-        try:
-            amount = float(amount)
-            if amount <= 0:
-                return False
-            self.trade_amount = amount
-            logging.info(f"Trade amount set to ${amount}")
-            return True
-        except ValueError:
-            return False
-            
     def set_rsi_thresholds(self, oversold, overbought):
         try:
             oversold = float(oversold)
