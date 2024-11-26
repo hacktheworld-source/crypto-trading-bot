@@ -11,9 +11,9 @@ class Position:
         self.lowest_price = entry_price
         self.is_paper = is_paper
         self.partial_exit_taken = False
-        self.initial_position_size = quantity * entry_price
         
     def update_price(self, current_price: float) -> None:
+        """Track highest and lowest prices"""
         self.highest_price = max(self.highest_price, current_price)
         self.lowest_price = min(self.lowest_price, current_price)
         
