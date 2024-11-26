@@ -820,7 +820,7 @@ class TradingBot:
             return True
             
         except Exception as e:
-            error_msg = f"Error placing {mode} sell order for {symbol}: {str(e)}"
+            error_msg = f"Error placing {mode} sell order for {symbol}: {str(e)}")
             logging.error(error_msg)
             await self.send_notification(f"❌ {error_msg}")
             return False
@@ -883,30 +883,33 @@ class TradingBot:
         for symbol in self.paper_positions.keys():
             self.watched_coins.add(symbol)
 
-    def _check_balance(self, symbol, action='BUY'):
+    def _check_balance(self, symbol: str, action: str) -> bool:
+        """Check if we have sufficient balance for the trade"""
         try:
             accounts = self.client.get_accounts()
             
             if action == 'BUY':
-                # Check USD balance
+                # Check USD balance against calculated position size
                 usd_account = next((acc for acc in accounts.data if acc.currency == 'USD'), None)
                 if not usd_account:
                     return False
-                return float(usd_account.available_balance.value) >= self.trade_amount
-            else:
-                # Check crypto balance
+                    
+                # Calculate required amount using position sizing
+                quantity = self._calculate_position_size(symbol, is_paper=False)
+                current_price = float(self.client.get_product(f"{symbol}-USD").price)
+                required_amount = quantity * current_price * 1.01  # Add 1% buffer for fees
+                
+                return float(usd_account.available_balance.value) >= required_amount
+                
+            else:  # SELL
                 crypto_account = next((acc for acc in accounts.data if acc.currency == symbol), None)
                 if not crypto_account:
                     return False
-                    
-                # Get current price using get_product instead of get_spot_price
-                product = self.client.get_product(f"{symbol}-USD")
-                current_price = float(product.price)
-                return float(crypto_account.available_balance.value) * current_price >= self.trade_amount
+                return float(crypto_account.available_balance.value) > 0
                 
         except Exception as e:
             logging.error(f"Error checking balance: {str(e)}")
-            return False 
+            return False
 
     def save_config(self):
         config = {
@@ -915,7 +918,6 @@ class TradingBot:
             'rsi_period': self.rsi_period,
             'rsi_overbought': self.rsi_overbought,
             'rsi_oversold': self.rsi_oversold,
-            'trade_amount': self.trade_amount
         }
         try:
             with open('bot_config.json', 'w') as f:
@@ -933,7 +935,6 @@ class TradingBot:
                 self.rsi_period = config['rsi_period']
                 self.rsi_overbought = config['rsi_overbought']
                 self.rsi_oversold = config['rsi_oversold']
-                self.trade_amount = config['trade_amount']
             logging.info("Configuration loaded successfully")
         except FileNotFoundError:
             logging.info("No configuration file found, using defaults")
