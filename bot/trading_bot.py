@@ -175,11 +175,39 @@ class TradingBot:
         logging.info("Trading loop stopped")
 
     async def _manage_position(self, symbol: str, position: Position, prediction: Dict[str, Any], current_price: float):
-        """Enhanced position management with weighted exit signals"""
+        """Enhanced position management with trailing stops and partial exits"""
         try:
             profit_info = position.calculate_profit(current_price)
             position.update_price(current_price)
             
+            # Get market regime for dynamic adjustments
+            regime = self._detect_market_regime(symbol)
+            
+            # Calculate trailing stop based on regime
+            trail_percentage = max(
+                self.stop_loss_percentage,
+                regime['volatility'] * 100 * 2,
+                (self._calculate_atr(symbol) / current_price) * 100
+            )
+            
+            # Tighten stops in volatile markets
+            if regime['regime'] == 'volatile':
+                trail_percentage = min(trail_percentage, 3.0)
+                
+            # Check trailing stop
+            stop_price = position.highest_price * (1 - trail_percentage/100)
+            if current_price <= stop_price:
+                await self._place_sell_order(symbol, position.quantity, ["Trailing Stop Hit"])
+                return
+                
+            # Take partial profits
+            if profit_info['profit_percentage'] > 7 and not position.partial_exit_taken:
+                # Sell 50% of position
+                sell_quantity = position.quantity * 0.5
+                await self._place_sell_order(symbol, sell_quantity, ["Partial Profit Take"])
+                position.partial_exit_taken = True
+                return
+                
             # Check percentage-based stop loss first
             if profit_info['profit_percentage'] <= -self.stop_loss_percentage:
                 if self._should_trade(symbol, 'SELL'):  # Add validation here
@@ -282,17 +310,30 @@ class TradingBot:
             raise
 
     async def _analyze_entry(self, symbol: str, prediction: Dict[str, Any], current_price: float, signals: Dict[str, Any]):
-        """Enhanced entry analysis using pre-calculated signals"""
         try:
+            # Check market regime first
+            regime = self._detect_market_regime(symbol)
+            if not regime['should_trade']:
+                logging.info(f"Skipping {symbol} - unfavorable market regime: {regime['regime']}")
+                return False
+
+            # Check correlation risk
+            if not self._check_correlation_risk(symbol):
+                logging.info(f"Skipping {symbol} - correlation risk too high")
+                return False
+
+            # Calculate position size dynamically
+            position_size = self._calculate_position_size(symbol, current_price)
+            
             # Check if we can open new positions
             if not self._can_open_new_position():
                 logging.info(f"Cannot open new position for {symbol} - position limit reached")
-                return
+                return False
             
             # Use the signals we already calculated
             if signals['buy_signals'] >= signals['required_signals'] and self._should_trade(symbol, 'BUY'):
                 # Calculate position size using standardized method
-                quantity = self._calculate_position_size(symbol, self.paper_trading)
+                quantity = self._calculate_position_size(symbol, current_price)
                 if quantity == 0:
                     logging.warning(f"Position size too small for {symbol}")
                     return
@@ -519,8 +560,18 @@ class TradingBot:
             raise
             
     async def _place_buy_order(self, symbol: str, quantity: float, decision_factors: List[str]):
-        """Place a buy order with proper error handling and logging"""
         try:
+            # Check correlation risk before placing order
+            if not self._check_correlation_risk(symbol):
+                logging.info(f"Skipping buy for {symbol} - correlation risk too high")
+                return False
+                
+            # Check market regime
+            regime = self._detect_market_regime(symbol)
+            if not regime['should_trade']:
+                logging.info(f"Skipping buy for {symbol} - unfavorable market regime")
+                return False
+                
             mode = "Paper" if self.paper_trading else "Real"
             current_price = float(self.client.get_product(f"{symbol}-USD").price)
             
@@ -1067,77 +1118,33 @@ class TradingBot:
             logging.error(f"Error analyzing volume for {symbol}: {str(e)}")
             raise
 
-    def _calculate_position_size(self, symbol: str, is_paper: bool = False) -> float:
-        """Calculate appropriate position size based on risk and portfolio value"""
+    def _calculate_position_size(self, symbol: str, current_price: float) -> float:
+        """Dynamic position sizing based on volatility and account size"""
         try:
-            # Get available funds and portfolio value
-            if is_paper:
-                available_funds = self.paper_balance
-                portfolio_value = self.get_paper_balance()['total_value']
-            else:
-                balance = self.get_account_balance()
-                available_funds = float(balance['balances'].get('USD', {}).get('balance', 0))
-                portfolio_value = balance['total_usd_value']
+            # Get account value
+            account_value = self.paper_balance if self.paper_trading else self.get_account_balance()
             
-            # Risk per trade (2% of portfolio)
-            risk_amount = portfolio_value * 0.02
-            
-            # Get current price and ATR
-            current_price = float(self.client.get_product(f"{symbol}-USD").price)
-            atr = self._calculate_atr(symbol)
+            # Calculate volatility
             volatility = self._calculate_volatility(symbol)
             
-            # Base position size on ATR for stop loss
-            if atr > 0:
-                # Use 2 ATR units for stop loss
-                stop_distance = atr * 2
-                max_quantity = risk_amount / stop_distance
-            else:
-                # Fallback to percentage-based
-                stop_distance = current_price * (self.stop_loss_percentage / 100)
-                max_quantity = risk_amount / stop_distance
+            # Base position size (2% of account by default)
+            base_size = account_value * 0.02
             
             # Adjust for volatility
             if volatility > 0.05:  # High volatility
-                max_quantity *= 0.5
-            elif volatility > 0.03:  # Medium volatility
-                max_quantity *= 0.75
+                position_size = base_size * 0.5  # Reduce size
+            elif volatility < 0.02:  # Low volatility
+                position_size = base_size * 1.5  # Increase size
+                
+            # Ensure within limits
+            position_size = min(position_size, self.max_position_size)
+            position_size = max(position_size, 50.0)  # Minimum $50 trade
             
-            # Calculate position value
-            position_value = max_quantity * current_price
-            
-            # Apply limits
-            position_value = min(
-                position_value,
-                available_funds * 0.5,  # Max 50% of available funds
-                self.max_position_size,  # Max position size limit
-                portfolio_value * 0.1    # Max 10% of portfolio in single position
-            )
-            
-            # Ensure minimum position size
-            min_position = 10.0 if not is_paper else 1.0
-            if position_value < min_position:
-                return 0
-            
-            # Convert value to quantity
-            quantity = position_value / current_price
-            
-            # Log position sizing details
-            logging.info(
-                f"Position size calculation for {symbol}:\n"
-                f"Portfolio Value: ${portfolio_value:.2f}\n"
-                f"Risk Amount: ${risk_amount:.2f}\n"
-                f"ATR: {atr:.4f}\n"
-                f"Volatility: {volatility:.4f}\n"
-                f"Final Quantity: {quantity:.8f}\n"
-                f"Position Value: ${position_value:.2f}"
-            )
-            
-            return quantity
+            return position_size
             
         except Exception as e:
             logging.error(f"Error calculating position size: {str(e)}")
-            return 0
+            return self.trade_amount  # Fall back to default
 
     def _should_trade(self, symbol: str, action: str) -> bool:
         """Enhanced trade validation"""
@@ -1541,7 +1548,7 @@ class TradingBot:
             current_price = float(self.client.get_product(product_id).price)
             
             # Calculate position size
-            trade_amount = self._calculate_position_size(symbol, is_paper=True)
+            trade_amount = self._calculate_position_size(symbol, current_price)
             if trade_amount == 0:
                 logging.warning(f"Position size too small for {symbol}")
                 return
@@ -1765,15 +1772,15 @@ class TradingBot:
 
     async def send_trade_notification(self, action: str, symbol: str, price: float, quantity: float, 
                                     is_paper: bool = False, profit_info: Dict[str, float] = None,
-                                    decision_factors: List[str] = None):
+                                    decision_factors: List[str] = None,
+                                    regime_info: Dict[str, Any] = None):
         """Send a detailed trade notification"""
         try:
             trade_type = "Paper" if is_paper else "Real"
-            
-            # Use different emojis for buy/sell
             emoji = "🔔" if action == "BUY" else "💰"
             
-            message = f"{emoji} {trade_type} Trade: {action} {symbol}\n"
+            message = f"{emoji} {trade_type} {action} Order\n"
+            message += f"Symbol: {symbol}\n"
             message += f"Price: ${price:,.2f}\n"
             message += f"Quantity: {quantity:.8f}\n"
             message += f"Total: ${(price * quantity):,.2f}"
@@ -1781,6 +1788,15 @@ class TradingBot:
             if profit_info and action == 'SELL':
                 message += f"\nProfit: ${profit_info['profit_usd']:+,.2f} ({profit_info['profit_percentage']:+.2f}%)"
                 message += f"\nFees Paid: ${profit_info['fees_paid']:.2f}"
+                if profit_info.get('highest_profit_percentage'):
+                    message += f"\nMax Profit Reached: {profit_info['highest_profit_percentage']:+.2f}%"
+            
+            # Add market regime info
+            if regime_info:
+                message += f"\n\nMarket Analysis:"
+                message += f"\n• Regime: {regime_info['regime'].title()}"
+                message += f"\n• Volatility: {regime_info['volatility']*100:.1f}%"
+                message += f"\n• Trend Strength: {regime_info.get('trend_strength', 'N/A')}"
             
             # Add decision factors if provided
             if decision_factors:
@@ -1789,6 +1805,7 @@ class TradingBot:
                     message += f"\n• {factor}"
             
             await self.send_notification(message)
+            
         except Exception as e:
             logging.error(f"Error sending trade notification: {str(e)}")
 
@@ -1974,7 +1991,6 @@ class TradingBot:
                         high - low,  # Current high - low
                         abs(high - prev_close),  # Current high - prev close
                         abs(low - prev_close)    # Current low - prev close
-                    ) # stop forgetting to add this parenthesis!
                     tr_values.append(tr)
                     
                 prev_close = close
@@ -2113,3 +2129,53 @@ class TradingBot:
         except Exception as e:
             logging.error(f"Error simulating slippage: {str(e)}")
             return price
+
+    def _detect_market_regime(self, symbol: str) -> Dict[str, Any]:
+        """Detect current market regime (trending, ranging, volatile)"""
+        try:
+            # Calculate key metrics
+            volatility = self._calculate_volatility(symbol)
+            atr = self._calculate_atr(symbol)
+            ma_data = self.calculate_moving_averages(symbol)
+            
+            # Get price data
+            prices = self._get_historical_prices(symbol, days=30)
+            
+            # Calculate regime characteristics
+            is_trending = abs(ma_data['trend_strength']) > 7
+            is_volatile = volatility > 0.04  # 4% daily volatility
+            is_ranging = not is_trending and not is_volatile
+            
+            return {
+                'regime': 'trending' if is_trending else 'volatile' if is_volatile else 'ranging',
+                'volatility': volatility,
+                'trend_strength': ma_data['trend_strength'],
+                'should_trade': is_trending or (is_ranging and volatility > 0.02)
+            }
+            
+        except Exception as e:
+            logging.error(f"Error detecting market regime: {str(e)}")
+            return {'regime': 'unknown', 'should_trade': False}
+
+    def _check_correlation_risk(self, symbol: str) -> bool:
+        """Check if adding this position increases portfolio risk"""
+        try:
+            # Get current positions
+            positions = self.paper_positions if self.paper_trading else self.positions
+            if not positions:
+                return True  # No correlation risk with empty portfolio
+            
+            # Calculate correlations with existing positions
+            high_correlation_count = 0
+            for pos_symbol in positions:
+                correlation = self._calculate_correlation(symbol, pos_symbol)
+                if correlation > 0.7:  # High positive correlation
+                    high_correlation_count += 1
+                    
+            # Reject if too many correlated positions
+            max_correlated = 3
+            return high_correlation_count < max_correlated
+            
+        except Exception as e:
+            logging.error(f"Error checking correlation: {str(e)}")
+            return False

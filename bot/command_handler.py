@@ -53,13 +53,29 @@ class CommandHandler:
         return "Failed to set trading interval. Please provide a valid positive number."
         
     def get_trade_history(self):
-        history = self.trading_bot.get_trade_history()
+        """Show real trade history"""
+        history = self.trading_bot.trade_history
         if not history:
             return "No trade history available"
-            
+        
         response = "Trade History:\n```"
         for trade in history[-10:]:  # Show last 10 trades
-            response += f"{trade['timestamp'].strftime('%Y-%m-%d %H:%M:%S')} - {trade['action']} {trade['symbol']}: ${trade['amount_usd']}\n"
+            response += f"\n{trade['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}"
+            response += f"\n{trade['action']} {trade['symbol']}"
+            response += f"\nPrice: ${trade['price']:,.2f}"
+            response += f"\nQuantity: {trade['quantity']:.8f}"
+            response += f"\nTotal: ${trade['amount_usd']:.2f}"
+            response += f"\nFees: ${trade['fees']:.2f}"
+            
+            if 'profit' in trade:
+                response += f"\nProfit: ${trade['profit']:+,.2f} ({trade['profit_percentage']:+.2f}%)"
+            
+            if 'decision_factors' in trade:
+                response += "\nReason:"
+                for factor in trade['decision_factors'][:3]:
+                    response += f"\n• {factor}"
+                
+            response += "\n"
         response += "```"
         return response
         
@@ -438,21 +454,39 @@ class CommandHandler:
         total_trades = len(paper_trades)
         winning_trades = len([t for t in paper_trades if t.get('profit', 0) > 0])
         total_profit = sum(t.get('profit', 0) for t in paper_trades)
-        total_fees = sum(t.get('fees', 0) for t in paper_trades)
+        total_fees = paper_balance['total_fees']
         
         response = "Paper Trading Statistics:\n```"
         response += f"Total Trades: {total_trades}\n"
         if total_trades > 0:
             response += f"Winning Trades: {winning_trades}\n"
             response += f"Win Rate: {(winning_trades/total_trades*100):.1f}%\n"
-        response += f"Total Profit: ${total_profit:,.2f}\n"
-        response += f"Total Fees Paid: ${total_fees:.2f}\n"
-        response += f"Current Cash Balance: ${paper_balance['cash_balance']:,.2f}\n"
-        response += f"Portfolio Value: ${paper_balance['total_value']:,.2f}\n"
+            
+            # Add average trade metrics
+            avg_profit = total_profit / total_trades
+            avg_win = sum(t.get('profit', 0) for t in paper_trades if t.get('profit', 0) > 0) / winning_trades if winning_trades > 0 else 0
+            avg_loss = sum(t.get('profit', 0) for t in paper_trades if t.get('profit', 0) < 0) / (total_trades - winning_trades) if (total_trades - winning_trades) > 0 else 0
+            
+            response += f"Average Trade: ${avg_profit:+,.2f}\n"
+            response += f"Average Win: ${avg_win:+,.2f}\n"
+            response += f"Average Loss: ${avg_loss:+,.2f}\n"
+            
+        response += f"\nAccount Status:"
+        response += f"\nCash Balance: ${paper_balance['cash_balance']:,.2f}"
+        response += f"\nPosition Value: ${paper_balance['positions_value']:,.2f}"
+        response += f"\nTotal Value: ${paper_balance['total_value']:,.2f}"
+        response += f"\nTotal P/L: ${paper_balance['total_pl']:+,.2f} ({paper_balance['pl_percentage']:+.2f}%)"
+        response += f"\nTotal Fees: ${total_fees:.2f}"
         
-        # Calculate ROI using actual initial balance
-        roi = ((paper_balance['total_value'] - paper_balance['initial_balance']) / paper_balance['initial_balance']) * 100
-        response += f"Total Return: {roi:+.2f}%"
+        # Add performance metrics
+        if total_trades > 0:
+            profit_factor = abs(sum(t.get('profit', 0) for t in paper_trades if t.get('profit', 0) > 0) / 
+                              sum(t.get('profit', 0) for t in paper_trades if t.get('profit', 0) < 0)) if sum(t.get('profit', 0) for t in paper_trades if t.get('profit', 0) < 0) != 0 else float('inf')
+            
+            response += f"\n\nPerformance Metrics:"
+            response += f"\nProfit Factor: {profit_factor:.2f}"
+            response += f"\nFees % of Profit: {(total_fees/total_profit*100):.1f}%" if total_profit > 0 else ""
+            
         response += "```"
         return response
         
@@ -463,16 +497,29 @@ class CommandHandler:
             return "No paper trades yet"
         
         response = "Paper Trading History:\n```"
-        # Show last 10 trades
+        # Show last 10 trades with more detail
         for trade in trades[-10:]:
             response += f"\n{trade['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}"
             response += f"\n{trade['action']} {trade['symbol']}"
             response += f"\nPrice: ${trade['price']:,.2f}"
             response += f"\nQuantity: {trade['quantity']:.8f}"
-            response += f"\nTotal: ${trade['amount_usd']:,.2f}"
+            response += f"\nTotal: ${trade['amount_usd']:.2f}"
             response += f"\nFees: ${trade['fees']:.2f}"
+            
             if 'profit' in trade:
                 response += f"\nProfit: ${trade['profit']:+,.2f} ({trade['profit_percentage']:+.2f}%)"
+            
+            # Add market regime if available
+            if 'regime_info' in trade:
+                response += f"\nMarket: {trade['regime_info']['regime'].title()}"
+                response += f"\nVolatility: {trade['regime_info']['volatility']*100:.1f}%"
+            
+            # Add decision factors if available
+            if 'decision_factors' in trade:
+                response += "\nReason:"
+                for factor in trade['decision_factors'][:3]:  # Show top 3 reasons
+                    response += f"\n• {factor}"
+            
             response += "\n"
         response += "```"
         return response
