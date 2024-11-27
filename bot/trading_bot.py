@@ -202,7 +202,7 @@ class TradingBot:
             position.update_price(current_price)  # Make sure we track highest price
             
             # Check percentage-based stop loss first
-            if profit_info['profit_percentage'] <= -self.stop_loss_percentage:
+            if profit_info['profit_percentage'] <= -self.stop_loss_percentage:  # -5% default
                 if self._should_trade(symbol, 'SELL'):
                     decision_factors = [
                         "🛑 Stop Loss Triggered",
@@ -215,7 +215,7 @@ class TradingBot:
                     return
                 
             # Add trailing stop check for profitable positions
-            if profit_info['profit_percentage'] > 3:  # Once we're up 3%
+            if profit_info['profit_percentage'] > self.take_profit_percentage:  # Use 10% consistently
                 trailing_stop = profit_info['profit_percentage'] * 0.5  # Lock in 50% of gains
                 max_price = position.highest_price
                 stop_price = max_price * (1 - trailing_stop/100)
