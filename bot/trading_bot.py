@@ -842,7 +842,7 @@ class TradingBot:
             return True
             
         except Exception as e:
-            error_msg = f"Error placing {mode} sell order for {symbol}: {str(e)}")
+            error_msg = f"Error placing {mode} sell order for {symbol}: {str(e)}"
             logging.error(error_msg)
             await self.send_notification(f"❌ {error_msg}")
             return False
