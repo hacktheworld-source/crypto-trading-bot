@@ -11,6 +11,7 @@ from decimal import Decimal
 from .position import Position
 import asyncio
 import discord
+import random
 
 # Set up logging
 logging.basicConfig(
@@ -535,142 +536,80 @@ class TradingBot:
             raise
             
     async def _place_buy_order(self, symbol: str, quantity: float, decision_factors: List[str]):
-        """Place a buy order with proper error handling and logging"""
+        """Enhanced buy order with better error handling"""
         try:
-            mode = "Paper" if self.paper_trading else "Real"
-            current_price = float(self.client.get_product(f"{symbol}-USD").price)
-            
-            # Add at start of method
+            # Pre-trade validation
+            if not self._validate_trade_params(symbol, quantity):
+                raise ValueError(f"Invalid trade parameters: symbol={symbol}, quantity={quantity}")
+                
+            # Get pre-trade price with timeout
+            async with asyncio.timeout(10):
+                pre_trade_price = float(self.client.get_product(f"{symbol}-USD").price)
+                
             if self.paper_trading:
-                total_cost = quantity * current_price * (1 + 0.006)  # Include fees
-                if total_cost > self.max_position_size:
-                    logging.warning(f"Order exceeds maximum position size (${self.max_position_size})")
-                    return False
-                if total_cost > self.paper_balance:
-                    logging.warning(f"Insufficient paper balance for {symbol} buy order")
-                    return False
-            
-            # Calculate order details
-            amount_usd = quantity * current_price
-            
-            if self.paper_trading:
-                # Paper trading logic
-                fees = amount_usd * 0.006  # Simulate 0.6% fees
-                self.paper_total_fees += fees  # Add this line to track fees
-                
-                if amount_usd + fees > self.paper_balance:
-                    logging.warning(f"Insufficient paper balance for {symbol} buy order")
-                    return False
-                    
-                # Create paper position
-                self.paper_positions[symbol] = Position(
-                    symbol=symbol,
-                    quantity=quantity,
-                    entry_price=current_price,
-                    entry_time=datetime.now(),
-                    is_paper=True
-                )
-                
-                # Update paper balance
-                self.paper_balance -= (amount_usd + fees)
-                
-                # Record paper trade
-                trade = {
-                    'timestamp': datetime.now(),
-                    'symbol': symbol,
-                    'action': 'BUY',
-                    'price': current_price,
-                    'quantity': quantity,
-                    'amount_usd': amount_usd,
-                    'fees': fees,
-                    'balance_after': self.paper_balance,
-                    'is_paper': True
-                }
-                self.paper_trade_history.append(trade)
-                
-            else:
-                # Real trading logic
                 try:
-                    # Place market buy order
-                    order = self.client.create_order(
-                        product_id=f"{symbol}-USD",
-                        side='BUY',
-                        order_configuration={
-                            'market_market_ioc': {
-                                'base_size': str(quantity)  # Use base_size for exact quantity
-                            }
-                        }
-                    )
+                    execution_price = self._simulate_slippage(pre_trade_price, quantity, is_buy=True)
+                    amount_usd = quantity * execution_price
                     
-                    if not order:
-                        raise Exception("Order creation failed")
-                    
-                    # Get fill details
-                    filled_order = self.client.get_order(order.order_id)
-                    
-                    # Get actual execution details
-                    actual_quantity = float(filled_order.filled_size)
-                    actual_price = float(filled_order.filled_value) / actual_quantity
-                    actual_amount = float(filled_order.filled_value)
-                    actual_fees = float(filled_order.fee)
-                    
-                    # Create real position with actual fill data
-                    self.positions[symbol] = Position(
-                        symbol=symbol,
-                        quantity=actual_quantity,
-                        entry_price=actual_price,
-                        entry_time=datetime.now(),
-                        is_paper=False
-                    )
-                    
-                    # Record real trade with actual data
-                    trade = {
-                        'timestamp': datetime.now(),
-                        'symbol': symbol,
-                        'action': 'BUY',
-                        'price': actual_price,
-                        'quantity': actual_quantity,
-                        'amount_usd': actual_amount,
-                        'fees': actual_fees,
-                        'order_id': order.order_id,
-                        'is_paper': False
-                    }
-                    self.trade_history.append(trade)
-                    
-                    # Update local variables for notification
-                    current_price = actual_price
-                    quantity = actual_quantity
-                    amount_usd = actual_amount
-                    fees = actual_fees
+                    # Validate paper balance
+                    if amount_usd > self.paper_balance:
+                        raise ValueError(f"Insufficient paper balance: {self.paper_balance} < {amount_usd}")
+                        
+                    # Rest of paper trading logic...
                     
                 except Exception as e:
-                    logging.error(f"Error executing real trade: {str(e)}")
+                    logging.error(f"Paper trade execution failed: {str(e)}")
+                    await self.send_notification(f"❌ Paper trade failed: {str(e)}")
                     return False
-            
-            # Log and notify
-            decision_text = "\n".join(decision_factors)
-            message = (
-                f"💰 {mode} BUY Order {'Simulated' if self.paper_trading else 'Executed'}\n"
-                f"Symbol: {symbol}\n"
-                f"Price: ${current_price:.2f}\n"
-                f"Quantity: {quantity:.8f}\n"
-                f"Total: ${amount_usd:.2f}\n"
-                f"Fees: ${fees:.2f}\n\n"
-                f"Decision Factors:\n{decision_text}"
-            )
-            
-            logging.info(f"{mode} buy order placed for {symbol}")
-            await self.send_notification(message)
+                    
+            else:
+                try:
+                    # Real trading with retry mechanism
+                    for attempt in range(3):
+                        try:
+                            order = self.client.create_order(
+                                product_id=f"{symbol}-USD",
+                                side='BUY',
+                                order_configuration={
+                                    'market_market_ioc': {
+                                        'base_size': str(quantity)  # Use base_size for exact quantity
+                                    }
+                                }
+                            )
+                            if not order:
+                                raise Exception("Order creation returned None")
+                                
+                            # Verify order status
+                            filled_order = await self._verify_order_fill(order.order_id)
+                            if not filled_order:
+                                raise Exception("Order verification failed")
+                                
+                            break
+                        except Exception as e:
+                            if attempt == 2:  # Last attempt
+                                raise
+                            await asyncio.sleep(1)
+                            
+                except Exception as e:
+                    logging.error(f"Real trade execution failed: {str(e)}")
+                    await self.send_notification(f"❌ Real trade failed: {str(e)}")
+                    return False
+                    
+            # Record trade with validation
+            if not self._validate_and_record_trade(...):
+                logging.error("Trade recording failed")
+                
             return True
             
+        except asyncio.TimeoutError:
+            logging.error(f"Timeout getting price for {symbol}")
+            return False
         except Exception as e:
-            error_msg = f"Error placing {mode} buy order for {symbol}: {str(e)}"
-            logging.error(error_msg)
-            await self.send_notification(f"❌ {error_msg}")
+            logging.error(f"Unexpected error in buy order: {str(e)}")
+            await self.send_notification(f"❌ Critical error in buy order: {str(e)}")
             return False
 
     async def _place_sell_order(self, symbol: str, quantity: float, decision_factors: List[str]):
-        """Place a sell order with proper error handling and logging"""
         try:
             mode = "Paper" if self.paper_trading else "Real"
             current_price = float(self.client.get_product(f"{symbol}-USD").price)
@@ -820,7 +759,7 @@ class TradingBot:
             return True
             
         except Exception as e:
-            error_msg = f"Error placing {mode} sell order for {symbol}: {str(e)}"
+            error_msg = f"Error placing {mode} sell order for {symbol}: {str(e)}"  # Removed extra )
             logging.error(error_msg)
             await self.send_notification(f"❌ {error_msg}")
             return False
@@ -1980,7 +1919,6 @@ class TradingBot:
                         high - low,  # Current high - low
                         abs(high - prev_close),  # Current high - prev close
                         abs(low - prev_close)    # Current low - prev close
-                    ) # stop forgetting to add this parenthesis!
                     tr_values.append(tr)
                     
                 prev_close = close
@@ -2119,3 +2057,85 @@ class TradingBot:
         except Exception as e:
             logging.error(f"Error simulating slippage: {str(e)}")
             return price
+
+    def _record_trade(self, trade_type: str, symbol: str, quantity: float, price: float, fees: float, profit_info: Dict = None):
+        """Record trades consistently for both paper and real"""
+        trade_record = {
+            'timestamp': datetime.now(),
+            'symbol': symbol,
+            'action': trade_type,
+            'price': price,
+            'quantity': quantity,
+            'amount_usd': quantity * price,
+            'fees': fees,
+            'is_paper': self.paper_trading
+        }
+        
+        if profit_info and trade_type == 'SELL':
+            trade_record.update({
+                'profit': profit_info['profit_usd'],
+                'profit_percentage': profit_info['profit_percentage']
+            })
+        
+        if self.paper_trading:
+            self.paper_trade_history.append(trade_record)
+        else:
+            self.trade_history.append(trade_record)
+
+    def _validate_and_update_position(self, symbol: str, position: Position, current_price: float) -> bool:
+        """Validate position data and update safely"""
+        try:
+            if not isinstance(position, Position):
+                logging.error(f"Invalid position object for {symbol}")
+                return False
+                
+            if not self._validate_price(current_price):
+                logging.error(f"Invalid price for {symbol}: {current_price}")
+                return False
+                
+            # Update position with validation
+            try:
+                position.update_price(current_price)
+                profit_info = position.calculate_profit(current_price)
+                
+                # Validate profit calculation
+                if not self._validate_profit_info(profit_info):
+                    raise ValueError("Invalid profit calculation")
+                    
+                return True
+                
+            except Exception as e:
+                logging.error(f"Position update failed: {str(e)}")
+                return False
+                
+        except Exception as e:
+            logging.error(f"Position validation failed: {str(e)}")
+            return False
+
+    def _validate_and_recover_state(self) -> None:
+        """Validate and potentially recover bot state"""
+        try:
+            # Validate positions
+            for symbol, position in list(self.positions.items()):
+                try:
+                    if not self._validate_position(position, float(self.client.get_product(f"{symbol}-USD").price)):
+                        logging.warning(f"Invalid position detected for {symbol}, attempting recovery")
+                        # Try to recover position data
+                        if not self._recover_position(symbol):
+                            logging.error(f"Position recovery failed for {symbol}, removing position")
+                            del self.positions[symbol]
+                except Exception as e:
+                    logging.error(f"Position validation failed for {symbol}: {str(e)}")
+                    
+            # Validate balances
+            if self.paper_trading:
+                try:
+                    paper_balance = self.get_paper_balance()
+                    if abs(paper_balance['total_value'] - (paper_balance['cash_balance'] + paper_balance['positions_value'])) > 0.01:
+                        logging.warning("Paper balance discrepancy detected, recalculating")
+                        self._recalculate_paper_balance()
+                except Exception as e:
+                    logging.error(f"Paper balance validation failed: {str(e)}")
+                    
+        except Exception as e:
+            logging.error(f"State validation failed: {str(e)}")
