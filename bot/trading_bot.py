@@ -2192,7 +2192,7 @@ class TradingBot:
             # Validate positions
             for symbol, position in list(self.positions.items()):
                 try:
-                    if not self._validate_position(position, float(self.client.get_product(f"{symbol}-USD").price))):
+                    if not self._validate_position(position, float(self.client.get_product(f"{symbol}-USD").price)):
                         logging.warning(f"Invalid position detected for {symbol}, attempting recovery")
                         # Try to recover position data
                         if not self._recover_position(symbol):
