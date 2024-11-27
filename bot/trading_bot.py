@@ -1919,6 +1919,7 @@ class TradingBot:
                         high - low,  # Current high - low
                         abs(high - prev_close),  # Current high - prev close
                         abs(low - prev_close)    # Current low - prev close
+                    )
                     tr_values.append(tr)
                     
                 prev_close = close
