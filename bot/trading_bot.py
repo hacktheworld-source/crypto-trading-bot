@@ -2141,3 +2141,27 @@ class TradingBot:
         except Exception as e:
             logging.error(f"Error simulating slippage: {str(e)}")
             return price
+
+    def check_trading_permissions(self) -> bool:
+        """Check if account has required trading permissions"""
+        try:
+            # Try to get account info
+            accounts = self.client.get_accounts()
+            if not accounts:
+                return False
+                
+            # Try to get a product price (tests API read access)
+            btc_price = self.get_current_price('BTC')
+            if not btc_price:
+                return False
+                
+            # Try to get trading limits (tests trading permissions)
+            usd_account = next((acc for acc in accounts.data if acc.currency == 'USD'), None)
+            if not usd_account:
+                return False
+                
+            return True
+            
+        except Exception as e:
+            logging.error(f"Error checking trading permissions: {str(e)}")
+            return False
