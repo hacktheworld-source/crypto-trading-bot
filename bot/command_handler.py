@@ -210,9 +210,11 @@ class CommandHandler:
         help_text += "\n\n📊 Monitoring Commands:"
         help_text += "\n!status              - Full bot status, portfolio, and watched coins"
         help_text += "\n!positions           - View all current positions (real & paper)"
+        help_text += "\n!balance             - Show real trading balance and P/L"
+        help_text += "\n!trades              - Show real trading history"
         help_text += "\n!paper balance       - Show paper trading balance and P/L"
         help_text += "\n!paper positions     - Show paper trading positions only"
-        help_text += "\n!paper trades        - Show recent paper trading history"
+        help_text += "\n!paper trades        - Show paper trading history"
         
         help_text += "\n\n🔍 Analysis Tools:"
         help_text += "\n!price <coin>        - Get current price and 24h change"
@@ -509,3 +511,62 @@ class CommandHandler:
         
     def show_commands(self):
         return self.get_help()
+        
+    def get_real_balance(self):
+        """Get real trading account status"""
+        try:
+            balance = self.trading_bot.get_account_balance()
+            positions = self.trading_bot.get_position_info()
+            
+            response = "Real Trading Account:\n```"
+            response += f"Cash Balance (USD): ${balance['balances'].get('USD', {}).get('balance', 0):.2f}\n"
+            
+            # Calculate total positions value
+            positions_value = sum(pos['current_price'] * pos['quantity'] for pos in positions.values())
+            response += f"Position Value: ${positions_value:.2f}\n"
+            
+            # Calculate total value
+            total_value = balance['total_usd_value']
+            response += f"Total Value: ${total_value:.2f}\n"
+            
+            # Calculate P/L if we have position history
+            if self.trading_bot.position_history:
+                realized_pl = sum(pos['profit_usd'] for pos in self.trading_bot.position_history)
+                unrealized_pl = sum(pos['profit_usd'] for pos in positions.values())
+                total_pl = realized_pl + unrealized_pl
+                
+                response += f"Realized P/L: ${realized_pl:+.2f}\n"
+                response += f"Unrealized P/L: ${unrealized_pl:+.2f}\n"
+                response += f"Total P/L: ${total_pl:+.2f}\n"
+            
+            # Add total fees
+            total_fees = sum(pos.get('fees_paid', 0) for pos in self.trading_bot.position_history)
+            total_fees += sum(pos.get('fees_paid', 0) for pos in positions.values())
+            response += f"Total Fees: ${total_fees:.2f}"
+            
+            response += "```"
+            return response
+            
+        except Exception as e:
+            return f"Error getting real balance: {str(e)}"
+        
+    def get_real_trades(self):
+        """Show real trading history"""
+        trades = self.trading_bot.trade_history
+        if not trades:
+            return "No real trades yet"
+        
+        response = "Real Trading History:\n```"
+        # Show last 10 trades
+        for trade in trades[-10:]:
+            response += f"\n{trade['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}"
+            response += f"\n{trade['action']} {trade['symbol']}"
+            response += f"\nPrice: ${trade['price']:,.2f}"
+            response += f"\nQuantity: {trade['quantity']:.8f}"
+            response += f"\nTotal: ${trade['amount_usd']:,.2f}"
+            response += f"\nFees: ${trade['fees']:.2f}"
+            if 'profit' in trade:
+                response += f"\nProfit: ${trade['profit']:+,.2f} ({trade['profit_percentage']:+.2f}%)"
+            response += "\n"
+        response += "```"
+        return response

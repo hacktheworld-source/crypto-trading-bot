@@ -223,6 +223,18 @@ def main():
         
         await ctx.send(response)
 
+    @bot.command(name='balance')
+    async def get_balance(ctx):
+        """Show real trading balance"""
+        response = command_handler.get_real_balance()
+        await ctx.send(response)
+
+    @bot.command(name='trades')
+    async def get_trades(ctx):
+        """Show real trading history"""
+        response = command_handler.get_real_trades()
+        await ctx.send(response)
+
     # Add this before bot.run
     keep_alive()  # Start the Flask server
     
