@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Dict, Any
+import logging
 
 class Position:
     def __init__(self, symbol: str, entry_price: float, quantity: float, entry_time: datetime, is_paper: bool = False):
@@ -18,20 +19,51 @@ class Position:
         self.lowest_price = min(self.lowest_price, current_price)
         
     def calculate_profit(self, current_price: float) -> Dict[str, float]:
-        current_value = self.quantity * current_price
-        initial_value = self.quantity * self.entry_price
-        
-        total_fee = (initial_value * 0.006) + (current_value * 0.006)
-        profit = current_value - initial_value - total_fee
-        profit_percentage = (profit / initial_value) * 100 if initial_value > 0 else 0
-        
-        return {
-            'profit_usd': profit,
-            'profit_percentage': profit_percentage,
-            'highest_profit_percentage': ((self.highest_price - self.entry_price) / self.entry_price) * 100,
-            'drawdown_percentage': ((self.lowest_price - self.entry_price) / self.entry_price) * 100,
-            'fees_paid': total_fee
-        }
+        try:
+            # Base calculations (same for both modes)
+            current_value = self.quantity * current_price
+            cost_basis = self.quantity * self.entry_price
+            base_fee = cost_basis * 0.006  # 0.6% Coinbase fee
+            
+            if not self.is_paper:
+                try:
+                    # For real trades, get actual data from Coinbase
+                    product_id = f"{self.symbol}-USD"
+                    filled_orders = self.client.get_fills(product_id=product_id)
+                    
+                    # Calculate actual cost and fees from filled orders
+                    actual_cost = sum(float(o.price) * float(o.size) for o in filled_orders if o.side == 'BUY')
+                    actual_fees = sum(float(o.fee) for o in filled_orders)
+                    
+                    profit = current_value - actual_cost - actual_fees
+                    profit_percentage = (profit / actual_cost) * 100 if actual_cost > 0 else 0
+                    
+                    return {
+                        'profit_usd': profit,
+                        'profit_percentage': profit_percentage,
+                        'fees_paid': actual_fees
+                    }
+                except Exception as e:
+                    logging.error(f"Error getting real trade data: {str(e)}")
+                    # Fallback to tracked values if API fails
+            
+            # Paper trading or fallback calculation
+            profit = current_value - cost_basis - base_fee
+            profit_percentage = (profit / cost_basis) * 100 if cost_basis > 0 else 0
+            
+            return {
+                'profit_usd': profit,
+                'profit_percentage': profit_percentage,
+                'fees_paid': base_fee
+            }
+            
+        except Exception as e:
+            logging.error(f"Error calculating profit: {str(e)}")
+            return {
+                'profit_usd': 0,
+                'profit_percentage': 0,
+                'fees_paid': 0
+            }
 
     def __str__(self) -> str:
         return f"{self.symbol} {'(Paper)' if self.is_paper else ''} Position"

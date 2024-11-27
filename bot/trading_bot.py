@@ -104,6 +104,7 @@ class TradingBot:
         
     async def _trading_loop(self):
         """Enhanced main trading loop with better analysis and risk management"""
+        retry_delay = 300  # Start with 5 minutes
         while self.trading_active or self.paper_trading:
             try:
                 # Add reconnection logic
@@ -169,13 +170,34 @@ class TradingBot:
             except Exception as e:
                 logging.error(f"Error in trading loop: {str(e)}")
                 await self.send_notification(f"❌ Error in trading loop: {str(e)}")
-                await asyncio.sleep(300)  # 5 minutes
-                
+                await asyncio.sleep(retry_delay)
+                retry_delay = min(retry_delay * 2, 3600)  # Double delay up to 1 hour max
+            else:
+                retry_delay = 300  # Reset delay on successful iteration
+        
         logging.info("Trading loop stopped")
 
     async def _manage_position(self, symbol: str, position: Position, prediction: Dict[str, Any], current_price: float):
         """Enhanced position management with weighted exit signals"""
         try:
+            # For real trading, get actual position data from Coinbase
+            if not self.paper_trading:
+                try:
+                    # Get actual position details from Coinbase
+                    product = self.client.get_product(f"{symbol}-USD")
+                    current_price = float(product.price)
+                    
+                    # Get actual filled orders for this position
+                    orders = self.client.get_orders(product_id=f"{symbol}-USD")
+                    entry_orders = [o for o in orders if o.side == 'BUY' and o.status == 'FILLED']
+                    if entry_orders:
+                        actual_entry = float(entry_orders[0].average_filled_price)
+                        position.entry_price = actual_entry  # Update with real entry
+                except Exception as e:
+                    logging.error(f"Error getting real position data: {str(e)}")
+                    # Fallback to tracked data if API fails
+                    
+            # Rest of position management remains the same...
             profit_info = position.calculate_profit(current_price)
             position.update_price(current_price)  # Make sure we track highest price
             
@@ -820,7 +842,7 @@ class TradingBot:
             return True
             
         except Exception as e:
-            error_msg = f"Error placing {mode} sell order for {symbol}: {str(e)}"
+            error_msg = f"Error placing {mode} sell order for {symbol}: {str(e)}")
             logging.error(error_msg)
             await self.send_notification(f"❌ {error_msg}")
             return False
@@ -1980,7 +2002,7 @@ class TradingBot:
                         high - low,  # Current high - low
                         abs(high - prev_close),  # Current high - prev close
                         abs(low - prev_close)    # Current low - prev close
-                    ) # stop forgetting to add this parenthesis!
+                    )  # Fixed missing parenthesis
                     tr_values.append(tr)
                     
                 prev_close = close

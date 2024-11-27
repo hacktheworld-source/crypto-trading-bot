@@ -59,11 +59,27 @@ class CommandHandler:
         return response
         
     def start_real_trading(self):
-        """Start real money trading"""
-        if self.trading_bot.paper_trading:
-            return "❌ Cannot start real trading while paper trading is active. Stop paper trading first with '!stop paper'"
+        """Start real money trading with additional checks"""
+        try:
+            # Verify API connection
+            account = self.trading_bot.client.get_accounts()
+            if not account:
+                return "❌ Failed to connect to Coinbase API"
+            
+            # Check USD balance
+            usd_account = next((acc for acc in account.data if acc.currency == 'USD'), None)
+            if not usd_account or float(usd_account.available_balance.value) < 10:
+                return "❌ Insufficient USD balance for trading"
+            
+            # Check trading permissions
+            if not self.trading_bot.check_trading_permissions():
+                return "❌ Account does not have required trading permissions"
+            
+            return self.trading_bot.start_trading_loop(paper=False)
         
-        return self.trading_bot.start_trading_loop(paper=False)
+        except Exception as e:
+            logging.error(f"Error starting real trading: {str(e)}")
+            return f"❌ Error starting real trading: {str(e)}"
         
     def start_paper_trading(self, initial_balance: float = 1000.0):
         """Start paper trading"""
