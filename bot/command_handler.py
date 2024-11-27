@@ -200,37 +200,42 @@ class CommandHandler:
             )
         
     def get_help(self):
-        help_text = "Trading Bot Commands:\n```"
+        help_text = "🤖 Trading Bot Help Guide\n```"
         
-        help_text += "\nTrading Commands:"
-        help_text += "\n!start paper    - Start paper trading"
-        help_text += "\n!start real     - Start real trading (requires confirmation)"
-        help_text += "\n!stop [mode]    - Stop trading (paper/real/all)"
-        help_text += "\n!status         - Show bot status and portfolio"
-        help_text += "\n!positions      - View current positions"
+        help_text += "\n📈 Trading Controls:"
+        help_text += "\n!start paper [amount]  - Start paper trading with optional initial balance"
+        help_text += "\n!start real           - Start real trading (requires confirmation)"
+        help_text += "\n!stop [paper/real/all] - Stop trading in specified mode"
         
-        help_text += "\n\nPaper Trading Commands:"
-        help_text += "\n!paper balance  - Show paper trading balance"
-        help_text += "\n!paper trades   - Show paper trading history"
-        help_text += "\n!paper positions - Show paper positions only"
+        help_text += "\n\n📊 Monitoring Commands:"
+        help_text += "\n!status              - Full bot status, portfolio, and watched coins"
+        help_text += "\n!positions           - View all current positions (real & paper)"
+        help_text += "\n!paper balance       - Show paper trading balance and P/L"
+        help_text += "\n!paper positions     - Show paper trading positions only"
+        help_text += "\n!paper trades        - Show recent paper trading history"
         
-        help_text += "\n\nAnalysis Commands:"
-        help_text += "\n!price <coin>   - Get current price"
-        help_text += "\n!rsi <coin>     - Get current RSI"
+        help_text += "\n\n🔍 Analysis Tools:"
+        help_text += "\n!price <coin>        - Get current price and 24h change"
+        help_text += "\n!rsi <coin>          - Get RSI with overbought/oversold indicators"
+        help_text += "\n!volume <coin>       - Get volume analysis and trend confirmation"
         
-        help_text += "\n\nCoin Management:"
-        help_text += "\n!addcoin <coin>    - Add coin to watchlist"
-        help_text += "\n!removecoin <coin> - Remove coin from watchlist"
-        help_text += "\n!listcoins        - Show watched coins"
+        help_text += "\n\n⚙️ Configuration:"
+        help_text += "\n!addcoin <coin>      - Add coin to watchlist"
+        help_text += "\n!removecoin <coin>   - Remove coin from watchlist"
+        help_text += "\n!listcoins           - Show all watched coins"
+        help_text += "\n!setrsi <low> <high> - Set RSI thresholds (e.g., !setrsi 30 70)"
+        help_text += "\n!setinterval <mins>  - Set trading check interval in minutes"
         
-        help_text += "\n\nConfiguration:"
-        help_text += "\n!setrsi <oversold> <overbought>  - Set RSI thresholds"
-        help_text += "\n!setinterval <minutes>           - Set check interval"
+        help_text += "\n\n🔧 System Commands:"
+        help_text += "\n!testapi             - Test Coinbase API connection"
+        help_text += "\n!ping                - Check if bot is responsive"
+        help_text += "\n!help or !commands   - Show this help guide"
         
-        help_text += "\n\nSystem Commands:"
-        help_text += "\n!testapi        - Test Coinbase API connection"
-        help_text += "\n!ping           - Check if bot is responsive"
-        help_text += "\n!commands       - Show this help message"
+        help_text += "\n\n📝 Notes:"
+        help_text += "\n• Paper trading simulates real trading with virtual money"
+        help_text += "\n• Real trading requires API keys and confirmation"
+        help_text += "\n• Stop losses are set at -5%, trailing stops at +3%"
+        help_text += "\n• Position sizes are calculated based on risk management"
         help_text += "```"
         return help_text
         
@@ -501,3 +506,6 @@ class CommandHandler:
             response += "\n"
         response += "```"
         return response
+        
+    def show_commands(self):
+        return self.get_help()
