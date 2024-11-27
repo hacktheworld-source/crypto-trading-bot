@@ -2280,3 +2280,66 @@ class TradingBot:
         except Exception as e:
             logging.error(f"Error verifying order fill: {str(e)}")
             return None
+
+    def _validate_and_record_trade(self, trade_type: str, symbol: str, quantity: float, 
+                             price: float, fees: float, profit_info: Dict = None) -> bool:
+        """Validate and record trade details"""
+        try:
+            # Validate basic parameters
+            if not isinstance(trade_type, str) or trade_type not in ['BUY', 'SELL']:
+                logging.error(f"Invalid trade type: {trade_type}")
+                return False
+                
+            if not self._validate_trade_params(symbol, quantity):
+                return False
+                
+            if not self._validate_price(price):
+                logging.error(f"Invalid price: {price}")
+                return False
+                
+            if not isinstance(fees, (int, float)) or fees < 0:
+                logging.error(f"Invalid fees: {fees}")
+                return False
+                
+            # Create trade record
+            trade_record = {
+                'timestamp': datetime.now(),
+                'symbol': symbol,
+                'action': trade_type,
+                'price': price,
+                'quantity': quantity,
+                'amount_usd': quantity * price,
+                'fees': fees,
+                'is_paper': self.paper_trading
+            }
+            
+            # Add profit info for sells
+            if profit_info and trade_type == 'SELL':
+                if not self._validate_profit_info(profit_info):
+                    logging.error("Invalid profit info")
+                    return False
+                trade_record.update({
+                    'profit': profit_info['profit_usd'],
+                    'profit_percentage': profit_info['profit_percentage']
+                })
+            
+            # Record trade in appropriate history
+            if self.paper_trading:
+                self.paper_trade_history.append(trade_record)
+                # Update paper balance
+                if trade_type == 'BUY':
+                    self.paper_balance -= (trade_record['amount_usd'] + fees)
+                else:  # SELL
+                    self.paper_balance += (trade_record['amount_usd'] - fees)
+                    if profit_info:
+                        self.paper_realized_pl += profit_info['profit_usd']
+                self.paper_total_fees += fees
+            else:
+                self.trade_history.append(trade_record)
+                
+            logging.info(f"Successfully recorded {trade_type} trade for {symbol}")
+            return True
+            
+        except Exception as e:
+            logging.error(f"Error recording trade: {str(e)}")
+            return False
