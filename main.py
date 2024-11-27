@@ -89,16 +89,19 @@ def main():
         
         if mode == 'real':
             # Add confirmation for real trading
-            await ctx.send("⚠️ WARNING: You are about to start REAL trading with actual money. Type '!confirm' within 30 seconds to proceed.")
+            msg = await ctx.send("⚠️ WARNING: You are about to start REAL trading with actual money. Type '!confirm' within 30 seconds to proceed.")
             
             def check(m):
-                return m.author == ctx.author and m.content.lower() == '!confirm'
+                return m.author == ctx.author and m.content.lower() == '!confirm' and m.channel == ctx.channel
             
             try:
                 await bot.wait_for('message', check=check, timeout=30.0)
                 response = command_handler.start_real_trading()
-            except TimeoutError:
+            except asyncio.TimeoutError:
                 response = "Real trading start cancelled due to timeout."
+                await msg.edit(content=f"{msg.content}\n\n❌ {response}")
+                return
+            
         else:
             response = command_handler.start_paper_trading()
         
@@ -234,6 +237,12 @@ def main():
         """Show real trading history"""
         response = command_handler.get_real_trades()
         await ctx.send(response)
+
+    @bot.command(name='confirm')
+    async def confirm(ctx):
+        """Confirmation command - only used internally by other commands"""
+        # This command exists just to be recognized by the bot
+        pass
 
     # Add this before bot.run
     keep_alive()  # Start the Flask server
