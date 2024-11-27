@@ -134,15 +134,22 @@ class CommandHandler:
         status += f"\n  RSI Period: {bot.rsi_period} days"
         status += f"\n  RSI Thresholds: {bot.rsi_oversold} (oversold) / {bot.rsi_overbought} (overbought)"
         
-        # Watched Coins
+        # Compact Watched Coins section
         status += "\n\n🔍 Watched Coins:"
         if bot.watched_coins:
             for coin in sorted(bot.watched_coins):
                 try:
                     current_price = bot.get_current_price(coin)
                     rsi = bot.calculate_rsi(coin)
-                    status += f"\n  {coin}: ${current_price:,.2f} (RSI: {rsi:.1f})"
-                except:
+                    volume_data = bot.analyze_volume(coin)
+                    ma_data = bot.calculate_moving_averages(coin)
+                    
+                    # Compact single-line format
+                    status += f"\n  {coin}: ${current_price:,.2f} | RSI: {rsi:.1f} | Vol: {volume_data['volume_ratio']:.1f}x"
+                    if coin in bot.paper_positions or coin in bot.positions:
+                        status += " 📍"  # Position indicator
+                
+                except Exception as e:
                     status += f"\n  {coin}: Error fetching data"
         else:
             status += "\n  None"
@@ -196,47 +203,34 @@ class CommandHandler:
         help_text = "Trading Bot Commands:\n```"
         
         help_text += "\nTrading Commands:"
-        help_text += "\n!start real     - Start real money trading"
         help_text += "\n!start paper    - Start paper trading"
+        help_text += "\n!start real     - Start real trading (requires confirmation)"
         help_text += "\n!stop [mode]    - Stop trading (paper/real/all)"
-        help_text += "\n!status        - Show bot status and portfolio value"
-        help_text += "\n!positions     - View all positions (real & paper)"
-        help_text += "\n!history       - View trade history"
+        help_text += "\n!status         - Show bot status and portfolio"
+        help_text += "\n!positions      - View current positions"
         
         help_text += "\n\nPaper Trading Commands:"
-        help_text += "\n!paper start [balance] - Start paper trading with optional balance"
-        help_text += "\n!paper stop           - Stop paper trading"
-        help_text += "\n!paper balance        - Show paper trading balance"
-        help_text += "\n!paper reset [amount] - Reset paper trading with optional balance"
-        help_text += "\n!paper stats          - Show paper trading statistics"
-        help_text += "\n!paper trades         - Show paper trade history"
-        help_text += "\n!paper positions      - Show paper positions only"
+        help_text += "\n!paper balance  - Show paper trading balance"
+        help_text += "\n!paper trades   - Show paper trading history"
+        help_text += "\n!paper positions - Show paper positions only"
         
         help_text += "\n\nAnalysis Commands:"
-        help_text += "\n!price BTC     - Get current price"
-        help_text += "\n!rsi BTC       - Get current RSI"
-        help_text += "\n!ma BTC        - Get Moving Average analysis"
-        help_text += "\n!volume BTC    - Get volume analysis"
-        help_text += "\n!sentiment BTC - Get market sentiment analysis"
+        help_text += "\n!price <coin>   - Get current price"
+        help_text += "\n!rsi <coin>     - Get current RSI"
         
         help_text += "\n\nCoin Management:"
-        help_text += "\n!addcoin BTC   - Add a coin to watchlist"
-        help_text += "\n!removecoin BTC - Remove a coin from watchlist"
-        help_text += "\n!listcoins     - Show all watched coins"
-        
-        help_text += "\n\nRisk Management:"
-        help_text += "\n!setrisk <stop_loss> <take_profit> <max_position>"
-        help_text += "\n  Example: !setrisk 5 10 1000"
-        help_text += "\n  Sets: 5% stop loss, 10% take profit, $1000 max position"
+        help_text += "\n!addcoin <coin>    - Add coin to watchlist"
+        help_text += "\n!removecoin <coin> - Remove coin from watchlist"
+        help_text += "\n!listcoins        - Show watched coins"
         
         help_text += "\n\nConfiguration:"
-        help_text += "\n!setrsi 30 70  - Set RSI thresholds (oversold overbought)"
-        help_text += "\n!setinterval 5 - Set check interval in minutes"
+        help_text += "\n!setrsi <oversold> <overbought>  - Set RSI thresholds"
+        help_text += "\n!setinterval <minutes>           - Set check interval"
         
         help_text += "\n\nSystem Commands:"
-        help_text += "\n!testapi       - Test Coinbase API connection"
-        help_text += "\n!ping          - Test if bot is responsive"
-        help_text += "\n!commands      - Show this help message"
+        help_text += "\n!testapi        - Test Coinbase API connection"
+        help_text += "\n!ping           - Check if bot is responsive"
+        help_text += "\n!commands       - Show this help message"
         help_text += "```"
         return help_text
         
