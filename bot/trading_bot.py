@@ -2258,7 +2258,7 @@ class TradingBot:
                 
             # Validate values are numbers
             for key in required_keys:
-                if not isinstance(profit_info[key], (int, float))):
+                if not isinstance(profit_info[key], (int, float)):
                     logging.error(f"Invalid value type for {key}")
                     return False
                     
