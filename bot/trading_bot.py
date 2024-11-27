@@ -360,22 +360,95 @@ class TradingBot:
             logging.error(f"Error calculating stop loss: {str(e)}")
             return entry_price * (1 - self.stop_loss_percentage/100)  # Fallback to simple percentage
     
-    def _validate_position(self, position, current_price):
-        """Validate position data before making trading decisions"""
+    def _validate_position(self, position: Position, current_price: float) -> bool:
+        """Validate position data integrity"""
         try:
-            if position is None:
+            if not isinstance(position, Position):
                 return False
-            if not hasattr(position, 'entry_price') or position.entry_price is None:
+                
+            if not all(hasattr(position, attr) for attr in ['symbol', 'entry_price', 'quantity', 'entry_time']):
                 return False
-            if not hasattr(position, 'quantity') or position.quantity <= 0:
+                
+            # Validate numeric values
+            if not isinstance(position.entry_price, (int, float)) or position.entry_price <= 0:
                 return False
-            if current_price <= 0:
+                
+            if not isinstance(position.quantity, (int, float)) or position.quantity <= 0:
                 return False
+                
+            # Validate profit calculation works
+            profit_info = position.calculate_profit(current_price)
+            if not self._validate_profit_info(profit_info):
+                return False
+                
             return True
+        
         except Exception as e:
-            logging.error(f"Error validating position: {str(e)}")
+            logging.error(f"Position validation failed: {str(e)}")
             return False
-    
+
+    def _recover_position(self, symbol: str) -> bool:
+        """Attempt to recover position data from trade history"""
+        try:
+            history = self.paper_trade_history if self.paper_trading else self.trade_history
+            
+            # Find most recent buy for this symbol
+            buy_trades = [t for t in reversed(history) if t['symbol'] == symbol and t['action'] == 'BUY']
+            if not buy_trades:
+                return False
+            
+            last_buy = buy_trades[0]
+            
+            # Create new position with recovered data
+            position = Position(
+                symbol=symbol,
+                entry_price=last_buy['price'],
+                quantity=last_buy['quantity'],
+                entry_time=last_buy['timestamp'],
+                is_paper=self.paper_trading
+            )
+            
+            # Validate recovered position
+            current_price = float(self.client.get_product(f"{symbol}-USD").price)
+            if not self._validate_position(position, current_price):
+                return False
+            
+            # Update position dictionary
+            if self.paper_trading:
+                self.paper_positions[symbol] = position
+            else:
+                self.positions[symbol] = position
+            
+            logging.info(f"Successfully recovered position for {symbol}")
+            return True
+        
+        except Exception as e:
+            logging.error(f"Position recovery failed for {symbol}: {str(e)}")
+            return False
+
+    def _recalculate_paper_balance(self) -> None:
+        """Recalculate paper balance from trade history"""
+        try:
+            self.paper_balance = self.paper_initial_balance
+            self.paper_realized_pl = 0.0
+            self.paper_total_fees = 0.0
+            
+            # Replay all trades
+            for trade in self.paper_trade_history:
+                if trade['action'] == 'BUY':
+                    self.paper_balance -= (trade['amount_usd'] + trade['fees'])
+                    self.paper_total_fees += trade['fees']
+                else:  # SELL
+                    self.paper_balance += (trade['amount_usd'] - trade['fees'])
+                    self.paper_total_fees += trade['fees']
+                    if 'profit' in trade:
+                        self.paper_realized_pl += trade['profit']
+                    
+            logging.info("Paper balance recalculated")
+        
+        except Exception as e:
+            logging.error(f"Balance recalculation failed: {str(e)}")
+
     async def _check_and_trade(self, symbol):
         """Check trading conditions using weighted signal system"""
         try:
@@ -2119,7 +2192,7 @@ class TradingBot:
             # Validate positions
             for symbol, position in list(self.positions.items()):
                 try:
-                    if not self._validate_position(position, float(self.client.get_product(f"{symbol}-USD").price)):
+                    if not self._validate_position(position, float(self.client.get_product(f"{symbol}-USD").price))):
                         logging.warning(f"Invalid position detected for {symbol}, attempting recovery")
                         # Try to recover position data
                         if not self._recover_position(symbol):
@@ -2140,3 +2213,70 @@ class TradingBot:
                     
         except Exception as e:
             logging.error(f"State validation failed: {str(e)}")
+
+    def _validate_trade_params(self, symbol: str, quantity: float) -> bool:
+        """Validate trade parameters"""
+        try:
+            if not isinstance(symbol, str) or not symbol:
+                logging.error("Invalid symbol")
+                return False
+                
+            if not isinstance(quantity, (int, float)) or quantity <= 0:
+                logging.error(f"Invalid quantity: {quantity}")
+                return False
+                
+            # Check if symbol exists on Coinbase
+            try:
+                self.client.get_product(f"{symbol}-USD")
+            except Exception as e:
+                logging.error(f"Invalid symbol {symbol}: {str(e)}")
+                return False
+                
+            return True
+            
+        except Exception as e:
+            logging.error(f"Error validating trade params: {str(e)}")
+            return False
+
+    def _validate_price(self, price: float) -> bool:
+        """Validate price value"""
+        return isinstance(price, (int, float)) and price > 0
+
+    def _validate_profit_info(self, profit_info: Dict) -> bool:
+        """Validate profit calculation results"""
+        try:
+            required_keys = ['profit_usd', 'profit_percentage', 'fees_paid']
+            
+            if not isinstance(profit_info, dict):
+                logging.error("Profit info is not a dictionary")
+                return False
+                
+            # Check all required keys exist
+            if not all(key in profit_info for key in required_keys):
+                logging.error("Missing required keys in profit info")
+                return False
+                
+            # Validate values are numbers
+            for key in required_keys:
+                if not isinstance(profit_info[key], (int, float))):
+                    logging.error(f"Invalid value type for {key}")
+                    return False
+                    
+            return True
+            
+        except Exception as e:
+            logging.error(f"Error validating profit info: {str(e)}")
+            return False
+
+    async def _verify_order_fill(self, order_id: str) -> Any:
+        """Verify order was filled successfully"""
+        try:
+            for _ in range(5):  # Try for 5 seconds
+                filled_order = self.client.get_order(order_id)
+                if filled_order.status == 'FILLED':
+                    return filled_order
+                await asyncio.sleep(1)
+            return None
+        except Exception as e:
+            logging.error(f"Error verifying order fill: {str(e)}")
+            return None
