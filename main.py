@@ -241,8 +241,7 @@ def main():
     @bot.command(name='confirm')
     async def confirm(ctx):
         """Confirmation command - only used internally by other commands"""
-        # This command exists just to be recognized by the bot
-        pass
+        pass  # Just needs to exist to be recognized
 
     # Add this before bot.run
     keep_alive()  # Start the Flask server

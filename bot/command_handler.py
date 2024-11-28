@@ -63,7 +63,6 @@ class CommandHandler:
         return response
         
     def start_real_trading(self):
-        """Start real money trading with additional checks"""
         try:
             # Verify API connection
             account = self.trading_bot.client.get_accounts()
