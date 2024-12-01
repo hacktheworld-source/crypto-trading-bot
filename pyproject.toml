@@ -1,0 +1,19 @@
+[tool.poetry]
+name = "crypto-trading-bot"
+version = "0.1.0"
+description = "A cryptocurrency trading bot"
+authors = ["Your Name <your.email@example.com>"]
+
+[tool.poetry.dependencies]
+python = "^3.9"
+discord-py = "^2.3.2"
+python-dotenv = "^1.0.0"
+coinbase-advanced-py = "^1.0.0"
+pandas = "^1.5.3"
+numpy = "^1.24.3"
+flask = "^2.3.3"
+requests = "^2.31.0"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api" 
