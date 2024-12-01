@@ -19,6 +19,26 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
+class TradingBotError(Exception):
+    """Base exception class for TradingBot errors"""
+    pass
+
+class APIError(TradingBotError):
+    """Raised when there's an error with API calls"""
+    pass
+
+class DataError(TradingBotError):
+    """Raised when there's an error with data processing"""
+    pass
+
+class SignalError(TradingBotError):
+    """Raised when there's an error calculating trading signals"""
+    pass
+
+class TradeError(TradingBotError):
+    """Raised when there's an error executing trades"""
+    pass
+
 class TradingBot:
     def __init__(self):
         try:
@@ -379,7 +399,6 @@ class TradingBot:
                     }
                 },
                 client_order_id=str(int(time.time()))
-            )
             
             # Calculate final profit
             profit_info = position.calculate_profit(current_price)
@@ -699,48 +718,36 @@ class TradingBot:
             return 0
 
     def _check_market_conditions(self, symbol: str) -> Dict[str, Any]:
+        """Analyze current market conditions for trading"""
         try:
+            # Get sentiment analysis
             sentiment = self.analyze_market_sentiment(symbol)
             
-            # Get volatility with adjusted window
+            # Get volatility (using price range as simple measure)
             prices = self._get_historical_prices(symbol, 
-                                              start=datetime.now() - timedelta(days=14),  # 2 weeks
+                                              start=datetime.now() - timedelta(days=7),
                                               end=datetime.now())
             price_range = (prices.max() - prices.min()) / prices.min() * 100
             
-            # Adjust volatility threshold based on market cap
-            is_major = symbol in ['BTC', 'ETH']
-            volatility_threshold = 15 if is_major else 25  # Allow more volatility for altcoins
-            is_volatile = price_range > volatility_threshold
+            # Check if market is too volatile
+            is_volatile = price_range > 10  # Consider >10% range as volatile
             
-            # Adjust trading hours (crypto trades 24/7)
+            # Check trading hours (some hours historically have more volatility)
             current_hour = datetime.now().hour
-            is_high_activity = 0 <= current_hour <= 23  # Always True
+            is_high_activity = 13 <= current_hour <= 21  # 9 AM - 5 PM EST
             
-            # Market alignment check
+            # Get overall market trend (using BTC as proxy)
             if symbol != 'BTC':
                 btc_sentiment = self.analyze_market_sentiment('BTC')
                 market_aligned = (
-                    sentiment['sentiment_score'] * btc_sentiment['sentiment_score'] > 0 or
-                    abs(sentiment['sentiment_score']) > 50  # Strong individual sentiment
+                    (sentiment['overall_sentiment'] == btc_sentiment['overall_sentiment']) or
+                    (sentiment['sentiment_score'] * btc_sentiment['sentiment_score'] > 0)
                 )
             else:
                 market_aligned = True
             
-            self.log(
-                f"Market conditions analyzed for {symbol}",
-                context={
-                    'sentiment': sentiment['overall_sentiment'],
-                    'sentiment_score': f"{sentiment['sentiment_score']:+.1f}",
-                    'volatility': f"{price_range:.1f}%",
-                    'is_volatile': str(is_volatile),
-                    'market_aligned': str(market_aligned),
-                    'trading_suitable': str(conditions['suitable_for_trading']),
-                    'btc_correlation': f"{self._calculate_btc_correlation(symbol):.2f}" if symbol != 'BTC' else 'N/A'
-                }
-            )
-            
-            return {
+            # Create conditions dict before using it
+            conditions = {
                 'sentiment': sentiment['overall_sentiment'],
                 'sentiment_score': sentiment['sentiment_score'],
                 'is_volatile': is_volatile,
@@ -748,201 +755,115 @@ class TradingBot:
                 'is_high_activity': is_high_activity,
                 'market_aligned': market_aligned,
                 'suitable_for_trading': (
-                    (not is_volatile or abs(sentiment['sentiment_score']) > 75) and  # Allow volatile if strong sentiment
+                    not is_volatile and
+                    (is_high_activity or abs(sentiment['sentiment_score']) > 50) and
                     market_aligned
                 )
             }
+            
+            self.log(f"Market conditions for {symbol}: {conditions}")
+            return conditions
+            
         except Exception as e:
             self.log(f"Error checking market conditions: {str(e)}", level="error")
             raise
 
     def _calculate_trade_signal(self, symbol: str) -> Dict[str, Any]:
-        """Enhanced trade signal calculation with comprehensive analysis"""
+        """Enhanced trade signal calculation with comprehensive error handling"""
         try:
-            # Get all analysis data
-            current_price = float(self.client.get_product(f"{symbol}-USD").price)
-            ma_data = self.calculate_moving_averages(symbol)
-            volume_data = self.analyze_volume(symbol)
-            sentiment = self.analyze_market_sentiment(symbol)
-            rsi = self.calculate_rsi(symbol)
-            market_conditions = self._check_market_conditions(symbol)
+            # Get all analysis data with individual error handling
+            try:
+                current_price = float(self.client.get_product(f"{symbol}-USD").price)
+            except Exception as e:
+                raise APIError(f"Failed to get current price: {str(e)}")
 
-            # Get additional technical indicators
-            macd = self._calculate_macd(symbol)
-            stoch = self._calculate_stochastic(symbol)
-            bb_data = self._calculate_bollinger_bands(symbol)
-            support_resistance = self._find_support_resistance(symbol)
-            
-            # Initialize comprehensive scoring system
-            signals = {
-                'trend': 0,          # -30 to +30 (Primary trend)
-                'momentum': 0,       # -25 to +25 (Combined momentum indicators)
-                'volume': 0,         # -20 to +20 (Volume analysis)
-                'volatility': 0,     # -15 to +15 (Volatility measures)
-                'support_res': 0,    # -15 to +15 (Support/Resistance)
-                'sentiment': 0,      # -10 to +10 (Market sentiment)
-                'correlation': 0,    # -10 to +10 (BTC correlation)
-                'risk': 0,          # -10 to +10 (Risk assessment)
-            }
+            try:
+                ma_data = self.calculate_moving_averages(symbol)
+            except Exception as e:
+                raise DataError(f"Failed to calculate MAs: {str(e)}")
 
-            # 1. Trend Analysis (30%)
-            trend_score = 0
-            # Moving Average Analysis
-            if current_price > ma_data['sma_50'] > ma_data['sma_200']:
-                trend_score += 15  # Strong uptrend
-            elif current_price < ma_data['sma_50'] < ma_data['sma_200']:
-                trend_score -= 15  # Strong downtrend
-            
-            # MACD Analysis
-            if macd['histogram'] > 0 and macd['histogram'] > macd['prev_histogram']:
-                trend_score += 10
-            elif macd['histogram'] < 0 and macd['histogram'] < macd['prev_histogram']:
-                trend_score -= 10
-            
-            # Price Action
-            if current_price > ma_data['ema_20']:
-                trend_score += 5
-            else:
-                trend_score -= 5
-                
-            signals['trend'] = max(min(trend_score, 30), -30)
+            try:
+                volume_data = self.analyze_volume(symbol)
+            except Exception as e:
+                raise DataError(f"Failed to analyze volume: {str(e)}")
 
-            # 2. Momentum Analysis (25%)
-            momentum_score = 0
-            # RSI
-            if rsi <= 30:
-                momentum_score += 10  # Oversold
-            elif rsi >= 70:
-                momentum_score -= 10  # Overbought
-            
-            # Stochastic
-            if stoch['k'] <= 20 and stoch['d'] <= 20:
-                momentum_score += 8
-            elif stoch['k'] >= 80 and stoch['d'] >= 80:
-                momentum_score -= 8
-            
-            # MACD Momentum
-            if macd['line'] > macd['signal']:
-                momentum_score += 7
-            else:
-                momentum_score -= 7
-                
-            signals['momentum'] = max(min(momentum_score, 25), -25)
+            try:
+                sentiment = self.analyze_market_sentiment(symbol)
+            except Exception as e:
+                raise DataError(f"Failed to analyze sentiment: {str(e)}")
 
-            # 3. Volume Analysis (20%)
-            volume_score = 0
-            # Basic volume ratio
-            volume_ratio = volume_data['volume_ratio']
-            if volume_ratio > 2.0:
-                volume_score += 10
-            elif volume_ratio > 1.5:
-                volume_score += 5
-            
-            # Volume trend confirmation
-            if volume_data['confirms_trend']:
-                volume_score += 10
-            else:
-                volume_score -= 5
-                
-            signals['volume'] = max(min(volume_score, 20), -20)
+            try:
+                market_conditions = self._check_market_conditions(symbol)
+            except Exception as e:
+                raise DataError(f"Failed to check market conditions: {str(e)}")
 
-            # 4. Volatility Analysis (15%)
-            volatility_score = 0
-            # Bollinger Bands
-            bb_width = bb_data['upper'] - bb_data['lower']
-            bb_position = (current_price - bb_data['lower']) / bb_width
-            
-            if bb_position < 0.2:  # Near lower band
-                volatility_score += 8
-            elif bb_position > 0.8:  # Near upper band
-                volatility_score -= 8
-            
-            # Historical volatility
-            if market_conditions['is_volatile']:
-                volatility_score -= 7
-                
-            signals['volatility'] = max(min(volatility_score, 15), -15)
+            # Initialize signals with validation
+            if not all(k in ma_data for k in ['trend', 'sma_50', 'sma_200']):
+                raise DataError("Missing required MA data")
+            if not all(k in volume_data for k in ['volume_ratio', 'confirms_trend']):
+                raise DataError("Missing required volume data")
+            if not all(k in sentiment for k in ['sentiment_score', 'overall_sentiment']):
+                raise DataError("Missing required sentiment data")
 
-            # 5. Support/Resistance (15%)
-            sr_score = 0
-            nearest_support = support_resistance['nearest_support']
-            nearest_resistance = support_resistance['nearest_resistance']
-            
-            # Calculate distance to nearest levels
-            support_distance = (current_price - nearest_support) / current_price * 100
-            resistance_distance = (nearest_resistance - current_price) / current_price * 100
-            
-            if support_distance < 2:  # Close to support
-                sr_score += 10
-            elif resistance_distance < 2:  # Close to resistance
-                sr_score -= 10
-                
-            signals['support_res'] = max(min(sr_score, 15), -15)
+            # Calculate signal with validation
+            signals = self._calculate_signal_components(
+                ma_data, volume_data, sentiment, market_conditions
+            )
 
-            # 6. Market Sentiment (10%)
-            sentiment_score = sentiment['sentiment_score'] / 10
-            signals['sentiment'] = max(min(sentiment_score, 10), -10)
+            # Validate final signal
+            if not all(k in signals for k in ['trend', 'momentum', 'volume', 'risk']):
+                raise SignalError("Missing required signal components")
 
-            # 7. BTC Correlation (10%)
-            if symbol != 'BTC':
-                btc_correlation = self._calculate_btc_correlation(symbol)
-                correlation_score = btc_correlation * 10
-                signals['correlation'] = max(min(correlation_score, 10), -10)
-
-            # 8. Risk Assessment (10%)
-            risk_score = 10  # Start positive
-            if market_conditions['is_volatile']:
-                risk_score -= 4
-            if not market_conditions['is_high_activity']:
-                risk_score -= 3
-            if not market_conditions['market_aligned']:
-                risk_score -= 3
-                
-            signals['risk'] = max(min(risk_score, 10), -10)
-
-            # Calculate final score with dynamic thresholds
-            total_score = sum(signals.values())
-            
-            # Adjust thresholds based on market conditions
-            buy_threshold = 35 if market_conditions['is_volatile'] else 30
-            sell_threshold = -35 if market_conditions['is_volatile'] else -30
-            
-            signal = {
-                'symbol': symbol,
-                'score': total_score,
-                'signals': signals,
-                'action': 'STRONG_BUY' if total_score >= 70 else
-                         'BUY' if total_score >= buy_threshold else
-                         'STRONG_SELL' if total_score <= -70 else
-                         'SELL' if total_score <= sell_threshold else
-                         'HOLD',
-                'timestamp': datetime.now(),
-                'market_conditions': market_conditions
-            }
-
-            # Enhanced logging with full context
+            # Log comprehensive debug info
             self.log(
-                f"Trade signal calculated for {symbol}",
+                f"Signal calculation details for {symbol}",
                 context={
-                    'action': signal['action'],
-                    'score': f"{total_score:.2f}",
-                    'trend_score': f"{signals['trend']:+.1f}",
-                    'momentum_score': f"{signals['momentum']:+.1f}",
-                    'volume_score': f"{signals['volume']:+.1f}",
-                    'sentiment_score': f"{signals['sentiment']:+.1f}",
-                    'risk_score': f"{signals['risk']:+.1f}",
-                    'market_conditions': market_conditions,
-                    'current_price': f"${current_price:,.2f}",
-                    'rsi': f"{rsi:.2f}",
-                    'macd_trend': macd['trend']
+                    'raw_data': {
+                        'price': current_price,
+                        'ma_data': ma_data,
+                        'volume_data': volume_data,
+                        'sentiment': sentiment,
+                        'market_conditions': market_conditions
+                    },
+                    'signals': signals,
+                    'validation': {
+                        'data_complete': True,
+                        'signals_valid': True,
+                        'price_valid': current_price > 0
+                    }
                 }
             )
-            
-            return signal
 
+            return self._format_signal_response(symbol, signals, current_price)
+
+        except APIError as e:
+            self.log(f"API Error in trade signal calculation: {str(e)}", level="error")
+            return self._get_fallback_signal(symbol, "API_ERROR")
+        except DataError as e:
+            self.log(f"Data Error in trade signal calculation: {str(e)}", level="error")
+            return self._get_fallback_signal(symbol, "DATA_ERROR")
+        except SignalError as e:
+            self.log(f"Signal Error in trade signal calculation: {str(e)}", level="error")
+            return self._get_fallback_signal(symbol, "SIGNAL_ERROR")
         except Exception as e:
-            self.log(f"Error calculating trade signal for {symbol}: {str(e)}", level="error")
-            return None
+            self.log(f"Unexpected error in trade signal calculation: {str(e)}", level="error")
+            return self._get_fallback_signal(symbol, "UNKNOWN_ERROR")
+
+    def _get_fallback_signal(self, symbol: str, error_type: str) -> Dict[str, Any]:
+        """Get a safe fallback signal when errors occur"""
+        return {
+            'symbol': symbol,
+            'score': 0,
+            'signals': {
+                'trend': 0,
+                'momentum': 0,
+                'volume': 0,
+                'risk': 0
+            },
+            'action': 'HOLD',
+            'timestamp': datetime.now(),
+            'error': error_type
+        }
 
     def _should_trade(self, symbol: str, action: str) -> bool:
         """Determine if we should trade based on the weighted signal system"""
@@ -1667,7 +1588,7 @@ class TradingBot:
         await self.async_log("Coinbase client initialized successfully")
         await self.sync_positions()
 
-    async def async_log(self, message: str, level: str = "info", context: Dict[str, Any] = None) -> None:
+    async def async_log(self, message: str, level: str = "info", context: Dict[str, Any] = None, error: Exception = None) -> None:
         try:
             if hasattr(self, 'logs_channel') and self.logs_channel:
                 embed = discord.Embed(
@@ -1677,13 +1598,23 @@ class TradingBot:
                           discord.Color.blue()
                 )
                 
-                # Enhanced error formatting
-                if level == "error":
-                    embed.title = "🔴 ERROR DETECTED"
-                    if context and 'error_trace' in context:
+                if level == "error" and error:
+                    embed.title = f"🔴 ERROR: {error.__class__.__name__}"
+                    # Add error details
+                    embed.add_field(
+                        name="Error Details",
+                        value=f"```python\n{str(error)}\n```",
+                        inline=False
+                    )
+                    # Add stack trace if available
+                    if hasattr(error, '__traceback__'):
+                        import traceback
+                        trace = ''.join(traceback.format_tb(error.__traceback__))
+                        if len(trace) > 1000:
+                            trace = trace[:997] + "..."
                         embed.add_field(
                             name="Stack Trace",
-                            value=f"```python\n{context['error_trace']}\n```",
+                            value=f"```python\n{trace}\n```",
                             inline=False
                         )
                 else:
