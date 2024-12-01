@@ -274,50 +274,27 @@ class TradingBot:
             raise
     
     def _get_historical_prices(self, symbol: str, start: datetime, end: datetime) -> pd.Series:
+        """Get historical prices with rate limiting protection"""
         try:
-            product_id = f"{symbol}-USD"
+            # Add rate limiting protection
+            if hasattr(self, '_last_api_call'):
+                time_since_last_call = time.time() - self._last_api_call
+                if time_since_last_call < 0.1:  # Max 10 calls per second
+                    time.sleep(0.1 - time_since_last_call)
             
-            # Get current time and calculate start time
-            end_time = datetime.now()
-            start_time = end_time - timedelta(days=90)  # Get 90 days for better trend analysis
+            candles = self.client.get_product_candles(
+                product_id=f"{symbol}-USD",
+                start=start.isoformat(),
+                end=end.isoformat(),
+                granularity=300
+            )
             
-            self.log(f"Fetching candles for {symbol} from {start_time} to {end_time}")
-            
-            try:
-                # Convert to Unix timestamps
-                start_unix = int(start_time.timestamp())
-                end_unix = int(end_time.timestamp())
-                
-                # Get daily candles
-                response = self.client.get_candles(
-                    product_id=product_id,
-                    start=start_unix,
-                    end=end_unix,
-                    granularity="ONE_DAY"  # Daily candles
-                )
-                
-                # Convert response to list and check if we have data
-                candles = response.candles if hasattr(response, 'candles') else []
-                if not candles:
-                    raise Exception(f"No candle data received for {symbol}")
-                
-                # Convert candles to pandas Series
-                prices = pd.Series(
-                    [float(candle.close) for candle in reversed(candles)],
-                    index=[datetime.fromtimestamp(float(candle.start)) for candle in reversed(candles)]
-                )
-                
-                self.log(f"Fetched {len(candles)} candles for {symbol}")
-                return prices
-                    
-            except Exception as e:
-                self.log(f"Error fetching candle batch: {str(e)}", level="error")
-                raise
-            
+            self._last_api_call = time.time()
+            return pd.Series([float(candle.close) for candle in candles])
         except Exception as e:
-            self.log(f"Error fetching historical prices for {symbol}: {str(e)}", level="error")
+            self.log(f"Error fetching historical prices: {str(e)}", level="error")
             raise
-            
+    
     def _place_buy_order(self, symbol: str) -> None:
         try:
             product_id = f"{symbol}-USD"
@@ -520,20 +497,20 @@ class TradingBot:
             logging.error(f"Error saving configuration: {str(e)}")
             
     def load_config(self):
+        """Load configuration from file or use defaults"""
         try:
-            with open('bot_config.json', 'r') as f:
+            with open('config.json', 'r') as f:
                 config = json.load(f)
-                self.watched_coins = set(config['watched_coins'])
-                self.trading_interval = config['trading_interval']
-                self.rsi_period = config['rsi_period']
-                self.rsi_overbought = config['rsi_overbought']
-                self.rsi_oversold = config['rsi_oversold']
-                self.trade_amount = config['trade_amount']
-            logging.info("Configuration loaded successfully")
+                self.rsi_period = config.get('rsi_period', 14)
+                self.rsi_overbought = config.get('rsi_overbought', 70.0)
+                self.rsi_oversold = config.get('rsi_oversold', 30.0)
+                self.trading_interval = config.get('trading_interval', 300)
+                self.trade_amount = config.get('trade_amount', 100.0)
+                self.stop_loss_percentage = config.get('stop_loss_percentage', 5.0)
+                self.take_profit_percentage = config.get('take_profit_percentage', 10.0)
+                self.max_position_size = config.get('max_position_size', 1000.0)
         except FileNotFoundError:
-            logging.info("No configuration file found, using defaults")
-        except Exception as e:
-            logging.error(f"Error loading configuration: {str(e)}")
+            self.log("No config file found, using defaults", level="warning")
 
     def test_api_connection(self):
         try:
@@ -745,13 +722,7 @@ class TradingBot:
             raise
 
     def _calculate_trade_signal(self, symbol: str) -> Dict[str, Any]:
-        """Calculate weighted trade signal (-100 to +100) for a symbol
-        -100 = Strong Sell
-        -50 to -99 = Sell
-        -49 to +49 = Hold
-        +50 to +99 = Buy
-        +100 = Strong Buy
-        """
+        """Enhanced trade signal calculation with comprehensive analysis"""
         try:
             # Get all analysis data
             current_price = float(self.client.get_product(f"{symbol}-USD").price)
@@ -761,79 +732,157 @@ class TradingBot:
             rsi = self.calculate_rsi(symbol)
             market_conditions = self._check_market_conditions(symbol)
 
-            # Initialize score components
+            # Get additional technical indicators
+            macd = self._calculate_macd(symbol)
+            stoch = self._calculate_stochastic(symbol)
+            bb_data = self._calculate_bollinger_bands(symbol)
+            support_resistance = self._find_support_resistance(symbol)
+            
+            # Initialize comprehensive scoring system
             signals = {
-                'trend': 0,      # -25 to +25
-                'momentum': 0,   # -20 to +20
-                'volume': 0,     # -15 to +15
-                'sentiment': 0,  # -20 to +20
-                'risk': 0,       # -20 to +20
+                'trend': 0,          # -30 to +30 (Primary trend)
+                'momentum': 0,       # -25 to +25 (Combined momentum indicators)
+                'volume': 0,         # -20 to +20 (Volume analysis)
+                'volatility': 0,     # -15 to +15 (Volatility measures)
+                'support_res': 0,    # -15 to +15 (Support/Resistance)
+                'sentiment': 0,      # -10 to +10 (Market sentiment)
+                'correlation': 0,    # -10 to +10 (BTC correlation)
+                'risk': 0,          # -10 to +10 (Risk assessment)
             }
 
-            # 1. Trend Analysis (25%)
-            if ma_data['trend'] == 'Strong Uptrend':
-                signals['trend'] = 25
-            elif ma_data['trend'] == 'Weak Uptrend':
-                signals['trend'] = 15
-            elif ma_data['trend'] == 'Strong Downtrend':
-                signals['trend'] = -25
-            elif ma_data['trend'] == 'Weak Downtrend':
-                signals['trend'] = -15
-
-            # 2. Momentum/RSI (20%)
-            if rsi <= 30:
-                signals['momentum'] = 20  # Oversold
-            elif rsi >= 70:
-                signals['momentum'] = -20  # Overbought
-            elif 40 <= rsi <= 60:
-                signals['momentum'] = 10  # Neutral with upward potential
-
-            # 3. Volume Analysis (15%)
-            volume_score = (volume_data['volume_ratio'] - 1) * 10
-            signals['volume'] = max(min(volume_score, 15), -15)
-            if not volume_data['confirms_trend']:
-                signals['volume'] *= -1
-
-            # 4. Market Sentiment (20%)
-            sentiment_score = sentiment['sentiment_score'] / 5  # Scale -100/+100 to -20/+20
-            signals['sentiment'] = max(min(sentiment_score, 20), -20)
-
-            # 5. Risk Assessment (20%)
-            risk_score = 0
-            if market_conditions['is_volatile']:
-                risk_score -= 15
-            if not market_conditions['is_high_activity']:
-                risk_score -= 5
-            if not market_conditions['market_aligned']:
-                risk_score -= 10
-            if market_conditions['suitable_for_trading']:
-                risk_score += 20
-            signals['risk'] = max(min(risk_score, 20), -20)
-
-            # Calculate final weighted score
-            total_score = sum(signals.values())
-
-            # Add position-specific adjustments
-            position = self.paper_positions.get(symbol) if self.paper_trading else self.positions.get(symbol)
-            if position:
-                profit_info = position.calculate_profit(current_price)
+            # 1. Trend Analysis (30%)
+            trend_score = 0
+            # Moving Average Analysis
+            if current_price > ma_data['sma_50'] > ma_data['sma_200']:
+                trend_score += 15  # Strong uptrend
+            elif current_price < ma_data['sma_50'] < ma_data['sma_200']:
+                trend_score -= 15  # Strong downtrend
+            
+            # MACD Analysis
+            if macd['histogram'] > 0 and macd['histogram'] > macd['prev_histogram']:
+                trend_score += 10
+            elif macd['histogram'] < 0 and macd['histogram'] < macd['prev_histogram']:
+                trend_score -= 10
+            
+            # Price Action
+            if current_price > ma_data['ema_20']:
+                trend_score += 5
+            else:
+                trend_score -= 5
                 
-                # Adjust for stop loss/take profit
-                if profit_info['profit_percentage'] <= -self.stop_loss_percentage:
-                    total_score = -100  # Force sell
-                elif profit_info['profit_percentage'] >= self.take_profit_percentage:
-                    total_score = -75  # Strong sell signal
+            signals['trend'] = max(min(trend_score, 30), -30)
 
+            # 2. Momentum Analysis (25%)
+            momentum_score = 0
+            # RSI
+            if rsi <= 30:
+                momentum_score += 10  # Oversold
+            elif rsi >= 70:
+                momentum_score -= 10  # Overbought
+            
+            # Stochastic
+            if stoch['k'] <= 20 and stoch['d'] <= 20:
+                momentum_score += 8
+            elif stoch['k'] >= 80 and stoch['d'] >= 80:
+                momentum_score -= 8
+            
+            # MACD Momentum
+            if macd['line'] > macd['signal']:
+                momentum_score += 7
+            else:
+                momentum_score -= 7
+                
+            signals['momentum'] = max(min(momentum_score, 25), -25)
+
+            # 3. Volume Analysis (20%)
+            volume_score = 0
+            # Basic volume ratio
+            volume_ratio = volume_data['volume_ratio']
+            if volume_ratio > 2.0:
+                volume_score += 10
+            elif volume_ratio > 1.5:
+                volume_score += 5
+            
+            # Volume trend confirmation
+            if volume_data['confirms_trend']:
+                volume_score += 10
+            else:
+                volume_score -= 5
+                
+            signals['volume'] = max(min(volume_score, 20), -20)
+
+            # 4. Volatility Analysis (15%)
+            volatility_score = 0
+            # Bollinger Bands
+            bb_width = bb_data['upper'] - bb_data['lower']
+            bb_position = (current_price - bb_data['lower']) / bb_width
+            
+            if bb_position < 0.2:  # Near lower band
+                volatility_score += 8
+            elif bb_position > 0.8:  # Near upper band
+                volatility_score -= 8
+            
+            # Historical volatility
+            if market_conditions['is_volatile']:
+                volatility_score -= 7
+                
+            signals['volatility'] = max(min(volatility_score, 15), -15)
+
+            # 5. Support/Resistance (15%)
+            sr_score = 0
+            nearest_support = support_resistance['nearest_support']
+            nearest_resistance = support_resistance['nearest_resistance']
+            
+            # Calculate distance to nearest levels
+            support_distance = (current_price - nearest_support) / current_price * 100
+            resistance_distance = (nearest_resistance - current_price) / current_price * 100
+            
+            if support_distance < 2:  # Close to support
+                sr_score += 10
+            elif resistance_distance < 2:  # Close to resistance
+                sr_score -= 10
+                
+            signals['support_res'] = max(min(sr_score, 15), -15)
+
+            # 6. Market Sentiment (10%)
+            sentiment_score = sentiment['sentiment_score'] / 10
+            signals['sentiment'] = max(min(sentiment_score, 10), -10)
+
+            # 7. BTC Correlation (10%)
+            if symbol != 'BTC':
+                btc_correlation = self._calculate_btc_correlation(symbol)
+                correlation_score = btc_correlation * 10
+                signals['correlation'] = max(min(correlation_score, 10), -10)
+
+            # 8. Risk Assessment (10%)
+            risk_score = 10  # Start positive
+            if market_conditions['is_volatile']:
+                risk_score -= 4
+            if not market_conditions['is_high_activity']:
+                risk_score -= 3
+            if not market_conditions['market_aligned']:
+                risk_score -= 3
+                
+            signals['risk'] = max(min(risk_score, 10), -10)
+
+            # Calculate final score with dynamic thresholds
+            total_score = sum(signals.values())
+            
+            # Adjust thresholds based on market conditions
+            buy_threshold = 35 if market_conditions['is_volatile'] else 30
+            sell_threshold = -35 if market_conditions['is_volatile'] else -30
+            
             return {
                 'symbol': symbol,
                 'score': total_score,
                 'signals': signals,
-                'action': 'STRONG_BUY' if total_score >= 100 else
-                         'BUY' if total_score >= 50 else
-                         'STRONG_SELL' if total_score <= -100 else
-                         'SELL' if total_score <= -50 else
+                'action': 'STRONG_BUY' if total_score >= 70 else
+                         'BUY' if total_score >= buy_threshold else
+                         'STRONG_SELL' if total_score <= -70 else
+                         'SELL' if total_score <= sell_threshold else
                          'HOLD',
-                'timestamp': datetime.now()
+                'timestamp': datetime.now(),
+                'market_conditions': market_conditions
             }
 
         except Exception as e:
@@ -1306,23 +1355,63 @@ class TradingBot:
             logging.error(f"Error sending notification: {str(e)}")
             self.discord_channel = None  # Reset channel if we can't send messages
 
-    async def send_trade_notification(self, action: str, symbol: str, price: float, quantity: float, 
-                                    is_paper: bool = False, profit_info: Dict[str, float] = None):
-        """Send a trade notification"""
+    async def send_trade_notification(self, action: str, symbol: str, price: float, 
+                                    quantity: float, is_paper: bool = False, 
+                                    profit_info: Dict[str, float] = None):
+        """Enhanced trade notification with market context"""
         try:
-            trade_type = "Paper" if is_paper else "Real"
-            message = f"{trade_type} Trade: {action} {symbol}\n"
-            message += f"Price: ${price:,.2f}\n"
-            message += f"Quantity: {quantity:.8f}\n"
-            message += f"Total: ${(price * quantity):,.2f}"
+            # Create rich embed
+            color = discord.Color.green() if action == 'BUY' else \
+                    discord.Color.red() if action == 'SELL' else \
+                    discord.Color.blue()
             
+            embed = discord.Embed(
+                title=f"{'📈' if action == 'BUY' else '📉'} {action} {symbol}",
+                timestamp=datetime.now(),
+                color=color
+            )
+            
+            # Add trade details
+            embed.add_field(
+                name="Trade Details",
+                value=f"```\n"
+                      f"Price: ${price:,.2f}\n"
+                      f"Quantity: {quantity:.8f}\n"
+                      f"Total: ${(price * quantity):,.2f}\n"
+                      f"Type: {'Paper' if is_paper else 'Real'}"
+                      f"```",
+                inline=False
+            )
+            
+            # Add profit info for sells
             if profit_info and action == 'SELL':
-                message += f"\nProfit: ${profit_info['profit_usd']:+,.2f} ({profit_info['profit_percentage']:+.2f}%)"
-                message += f"\nFees Paid: ${profit_info['fees_paid']:.2f}"
+                embed.add_field(
+                    name="Trade Result",
+                    value=f"```\n"
+                          f"Profit: ${profit_info['profit_usd']:+,.2f}\n"
+                          f"Return: {profit_info['profit_percentage']:+.2f}%\n"
+                          f"Fees: ${profit_info['fees_paid']:.2f}"
+                          f"```",
+                    inline=False
+                )
             
-            await self.send_notification(message)
+            # Add market context
+            signal = self._calculate_trade_signal(symbol)
+            embed.add_field(
+                name="Market Context",
+                value=f"```\n"
+                      f"Signal Score: {signal['score']:.2f}\n"
+                      f"Trend: {signal['signals']['trend']}\n"
+                      f"Volume: {signal['signals']['volume']}"
+                      f"```",
+                inline=False
+            )
+            
+            if self.discord_channel:
+                await self.discord_channel.send(embed=embed)
+                
         except Exception as e:
-            logging.error(f"Error sending trade notification: {str(e)}")
+            self.log(f"Error sending trade notification: {str(e)}", level="error")
 
     async def send_interval_update(self):
         """Enhanced periodic update with individual coin notifications"""
@@ -1560,3 +1649,161 @@ class TradingBot:
             logging.warning(message)
         else:
             logging.info(message)
+
+    def _calculate_macd(self, symbol: str) -> Dict[str, float]:
+        """Calculate MACD (Moving Average Convergence Divergence)"""
+        try:
+            # Get historical prices
+            end = datetime.now()
+            start = end - timedelta(days=60)  # Need more data for accurate MACD
+            prices = self._get_historical_prices(symbol, start, end)
+            
+            # Calculate EMAs
+            ema_12 = prices.ewm(span=12, adjust=False).mean()
+            ema_26 = prices.ewm(span=26, adjust=False).mean()
+            
+            # Calculate MACD line and signal line
+            macd_line = ema_12 - ema_26
+            signal_line = macd_line.ewm(span=9, adjust=False).mean()
+            
+            # Calculate histogram
+            histogram = macd_line - signal_line
+            
+            return {
+                'line': float(macd_line.iloc[-1]),
+                'signal': float(signal_line.iloc[-1]),
+                'histogram': float(histogram.iloc[-1]),
+                'prev_histogram': float(histogram.iloc[-2]),
+                'trend': 'bullish' if histogram.iloc[-1] > histogram.iloc[-2] else 'bearish'
+            }
+        except Exception as e:
+            self.log(f"Error calculating MACD for {symbol}: {str(e)}", level="error")
+            raise
+
+    def _calculate_stochastic(self, symbol: str) -> Dict[str, float]:
+        """Calculate Stochastic Oscillator"""
+        try:
+            # Get historical prices
+            end = datetime.now()
+            start = end - timedelta(days=30)
+            prices = self._get_historical_prices(symbol, start, end)
+            
+            # Calculate 14-period high and low
+            period = 14
+            low_14 = prices.rolling(window=period).min()
+            high_14 = prices.rolling(window=period).max()
+            
+            # Calculate %K
+            k_percent = 100 * ((prices - low_14) / (high_14 - low_14))
+            
+            # Calculate %D (3-period SMA of %K)
+            d_percent = k_percent.rolling(window=3).mean()
+            
+            return {
+                'k': float(k_percent.iloc[-1]),
+                'd': float(d_percent.iloc[-1]),
+                'trend': 'oversold' if k_percent.iloc[-1] < 20 else 
+                        'overbought' if k_percent.iloc[-1] > 80 else 
+                        'neutral'
+            }
+        except Exception as e:
+            self.log(f"Error calculating Stochastic for {symbol}: {str(e)}", level="error")
+            raise
+
+    def _calculate_bollinger_bands(self, symbol: str) -> Dict[str, float]:
+        """Calculate Bollinger Bands"""
+        try:
+            # Get historical prices
+            end = datetime.now()
+            start = end - timedelta(days=30)
+            prices = self._get_historical_prices(symbol, start, end)
+            
+            # Calculate 20-period SMA and standard deviation
+            period = 20
+            sma = prices.rolling(window=period).mean()
+            std = prices.rolling(window=period).std()
+            
+            # Calculate bands
+            upper_band = sma + (std * 2)
+            lower_band = sma - (std * 2)
+            
+            # Calculate bandwidth and %B
+            bandwidth = (upper_band - lower_band) / sma * 100
+            percent_b = (prices - lower_band) / (upper_band - lower_band)
+            
+            return {
+                'upper': float(upper_band.iloc[-1]),
+                'middle': float(sma.iloc[-1]),
+                'lower': float(lower_band.iloc[-1]),
+                'bandwidth': float(bandwidth.iloc[-1]),
+                'percent_b': float(percent_b.iloc[-1]),
+                'is_squeeze': bandwidth.iloc[-1] < bandwidth.rolling(window=20).mean().iloc[-1]
+            }
+        except Exception as e:
+            self.log(f"Error calculating Bollinger Bands for {symbol}: {str(e)}", level="error")
+            raise
+
+    def _find_support_resistance(self, symbol: str) -> Dict[str, float]:
+        """Find support and resistance levels using price action"""
+        try:
+            # Get historical prices
+            end = datetime.now()
+            start = end - timedelta(days=90)  # 90 days for reliable levels
+            prices = self._get_historical_prices(symbol, start, end)
+            
+            # Function to identify pivot points
+            def find_pivots(data: pd.Series, window: int = 5) -> tuple:
+                highs = []
+                lows = []
+                for i in range(window, len(data) - window):
+                    if all(data[i] > data[i-j] for j in range(1, window+1)) and \
+                       all(data[i] > data[i+j] for j in range(1, window+1)):
+                        highs.append(data[i])
+                    if all(data[i] < data[i-j] for j in range(1, window+1)) and \
+                       all(data[i] < data[i+j] for j in range(1, window+1)):
+                        lows.append(data[i])
+                return highs, lows
+
+            # Find pivot points
+            pivot_highs, pivot_lows = find_pivots(prices)
+            current_price = float(self.client.get_product(f"{symbol}-USD").price)
+            
+            # Find nearest support and resistance
+            supports = [p for p in pivot_lows if p < current_price]
+            resistances = [p for p in pivot_highs if p > current_price]
+            
+            nearest_support = max(supports) if supports else current_price * 0.85
+            nearest_resistance = min(resistances) if resistances else current_price * 1.15
+            
+            return {
+                'nearest_support': nearest_support,
+                'nearest_resistance': nearest_resistance,
+                'all_supports': sorted(supports, reverse=True)[:3],  # Top 3 support levels
+                'all_resistances': sorted(resistances)[:3],  # Top 3 resistance levels
+                'support_strength': len([p for p in pivot_lows if abs(p - nearest_support) / nearest_support < 0.02])
+            }
+        except Exception as e:
+            self.log(f"Error finding support/resistance for {symbol}: {str(e)}", level="error")
+            raise
+
+    def _calculate_btc_correlation(self, symbol: str) -> float:
+        """Calculate correlation with BTC"""
+        try:
+            # Get historical prices for both assets
+            end = datetime.now()
+            start = end - timedelta(days=30)
+            
+            symbol_prices = self._get_historical_prices(symbol, start, end)
+            btc_prices = self._get_historical_prices('BTC', start, end)
+            
+            # Calculate returns
+            symbol_returns = symbol_prices.pct_change().dropna()
+            btc_returns = btc_prices.pct_change().dropna()
+            
+            # Calculate correlation
+            correlation = symbol_returns.corr(btc_returns)
+            
+            return float(correlation)
+        except Exception as e:
+            self.log(f"Error calculating BTC correlation for {symbol}: {str(e)}", level="error")
+            return 0.0  # Default to no correlation on error
