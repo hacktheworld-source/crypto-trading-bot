@@ -772,83 +772,44 @@ class TradingBot:
     def _calculate_trade_signal(self, symbol: str) -> Dict[str, Any]:
         """Enhanced trade signal calculation with comprehensive error handling"""
         try:
-            # Get all analysis data with individual error handling
-            try:
-                current_price = float(self.client.get_product(f"{symbol}-USD").price)
-            except Exception as e:
-                raise APIError(f"Failed to get current price: {str(e)}")
+            # Get current price
+            current_price = float(self.client.get_product(f"{symbol}-USD").price)
+            
+            # Get technical analysis data
+            ma_data = self.calculate_moving_averages(symbol)
+            ma_data['symbol'] = symbol  # Add symbol to ma_data
+            ma_data['current_price'] = current_price  # Add current price to ma_data
+            
+            volume_data = self.analyze_volume(symbol)
+            sentiment = self.analyze_market_sentiment(symbol)
+            market_conditions = self._check_market_conditions(symbol)
 
-            try:
-                ma_data = self.calculate_moving_averages(symbol)
-            except Exception as e:
-                raise DataError(f"Failed to calculate MAs: {str(e)}")
+            # Log raw data for debugging
+            self.log(f"Raw signal data for {symbol}:", context={
+                'ma_data': ma_data,
+                'volume_data': volume_data, 
+                'sentiment': sentiment,
+                'market_conditions': market_conditions
+            })
 
-            try:
-                volume_data = self.analyze_volume(symbol)
-            except Exception as e:
-                raise DataError(f"Failed to analyze volume: {str(e)}")
-
-            try:
-                sentiment = self.analyze_market_sentiment(symbol)
-            except Exception as e:
-                raise DataError(f"Failed to analyze sentiment: {str(e)}")
-
-            try:
-                market_conditions = self._check_market_conditions(symbol)
-            except Exception as e:
-                raise DataError(f"Failed to check market conditions: {str(e)}")
-
-            # Initialize signals with validation
+            # Validate data
             if not all(k in ma_data for k in ['trend', 'sma_50', 'sma_200']):
                 raise DataError("Missing required MA data")
             if not all(k in volume_data for k in ['volume_ratio', 'confirms_trend']):
                 raise DataError("Missing required volume data")
-            if not all(k in sentiment for k in ['sentiment_score', 'overall_sentiment']):
+            if not all(k in sentiment for k in ['sentiment_score', 'overall_sentiment', 'momentum']):
                 raise DataError("Missing required sentiment data")
 
-            # Calculate signal with validation
+            # Calculate signal components
             signals = self._calculate_signal_components(
                 ma_data, volume_data, sentiment, market_conditions
             )
 
-            # Validate final signal
-            if not all(k in signals for k in ['trend', 'momentum', 'volume', 'risk']):
-                raise SignalError("Missing required signal components")
+            return signals
 
-            # Log comprehensive debug info
-            self.log(
-                f"Signal calculation details for {symbol}",
-                context={
-                    'raw_data': {
-                        'price': current_price,
-                        'ma_data': ma_data,
-                        'volume_data': volume_data,
-                        'sentiment': sentiment,
-                        'market_conditions': market_conditions
-                    },
-                    'signals': signals,
-                    'validation': {
-                        'data_complete': True,
-                        'signals_valid': True,
-                        'price_valid': current_price > 0
-                    }
-                }
-            )
-
-            return self._format_signal_response(symbol, signals, current_price)
-
-        except APIError as e:
-            self.log(f"API Error in trade signal calculation: {str(e)}", level="error")
-            return self._get_fallback_signal(symbol, "API_ERROR")
-        except DataError as e:
-            self.log(f"Data Error in trade signal calculation: {str(e)}", level="error")
-            return self._get_fallback_signal(symbol, "DATA_ERROR")
-        except SignalError as e:
-            self.log(f"Signal Error in trade signal calculation: {str(e)}", level="error")
-            return self._get_fallback_signal(symbol, "SIGNAL_ERROR")
         except Exception as e:
-            self.log(f"Unexpected error in trade signal calculation: {str(e)}", level="error")
-            return self._get_fallback_signal(symbol, "UNKNOWN_ERROR")
+            self.log(f"Error calculating trade signal for {symbol}: {str(e)}", level="error")
+            return self._get_fallback_signal(symbol, str(e))
 
     def _get_fallback_signal(self, symbol: str, error_type: str) -> Dict[str, Any]:
         """Get a safe fallback signal when errors occur"""
@@ -1117,9 +1078,9 @@ class TradingBot:
         try:
             # Get data for different timeframes
             end = datetime.now()
-            start_long = end - timedelta(days=90)   # 90 days for long-term
-            start_medium = end - timedelta(days=30)  # 30 days for medium-term
-            start_short = end - timedelta(days=7)    # 7 days for short-term
+            start_long = end - timedelta(days=90)   
+            start_medium = end - timedelta(days=30)  
+            start_short = end - timedelta(days=7)    
             
             # Get price data for different timeframes
             prices_long = self._get_historical_prices(symbol, start_long, end)
@@ -1131,64 +1092,34 @@ class TradingBot:
             price_change_medium = ((prices_medium.iloc[-1] - prices_medium.iloc[0]) / prices_medium.iloc[0]) * 100
             price_change_short = ((prices_short.iloc[-1] - prices_short.iloc[0]) / prices_short.iloc[0]) * 100
             
-            # Get technical indicators
-            ma_data = self.calculate_moving_averages(symbol)
-            volume_data = self.analyze_volume(symbol)
-            rsi = self.calculate_rsi(symbol)
-            
             # Determine momentum
             momentum_signals = {
                 'short_term': 'bullish' if price_change_short > 0 else 'bearish',
                 'medium_term': 'bullish' if price_change_medium > 0 else 'bearish',
                 'long_term': 'bullish' if price_change_long > 0 else 'bearish'
             }
-            
-            # Calculate strength of trend
-            trend_strength = sum([
-                1 if momentum_signals['short_term'] == 'bullish' else -1,
-                1 if momentum_signals['medium_term'] == 'bullish' else -1,
-                1 if momentum_signals['long_term'] == 'bullish' else -1
-            ])
-            
-            # Analyze volume trend
-            volume_trend = 'bullish' if volume_data['volume_ratio'] > 1.0 else 'bearish'
-            
-            # Combine all signals
-            bullish_signals = sum([
-                1 if ma_data['trend'] in ['Strong Uptrend', 'Weak Uptrend'] else 0,
-                1 if volume_trend == 'bullish' else 0,
-                1 if rsi < 50 else 0,  # RSI below 50 suggests room for growth
-                1 if trend_strength > 0 else 0
-            ])
-            
-            # Calculate overall sentiment score (-100 to 100)
-            sentiment_score = (bullish_signals / 4) * 100 - 50
-            
-            analysis = {
-                'sentiment_score': sentiment_score,
-                'overall_sentiment': 'Strong Buy' if sentiment_score > 75 else
-                                   'Buy' if sentiment_score > 25 else
-                                   'Neutral' if sentiment_score > -25 else
-                                   'Sell' if sentiment_score > -75 else
-                                   'Strong Sell',
+
+            # Log sentiment calculation
+            self.log(f"Calculated sentiment for {symbol}", context={
                 'price_changes': {
                     'short_term': price_change_short,
                     'medium_term': price_change_medium,
                     'long_term': price_change_long
                 },
+                'momentum': momentum_signals
+            })
+
+            return {
+                'sentiment_score': price_change_short,  # Use short-term change as sentiment score
+                'overall_sentiment': 'Bullish' if price_change_short > 0 else 'Bearish',
                 'momentum': momentum_signals,
-                'trend_strength': trend_strength,
-                'volume_trend': volume_trend,
-                'technical_indicators': {
-                    'ma_trend': ma_data['trend'],
-                    'rsi': rsi,
-                    'volume_ratio': volume_data['volume_ratio']
+                'price_changes': {
+                    'short_term': price_change_short,
+                    'medium_term': price_change_medium,
+                    'long_term': price_change_long
                 }
             }
-            
-            self.log(f"Market sentiment analysis for {symbol}: {analysis}")
-            return analysis
-            
+
         except Exception as e:
             self.log(f"Error analyzing market sentiment for {symbol}: {str(e)}", level="error")
             raise
@@ -1910,7 +1841,7 @@ class TradingBot:
             total_score = sum(signals.values())
             
             # Log the calculation results
-            self.logger.info(f"Signal components calculated: {signals}")
+            self.log(f"Signal components calculated: {signals}")
             
             # Define thresholds
             buy_threshold = 35
@@ -1930,7 +1861,7 @@ class TradingBot:
             }
             
         except Exception as e:
-            self.logger.error(f"Error calculating signal components: {str(e)}")
+            self.log(f"Error calculating signal components: {str(e)}", level="error")
             raise
 
     def _format_signal_response(self, symbol: str, signals: Dict[str, float], current_price: float) -> Dict[str, Any]:
