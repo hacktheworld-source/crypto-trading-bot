@@ -164,33 +164,46 @@ class TradingBot:
                             message += "\n"
                             
                             # Execute trades if conditions are met
-                            if self.paper_trading and action != "HOLD":
-                                if action == "BUY" and self._should_trade(symbol, 'BUY'):
-                                    await self._simulate_buy_order(symbol)
-                                elif action == "SELL" and has_paper_position and self._should_trade(symbol, 'SELL'):
-                                    await self._simulate_sell_order(symbol)
+                            if action != "HOLD":
+                                # Handle paper trades
+                                if self.paper_trading:
+                                    if action == "BUY" and self._should_trade(symbol, 'BUY'):
+                                        await self._simulate_buy_order(symbol)
+                                        await self.async_log(f"Executed paper BUY for {symbol}")
+                                    elif action == "SELL" and has_paper_position and self._should_trade(symbol, 'SELL'):
+                                        await self._simulate_sell_order(symbol)
+                                        await self.async_log(f"Executed paper SELL for {symbol}")
+                                
+                                # Handle real trades
+                                if self.trading_active:
+                                    if action == "BUY" and self._should_trade(symbol, 'BUY'):
+                                        self._place_buy_order(symbol)
+                                        await self.async_log(f"Executed real BUY for {symbol}")
+                                    elif action == "SELL" and has_real_position and self._should_trade(symbol, 'SELL'):
+                                        self._place_sell_order(symbol)
+                                        await self.async_log(f"Executed real SELL for {symbol}")
                         
                         except Exception as e:
                             error_msg = f"Error analyzing {symbol}: {str(e)}"
-                            logging.error(error_msg)
+                            await self.async_log(error_msg, level="error")
                             message += f"❌ {error_msg}\n\n"
                     
                     # Send the update
-                    logging.info("Attempting to send interval update notification")
+                    await self.async_log("Sending interval update notification")
                     try:
                         await self.send_notification(message, is_update=True)
-                        logging.info("Successfully sent interval update")
+                        await self.async_log("Successfully sent interval update")
                     except Exception as e:
-                        logging.error(f"Failed to send notification: {str(e)}")
+                        await self.async_log(f"Failed to send notification: {str(e)}", level="error")
                 else:
-                    logging.warning("No coins in watchlist")
+                    await self.async_log("No coins in watchlist", level="warning")
                 
                 # Wait for next interval
-                logging.info(f"Waiting {self.trading_interval} seconds until next update")
+                await self.async_log(f"Waiting {self.trading_interval} seconds until next update")
                 await asyncio.sleep(self.trading_interval)
                 
             except Exception as e:
-                logging.error(f"Critical error in trading loop: {str(e)}")
+                await self.async_log(f"Critical error in trading loop: {str(e)}", level="error")
                 # Wait a minute before retrying if there's an error
                 await asyncio.sleep(60)
     
