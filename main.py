@@ -236,6 +236,18 @@ async def paper_trading(ctx, action: str, *args):
     
     await ctx.send(response)
 
+@bot.command(name='balance')
+async def get_balance(ctx):
+    """Show real trading account balance"""
+    response = command_handler.get_balance()
+    await ctx.send(response)
+
+@bot.command(name='trades')
+async def get_trades(ctx):
+    """Show real trading history"""
+    response = command_handler.get_trades()
+    await ctx.send(response)
+
 # Run the bot
 keep_alive()
 bot.run(os.getenv('DISCORD_TOKEN')) 

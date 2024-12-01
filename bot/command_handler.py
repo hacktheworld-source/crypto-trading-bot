@@ -493,3 +493,35 @@ class CommandHandler:
             response += "\n"
         response += "```"
         return response
+        
+    def get_balance(self):
+        """Get real trading account status"""
+        balance = self.trading_bot.get_account_balance()
+        
+        response = "Real Trading Account:\n```"
+        
+        # Show individual balances
+        for symbol, data in balance['balances'].items():
+            response += f"\n{symbol}:"
+            response += f"\n  Balance: {data['balance']:.8f}"
+            response += f"\n  Value: ${data['usd_value']:.2f}"
+        
+        response += f"\n\nTotal Portfolio Value: ${balance['total_usd_value']:.2f}"
+        response += "```"
+        return response
+        
+    def get_trades(self):
+        """Show real trading history"""
+        trades = self.trading_bot.trade_history
+        if not trades:
+            return "No real trades yet"
+        
+        response = "Real Trading History:\n```"
+        # Show last 10 trades
+        for trade in trades[-10:]:
+            response += f"\n{trade['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}"
+            response += f"\n{trade['action']} {trade['symbol']}"
+            response += f"\nAmount: ${trade['amount_usd']:,.2f}"
+            response += "\n"
+        response += "```"
+        return response
