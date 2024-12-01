@@ -1358,3 +1358,12 @@ class TradingBot:
         """Set the Discord channel for logs"""
         self.logs_channel = channel
         logging.info(f"Discord logs channel set")
+
+    def log(self, message: str, level: str = "info") -> None:
+        """Synchronous logging to file"""
+        if level == "error":
+            logging.error(message)
+        elif level == "warning":
+            logging.warning(message)
+        else:
+            logging.info(message)
