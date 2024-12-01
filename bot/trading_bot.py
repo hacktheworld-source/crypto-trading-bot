@@ -282,15 +282,33 @@ class TradingBot:
                 if time_since_last_call < 0.1:  # Max 10 calls per second
                     time.sleep(0.1 - time_since_last_call)
             
-            candles = self.client.get_product_candles(
+            # Convert to Unix timestamps
+            start_unix = int(start.timestamp())
+            end_unix = int(end.timestamp())
+            
+            # Get candles using correct method name
+            response = self.client.get_candles(
                 product_id=f"{symbol}-USD",
-                start=start.isoformat(),
-                end=end.isoformat(),
-                granularity=300
+                start=start_unix,
+                end=end_unix,
+                granularity="ONE_DAY"  # Daily candles
+            )
+            
+            # Convert response to list and check if we have data
+            candles = response.candles if hasattr(response, 'candles') else []
+            if not candles:
+                raise Exception(f"No candle data received for {symbol}")
+            
+            # Convert candles to pandas Series
+            prices = pd.Series(
+                [float(candle.close) for candle in reversed(candles)],
+                index=[datetime.fromtimestamp(float(candle.start)) for candle in reversed(candles)]
             )
             
             self._last_api_call = time.time()
-            return pd.Series([float(candle.close) for candle in candles])
+            self.log(f"Fetched {len(candles)} candles for {symbol}")
+            return prices
+            
         except Exception as e:
             self.log(f"Error fetching historical prices: {str(e)}", level="error")
             raise
