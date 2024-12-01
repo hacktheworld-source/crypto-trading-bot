@@ -21,7 +21,7 @@ logging.basicConfig(
 class TradingBot:
     def __init__(self):
         try:
-            logging.info("Starting bot initialization...")
+            self.log("Starting bot initialization...")
             
             if 'COINBASE_API_KEY' not in os.environ:
                 raise Exception("COINBASE_API_KEY not found in environment variables")
@@ -32,7 +32,7 @@ class TradingBot:
                 api_key=os.environ['COINBASE_API_KEY'].strip(),
                 api_secret=os.environ['COINBASE_API_SECRET'].strip()
             )
-            logging.info("Coinbase client initialized successfully")
+            self.log("Coinbase client initialized successfully")
             
             self.watched_coins: set = set()
             self.trading_interval: int = 300
@@ -56,10 +56,11 @@ class TradingBot:
             self.paper_trade_history: List[Dict[str, Any]] = []
             self.paper_portfolio_value = self.paper_balance
             
-            self.discord_channel = None  # Will be set when bot starts
+            self.discord_channel = None  # For notifications
+            self.logs_channel = None     # For logs
             
         except Exception as e:
-            logging.error(f"Failed to initialize trading bot: {str(e)}")
+            self.log(f"Failed to initialize trading bot: {str(e)}", level="error")
             raise Exception(f"Bot initialization failed: {str(e)}")
         
     def start_trading_loop(self, paper: bool = True):
@@ -80,11 +81,11 @@ class TradingBot:
             loop = asyncio.get_event_loop()
             loop.create_task(self._trading_loop())
             
-            logging.info(f"{mode} trading loop started")
+            self.log(f"{mode} trading loop started")
             return f"{mode} trading bot started successfully"
             
         except Exception as e:
-            logging.error(f"Failed to start trading loop: {str(e)}")
+            self.log(f"Failed to start trading loop: {str(e)}", level="error")
             self.trading_active = False
             self.paper_trading = False
             return f"Error starting trading bot: {str(e)}"
@@ -94,26 +95,26 @@ class TradingBot:
         was_active = self.trading_active
         self.trading_active = False
         self.paper_trading = False  # Stop paper trading too
-        logging.info("Trading loop stopped")
+        self.log("Trading loop stopped")
         return "Trading bot stopped successfully" if was_active else "Trading bot is already stopped"
         
     async def _trading_loop(self):
         """Trading loop that runs for both real and paper trading"""
-        logging.info("Trading loop started")
+        self.log("Trading loop started")
         
         while self.trading_active or self.paper_trading:
             try:
                 self._ensure_positions_watched()
-                logging.info(f"Trading loop iteration - Active: {self.trading_active}, Paper: {self.paper_trading}")
+                self.log(f"Trading loop iteration - Active: {self.trading_active}, Paper: {self.paper_trading}")
                 
                 # Send interval update for all watched coins
                 if self.watched_coins:
-                    logging.info(f"Processing {len(self.watched_coins)} watched coins")
+                    self.log(f"Processing {len(self.watched_coins)} watched coins")
                     message = "🔄 Trading Analysis Update\n\n"
                     
                     for symbol in self.watched_coins:
                         try:
-                            logging.info(f"Analyzing {symbol}")
+                            self.log(f"Analyzing {symbol}")
                             # Get all analysis
                             current_price = float(self.client.get_product(f"{symbol}-USD").price)
                             rsi = self.calculate_rsi(symbol)
@@ -172,25 +173,25 @@ class TradingBot:
                         
                         except Exception as e:
                             error_msg = f"Error analyzing {symbol}: {str(e)}"
-                            logging.error(error_msg)
+                            self.log(error_msg, level="error")
                             message += f"❌ {error_msg}\n\n"
                     
                     # Send the update
-                    logging.info("Attempting to send interval update notification")
+                    self.log("Attempting to send interval update notification")
                     try:
                         await self.send_notification(message, is_update=True)
-                        logging.info("Successfully sent interval update")
+                        self.log("Successfully sent interval update")
                     except Exception as e:
-                        logging.error(f"Failed to send notification: {str(e)}")
+                        self.log(f"Failed to send notification: {str(e)}", level="error")
                 else:
-                    logging.warning("No coins in watchlist")
+                    self.log("No coins in watchlist", level="warning")
                 
                 # Wait for next interval
-                logging.info(f"Waiting {self.trading_interval} seconds until next update")
+                self.log(f"Waiting {self.trading_interval} seconds until next update")
                 await asyncio.sleep(self.trading_interval)
                 
             except Exception as e:
-                logging.error(f"Critical error in trading loop: {str(e)}")
+                self.log(f"Critical error in trading loop: {str(e)}", level="error")
                 # Wait a minute before retrying if there's an error
                 await asyncio.sleep(60)
     
@@ -204,7 +205,7 @@ class TradingBot:
                 self._place_sell_order(symbol)
             
         except Exception as e:
-            logging.error(f"Error checking and trading {symbol}: {str(e)}")
+            self.log(f"Error checking and trading {symbol}: {str(e)}", level="error")
             raise
     
     def calculate_rsi(self, symbol: str) -> float:
@@ -213,7 +214,7 @@ class TradingBot:
             start = end - timedelta(days=30)
             prices = self._get_historical_prices(symbol, start, end)
             
-            logging.info(f"Calculating RSI for {symbol} with {len(prices)} data points")
+            self.log(f"Calculating RSI for {symbol} with {len(prices)} data points")
             
             if len(prices) < self.rsi_period * 2:  # Need at least 2x RSI period for accuracy
                 raise Exception(f"Not enough data points for accurate RSI calculation")
@@ -222,8 +223,8 @@ class TradingBot:
             delta = prices.diff()
             
             # Log some key statistics for verification
-            logging.info(f"Price range: ${prices.min():.2f} - ${prices.max():.2f}")
-            logging.info(f"Average daily change: ${delta.abs().mean():.2f}")
+            self.log(f"Price range: ${prices.min():.2f} - ${prices.max():.2f}")
+            self.log(f"Average daily change: ${delta.abs().mean():.2f}")
             
             # Separate gains and losses
             gains = delta.where(delta > 0, 0)
@@ -241,15 +242,15 @@ class TradingBot:
             current_rsi = float(rsi.iloc[-1])
             
             # Log intermediate values for debugging
-            logging.info(f"Latest price: {prices.iloc[-1]:.2f}")
-            logging.info(f"Latest gain EMA: {avg_gain.iloc[-1]:.4f}")
-            logging.info(f"Latest loss EMA: {avg_loss.iloc[-1]:.4f}")
-            logging.info(f"Calculated RSI: {current_rsi:.2f}")
+            self.log(f"Latest price: {prices.iloc[-1]:.2f}")
+            self.log(f"Latest gain EMA: {avg_gain.iloc[-1]:.4f}")
+            self.log(f"Latest loss EMA: {avg_loss.iloc[-1]:.4f}")
+            self.log(f"Calculated RSI: {current_rsi:.2f}")
             
             return current_rsi
             
         except Exception as e:
-            logging.error(f"Error calculating RSI for {symbol}: {str(e)}")
+            self.log(f"Error calculating RSI for {symbol}: {str(e)}", level="error")
             raise
     
     def _get_historical_prices(self, symbol: str, start: datetime, end: datetime) -> pd.Series:
@@ -260,7 +261,7 @@ class TradingBot:
             end_time = datetime.now()
             start_time = end_time - timedelta(days=90)  # Get 90 days for better trend analysis
             
-            logging.info(f"Fetching candles for {symbol} from {start_time} to {end_time}")
+            self.log(f"Fetching candles for {symbol} from {start_time} to {end_time}")
             
             try:
                 # Convert to Unix timestamps
@@ -286,15 +287,15 @@ class TradingBot:
                     index=[datetime.fromtimestamp(float(candle.start)) for candle in reversed(candles)]
                 )
                 
-                logging.info(f"Fetched {len(candles)} candles for {symbol}")
+                self.log(f"Fetched {len(candles)} candles for {symbol}")
                 return prices
                     
             except Exception as e:
-                logging.error(f"Error fetching candle batch: {str(e)}")
+                self.log(f"Error fetching candle batch: {str(e)}", level="error")
                 raise
             
         except Exception as e:
-            logging.error(f"Error fetching historical prices for {symbol}: {str(e)}")
+            self.log(f"Error fetching historical prices for {symbol}: {str(e)}", level="error")
             raise
             
     def _place_buy_order(self, symbol: str) -> None:
@@ -328,10 +329,10 @@ class TradingBot:
                 'symbol': symbol,
                 'amount_usd': self.trade_amount
             })
-            logging.info(f"Buy order placed for {symbol}: ${self.trade_amount}")
+            self.log(f"Buy order placed for {symbol}: ${self.trade_amount}")
             
         except Exception as e:
-            logging.error(f"Error placing buy order for {symbol}: {str(e)}")
+            self.log(f"Error placing buy order for {symbol}: {str(e)}", level="error")
             raise
             
     def _place_sell_order(self, symbol: str) -> None:
@@ -339,7 +340,7 @@ class TradingBot:
             # Get current position
             position = self.positions.get(symbol)
             if not position:
-                logging.warning(f"No position found for {symbol}, cannot sell")
+                self.log(f"No position found for {symbol}, cannot sell", level="warning")
                 return
                 
             product_id = f"{symbol}-USD"
@@ -382,10 +383,10 @@ class TradingBot:
                 'symbol': symbol,
                 'amount_usd': self.trade_amount
             })
-            logging.info(f"Sell order placed for {symbol}: ${self.trade_amount}")
+            self.log(f"Sell order placed for {symbol}: ${self.trade_amount}")
             
         except Exception as e:
-            logging.error(f"Error placing sell order for {symbol}: {str(e)}")
+            self.log(f"Error placing sell order for {symbol}: {str(e)}", level="error")
             raise
             
     def set_trade_amount(self, amount):
@@ -394,7 +395,7 @@ class TradingBot:
             if amount <= 0:
                 return False
             self.trade_amount = amount
-            logging.info(f"Trade amount set to ${amount}")
+            self.log(f"Trade amount set to ${amount}")
             return True
         except ValueError:
             return False
@@ -406,7 +407,7 @@ class TradingBot:
             if 0 <= oversold <= overbought <= 100:
                 self.rsi_oversold = oversold
                 self.rsi_overbought = overbought
-                logging.info(f"RSI thresholds updated: oversold={oversold}, overbought={overbought}")
+                self.log(f"RSI thresholds updated: oversold={oversold}, overbought={overbought}")
                 return True
             return False
         except ValueError:
@@ -418,7 +419,7 @@ class TradingBot:
             if minutes < 1:
                 return False
             self.trading_interval = minutes * 60
-            logging.info(f"Trading interval set to {minutes} minutes")
+            self.log(f"Trading interval set to {minutes} minutes")
             return True
         except ValueError:
             return False
@@ -432,21 +433,21 @@ class TradingBot:
             # Validate the symbol
             self.client.get_product(f"{symbol}-USD")
             self.watched_coins.add(symbol)
-            logging.info(f"Added {symbol} to watchlist")
+            self.log(f"Added {symbol} to watchlist")
             return True
         except Exception as e:
-            logging.error(f"Failed to add {symbol}: {str(e)}")
+            self.log(f"Failed to add {symbol}: {str(e)}", level="error")
             return False
 
     def remove_coin(self, symbol: str) -> bool:
         """Remove a coin from watchlist if not in any positions"""
         if symbol in self.positions or symbol in self.paper_positions:
-            logging.warning(f"Cannot remove {symbol} - active position exists")
+            self.log(f"Cannot remove {symbol} - active position exists", level="warning")
             return False
         
         if symbol in self.watched_coins:
             self.watched_coins.remove(symbol)
-            logging.info(f"Removed {symbol} from watchlist")
+            self.log(f"Removed {symbol} from watchlist")
             return True
         return False
 
@@ -479,7 +480,7 @@ class TradingBot:
                 return float(crypto_account.available_balance.value) * current_price >= self.trade_amount
                 
         except Exception as e:
-            logging.error(f"Error checking balance: {str(e)}")
+            self.log(f"Error checking balance: {str(e)}", level="error")
             return False 
 
     def save_config(self):
@@ -494,9 +495,9 @@ class TradingBot:
         try:
             with open('bot_config.json', 'w') as f:
                 json.dump(config, f)
-            logging.info("Configuration saved successfully")
+            self.log("Configuration saved successfully")
         except Exception as e:
-            logging.error(f"Error saving configuration: {str(e)}")
+            self.log(f"Error saving configuration: {str(e)}", level="error")
             
     def load_config(self):
         try:
@@ -508,22 +509,22 @@ class TradingBot:
                 self.rsi_overbought = config['rsi_overbought']
                 self.rsi_oversold = config['rsi_oversold']
                 self.trade_amount = config['trade_amount']
-            logging.info("Configuration loaded successfully")
+            self.log("Configuration loaded successfully")
         except FileNotFoundError:
-            logging.info("No configuration file found, using defaults")
+            self.log("No configuration file found, using defaults")
         except Exception as e:
-            logging.error(f"Error loading configuration: {str(e)}")
+            self.log(f"Error loading configuration: {str(e)}", level="error")
 
     def test_api_connection(self):
         try:
             # Test authentication by getting BTC price
             btc_product = self.client.get_product('BTC-USD')
             price = float(btc_product.price)
-            logging.info(f"Successfully fetched BTC price: ${price}")
+            self.log(f"Successfully fetched BTC price: ${price}")
             return price
             
         except Exception as e:
-            logging.error(f"API test failed: {str(e)}")
+            self.log(f"API test failed: {str(e)}", level="error")
             raise Exception(f"API test failed: {str(e)}")
 
     def get_account_balance(self) -> Dict[str, Union[Dict[str, float], float]]:
@@ -534,13 +535,13 @@ class TradingBot:
             total_usd_value = 0.0
 
             # Debug logging
-            logging.info("Raw accounts response received")
+            self.log("Raw accounts response received")
             
             # Access accounts through the accounts attribute
             if hasattr(accounts_response, 'accounts'):
                 for account in accounts_response.accounts:
                     # Debug log each account
-                    logging.info(f"Processing account: {account.__dict__}")
+                    self.log(f"Processing account: {account.__dict__}")
                     
                     # Check for balance in both available_balance and hold
                     balance_value = 0.0
@@ -559,15 +560,15 @@ class TradingBot:
                         
                         if symbol == 'USD':
                             usd_value = balance
-                            logging.info(f"Found USD balance: ${usd_value}")
+                            self.log(f"Found USD balance: ${usd_value}")
                         else:
                             try:
                                 product = self.client.get_product(f"{symbol}-USD")
                                 price = float(product.price)
                                 usd_value = balance * price
-                                logging.info(f"Calculated {symbol} value: ${usd_value}")
+                                self.log(f"Calculated {symbol} value: ${usd_value}")
                             except Exception as e:
-                                logging.warning(f"Could not get price for {symbol}: {str(e)}")
+                                self.log(f"Could not get price for {symbol}: {str(e)}", level="warning")
                                 continue
                         
                         if usd_value > 0:
@@ -576,15 +577,15 @@ class TradingBot:
                                 'usd_value': usd_value
                             }
                             total_usd_value += usd_value
-                            logging.info(f"Added {symbol} balance: {balance} (${usd_value:.2f})")
+                            self.log(f"Added {symbol} balance: {balance} (${usd_value:.2f})")
 
-            logging.info(f"Total portfolio value: ${total_usd_value:.2f}")
+            self.log(f"Total portfolio value: ${total_usd_value:.2f}")
             return {
                 'balances': balances,
                 'total_usd_value': total_usd_value
             }
         except Exception as e:
-            logging.error(f"Error getting account balance: {str(e)}")
+            self.log(f"Error getting account balance: {str(e)}", level="error")
             return {'balances': {}, 'total_usd_value': 0.0}
 
     def get_current_price(self, symbol: str) -> float:
@@ -592,10 +593,10 @@ class TradingBot:
             product_id = f"{symbol}-USD"
             product = self.client.get_product(product_id)
             price = float(product.price)
-            logging.info(f"Current price for {symbol}: ${price}")
+            self.log(f"Current price for {symbol}: ${price}")
             return price
         except Exception as e:
-            logging.error(f"Error getting price for {symbol}: {str(e)}")
+            self.log(f"Error getting price for {symbol}: {str(e)}", level="error")
             raise
 
     def analyze_volume(self, symbol: str) -> Dict[str, Any]:
@@ -639,11 +640,11 @@ class TradingBot:
                 'confirms_trend': volume_ratio > 1.0 and abs(price_change) > 1.0
             }
             
-            logging.info(f"Volume analysis for {symbol}: {analysis}")
+            self.log(f"Volume analysis for {symbol}: {analysis}")
             return analysis
             
         except Exception as e:
-            logging.error(f"Error analyzing volume for {symbol}: {str(e)}")
+            self.log(f"Error analyzing volume for {symbol}: {str(e)}", level="error")
             raise
 
     def _calculate_position_size(self, symbol: str) -> float:
@@ -670,7 +671,7 @@ class TradingBot:
             return max(5.0, position_size) if position_size >= 5.0 else 0
             
         except Exception as e:
-            logging.error(f"Error calculating position size: {str(e)}")
+            self.log(f"Error calculating position size: {str(e)}", level="error")
             return 0
 
     def _check_market_conditions(self, symbol: str) -> Dict[str, Any]:
@@ -716,11 +717,11 @@ class TradingBot:
                 )
             }
             
-            logging.info(f"Market conditions for {symbol}: {conditions}")
+            self.log(f"Market conditions for {symbol}: {conditions}")
             return conditions
             
         except Exception as e:
-            logging.error(f"Error checking market conditions: {str(e)}")
+            self.log(f"Error checking market conditions: {str(e)}", level="error")
             raise
 
     def _should_trade(self, symbol: str, action: str) -> bool:
@@ -766,7 +767,7 @@ class TradingBot:
                 return not near_support and volume_confirming
                 
         except Exception as e:
-            logging.error(f"Error in trade decision: {str(e)}")
+            self.log(f"Error in trade decision: {str(e)}", level="error")
             return False
 
     def get_position_info(self, symbol: Optional[str] = None) -> Dict[str, Any]:
@@ -822,13 +823,13 @@ class TradingBot:
                             }
                     
                     except Exception as e:
-                        logging.warning(f"Could not process position for {symbol}: {str(e)}")
+                        self.log(f"Could not process position for {symbol}: {str(e)}", level="warning")
                         continue
                     
             return positions_info
                 
         except Exception as e:
-            logging.error(f"Error getting position info: {str(e)}")
+            self.log(f"Error getting position info: {str(e)}", level="error")
             return {}
 
     def calculate_moving_averages(self, symbol: str) -> Dict[str, Any]:
@@ -890,11 +891,11 @@ class TradingBot:
                 'trend': trend
             }
             
-            logging.info(f"MA analysis for {symbol}: {analysis}")
+            self.log(f"MA analysis for {symbol}: {analysis}")
             return analysis
             
         except Exception as e:
-            logging.error(f"Error calculating MAs for {symbol}: {str(e)}")
+            self.log(f"Error calculating MAs for {symbol}: {str(e)}", level="error")
             raise
 
     def get_performance_stats(self) -> Dict[str, Any]:
@@ -932,7 +933,7 @@ class TradingBot:
             return stats
             
         except Exception as e:
-            logging.error(f"Error calculating performance stats: {str(e)}")
+            self.log(f"Error calculating performance stats: {str(e)}", level="error")
             return {}
 
     def set_risk_parameters(self, stop_loss: float, take_profit: float, max_position: float) -> bool:
@@ -942,7 +943,7 @@ class TradingBot:
                 self.stop_loss_percentage = stop_loss
                 self.take_profit_percentage = take_profit
                 self.max_position_size = max_position
-                logging.info(f"Risk parameters updated: SL={stop_loss}%, TP={take_profit}%, Max=${max_position}")
+                self.log(f"Risk parameters updated: SL={stop_loss}%, TP={take_profit}%, Max=${max_position}")
                 return True
             return False
         except ValueError:
@@ -970,7 +971,7 @@ class TradingBot:
             
             # Check stops
             if current_price <= adjusted_stop:
-                logging.info(f"Stop loss triggered for {symbol} at {profit_info['profit_percentage']}%")
+                self.log(f"Stop loss triggered for {symbol} at {profit_info['profit_percentage']}%")
                 self._place_sell_order(symbol)
             
             # Take partial profits at targets
@@ -978,11 +979,11 @@ class TradingBot:
                 # Sell half the position
                 original_quantity = position.quantity
                 self.trade_amount = (original_quantity * current_price) / 2
-                logging.info(f"Taking partial profits for {symbol} at {profit_info['profit_percentage']}%")
+                self.log(f"Taking partial profits for {symbol} at {profit_info['profit_percentage']}%")
                 self._place_sell_order(symbol)
             
         except Exception as e:
-            logging.error(f"Error in risk management: {str(e)}")
+            self.log(f"Error in risk management: {str(e)}", level="error")
 
     def analyze_market_sentiment(self, symbol: str) -> Dict[str, Any]:
         """Analyze overall market sentiment using multiple indicators"""
@@ -1058,11 +1059,11 @@ class TradingBot:
                 }
             }
             
-            logging.info(f"Market sentiment analysis for {symbol}: {analysis}")
+            self.log(f"Market sentiment analysis for {symbol}: {analysis}")
             return analysis
             
         except Exception as e:
-            logging.error(f"Error analyzing market sentiment for {symbol}: {str(e)}")
+            self.log(f"Error analyzing market sentiment for {symbol}: {str(e)}", level="error")
             raise
 
     def _simulate_buy_order(self, symbol: str) -> None:
@@ -1077,7 +1078,7 @@ class TradingBot:
             
             # Check if we have enough paper balance
             if self.paper_balance < self.trade_amount:
-                logging.warning(f"Insufficient paper balance for {symbol} buy")
+                self.log(f"Insufficient paper balance for {symbol} buy", level="warning")
                 return
             
             quantity = actual_trade_amount / current_price
@@ -1106,10 +1107,10 @@ class TradingBot:
                 'is_paper': True
             })
             
-            logging.info(f"Paper buy order placed for {symbol}: ${self.trade_amount}")
+            self.log(f"Paper buy order placed for {symbol}: ${self.trade_amount}")
             
         except Exception as e:
-            logging.error(f"Error simulating buy order for {symbol}: {str(e)}")
+            self.log(f"Error simulating buy order for {symbol}: {str(e)}", level="error")
             raise
 
     def _simulate_sell_order(self, symbol: str) -> None:
@@ -1117,7 +1118,7 @@ class TradingBot:
         try:
             position = self.paper_positions.get(symbol)
             if not position:
-                logging.warning(f"No paper position found for {symbol}, cannot sell")
+                self.log(f"No paper position found for {symbol}, cannot sell", level="warning")
                 return
             
             product_id = f"{symbol}-USD"
@@ -1151,10 +1152,10 @@ class TradingBot:
             # Remove position
             del self.paper_positions[symbol]
             
-            logging.info(f"Paper sell order placed for {symbol}: ${total_value:.2f} (Profit: ${profit_info['profit_usd']:.2f})")
+            self.log(f"Paper sell order placed for {symbol}: ${total_value:.2f} (Profit: ${profit_info['profit_usd']:.2f})")
             
         except Exception as e:
-            logging.error(f"Error simulating sell order for {symbol}: {str(e)}")
+            self.log(f"Error simulating sell order for {symbol}: {str(e)}", level="error")
             raise
 
     def get_paper_balance(self) -> Dict[str, float]:
@@ -1169,14 +1170,14 @@ class TradingBot:
                     position_value = position.quantity * current_price
                     total_value += position_value
                 except Exception as e:
-                    logging.error(f"Error calculating paper position value for {symbol}: {str(e)}")
+                    self.log(f"Error calculating paper position value for {symbol}: {str(e)}", level="error")
                 
             return {
                 'cash_balance': self.paper_balance,
                 'total_value': total_value
             }
         except Exception as e:
-            logging.error(f"Error getting paper balance: {str(e)}")
+            self.log(f"Error getting paper balance: {str(e)}", level="error")
             return {'cash_balance': 0.0, 'total_value': 0.0}
 
     def reset_paper_trading(self, initial_balance: float = 1000.0) -> None:
@@ -1184,18 +1185,17 @@ class TradingBot:
         self.paper_balance = initial_balance
         self.paper_positions.clear()
         self.paper_trade_history.clear()
-        logging.info(f"Paper trading reset with ${initial_balance} balance")
+        self.log(f"Paper trading reset with ${initial_balance} balance")
 
     def set_discord_channel(self, channel):
         """Set the Discord channel for notifications"""
         self.discord_channel = channel
-        logging.info(f"Discord notifications channel set")
+        self.log(f"Discord notifications channel set")
 
     async def send_notification(self, message: str, is_update: bool = False):
-        """Send a notification to Discord channel if available"""
+        """Send a notification to Discord notifications channel"""
         if not self.discord_channel:
-            # Just log the message if no channel is set
-            logging.info(f"Notification (no channel): {message}")
+            self.log(f"Notification (no channel): {message}")
             return
         
         try:
@@ -1206,9 +1206,9 @@ class TradingBot:
                 formatted_message = f"🔔 Alert:\n```{message}```"
             
             await self.discord_channel.send(formatted_message)
-            logging.info(f"Notification sent: {message}")
+            self.log(f"Notification sent to #notifications")
         except Exception as e:
-            logging.error(f"Error sending notification: {str(e)}")
+            self.log(f"Error sending notification: {str(e)}", level="error")
             self.discord_channel = None  # Reset channel if we can't send messages
 
     async def send_trade_notification(self, action: str, symbol: str, price: float, quantity: float, 
@@ -1227,7 +1227,7 @@ class TradingBot:
             
             await self.send_notification(message)
         except Exception as e:
-            logging.error(f"Error sending trade notification: {str(e)}")
+            self.log(f"Error sending trade notification: {str(e)}", level="error")
 
     async def send_interval_update(self):
         """Send periodic update of all watched coins"""
@@ -1267,7 +1267,7 @@ class TradingBot:
             
             await self.send_notification(message, is_update=True)
         except Exception as e:
-            logging.error(f"Error sending interval update: {str(e)}")
+            self.log(f"Error sending interval update: {str(e)}", level="error")
 
     async def send_alert(self, symbol: str, alert_type: str, details: str):
         """Send an alert notification"""
@@ -1277,7 +1277,7 @@ class TradingBot:
             message += f"Details: {details}"
             await self.send_notification(message)
         except Exception as e:
-            logging.error(f"Error sending alert: {str(e)}")
+            self.log(f"Error sending alert: {str(e)}", level="error")
 
     async def sync_positions(self):
         """Sync local position tracking with Coinbase positions"""
