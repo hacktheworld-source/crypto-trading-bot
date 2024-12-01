@@ -398,8 +398,7 @@ class TradingBot:
                         'quote_size': str(self.trade_amount)
                     }
                 },
-                client_order_id=str(int(time.time()))
-            )
+                client_order_id=str(int(time.time())))
             
             # Calculate final profit
             profit_info = position.calculate_profit(current_price)
