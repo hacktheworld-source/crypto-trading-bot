@@ -98,114 +98,59 @@ class TradingBot:
         return "Trading bot stopped successfully" if was_active else "Trading bot is already stopped"
         
     async def _trading_loop(self):
-        """Trading loop that runs for both real and paper trading"""
+        """Enhanced trading loop with proper execution"""
         await self.async_log("Trading loop started")
         
         while self.trading_active or self.paper_trading:
             try:
-                self._ensure_positions_watched()
-                await self.async_log(f"Trading loop iteration - Active: {self.trading_active}, Paper: {self.paper_trading}")
-                
-                # Send interval update for all watched coins
-                if self.watched_coins:
-                    await self.async_log(f"Processing {len(self.watched_coins)} watched coins")
-                    message = "🔄 Trading Analysis Update\n\n"
-                    
-                    for symbol in self.watched_coins:
-                        try:
-                            await self.async_log(f"Analyzing {symbol}")
-                            # Get all analysis
-                            current_price = float(self.client.get_product(f"{symbol}-USD").price)
-                            rsi = self.calculate_rsi(symbol)
-                            volume_data = self.analyze_volume(symbol)
-                            ma_data = self.calculate_moving_averages(symbol)
-                            sentiment = self.analyze_market_sentiment(symbol)
-                            
-                            # Check positions
-                            has_real_position = symbol in self.positions
-                            has_paper_position = symbol in self.paper_positions
-                            
-                            # Determine action based on analysis
-                            action = "HOLD"
-                            reason = []
-                            
-                            # SELL conditions - check positions first
-                            if (self.trading_active and has_real_position) or (self.paper_trading and has_paper_position):
-                                if rsi >= self.rsi_overbought:
-                                    action = "SELL"
-                                    reason.append(f"RSI overbought ({rsi:.2f})")
-                                elif ma_data['trend'] == 'Strong Downtrend':
-                                    action = "SELL"
-                                    reason.append("Strong downtrend detected")
-                                elif volume_data['volume_ratio'] > 2.0 and sentiment['overall_sentiment'] == 'Bearish':
-                                    action = "SELL"
-                                    reason.append("High volume bearish movement")
-                            
-                            # BUY conditions - only if we don't have a position
-                            elif not (has_real_position or has_paper_position):
-                                if rsi <= self.rsi_oversold:
-                                    action = "BUY"
-                                    reason.append(f"RSI oversold ({rsi:.2f})")
-                                elif ma_data['trend'] == 'Strong Uptrend' and volume_data['volume_ratio'] > 1.5:
-                                    action = "BUY"
-                                    reason.append("Strong uptrend with volume confirmation")
-                            
-                            # Add analysis to message
-                            message += f"📊 {symbol} Analysis:\n"
-                            message += f"Price: ${current_price:,.2f}\n"
-                            message += f"RSI: {rsi:.2f}\n"
-                            message += f"Volume: {volume_data['volume_ratio']:.2f}x average\n"
-                            message += f"Trend: {ma_data['trend']}\n"
-                            message += f"Sentiment: {sentiment['overall_sentiment']}\n"
-                            message += f"Position: {'Yes' if (has_real_position or has_paper_position) else 'No'}\n"
-                            message += f"Decision: {action}\n"
-                            if reason:
-                                message += f"Reason: {', '.join(reason)}\n"
-                            message += "\n"
-                            
-                            # Execute trades if conditions are met
-                            if action != "HOLD":
-                                # Handle paper trades
-                                if self.paper_trading:
-                                    if action == "BUY" and self._should_trade(symbol, 'BUY'):
-                                        await self._simulate_buy_order(symbol)
-                                        await self.async_log(f"Executed paper BUY for {symbol}")
-                                    elif action == "SELL" and has_paper_position and self._should_trade(symbol, 'SELL'):
-                                        await self._simulate_sell_order(symbol)
-                                        await self.async_log(f"Executed paper SELL for {symbol}")
-                                
-                                # Handle real trades
-                                if self.trading_active:
-                                    if action == "BUY" and self._should_trade(symbol, 'BUY'):
-                                        self._place_buy_order(symbol)
-                                        await self.async_log(f"Executed real BUY for {symbol}")
-                                    elif action == "SELL" and has_real_position and self._should_trade(symbol, 'SELL'):
-                                        self._place_sell_order(symbol)
-                                        await self.async_log(f"Executed real SELL for {symbol}")
-                        
-                        except Exception as e:
-                            error_msg = f"Error analyzing {symbol}: {str(e)}"
-                            await self.async_log(error_msg, level="error")
-                            message += f"❌ {error_msg}\n\n"
-                    
-                    # Send the update
-                    await self.async_log("Sending interval update notification")
+                for symbol in self.watched_coins:
                     try:
-                        await self.send_notification(message, is_update=True)
-                        await self.async_log("Successfully sent interval update")
-                    except Exception as e:
-                        await self.async_log(f"Failed to send notification: {str(e)}", level="error")
-                else:
-                    await self.async_log("No coins in watchlist", level="warning")
+                        # Get current analysis
+                        current_price = float(self.client.get_product(f"{symbol}-USD").price)
+                        position = self.paper_positions.get(symbol) if self.paper_trading else self.positions.get(symbol)
+                        
+                        # Update position tracking if we have one
+                        if position:
+                            position.update_price(current_price)
+                            
+                            # Check if we should sell
+                            if self._should_trade(symbol, 'SELL'):
+                                if self.paper_trading:
+                                    await self._simulate_sell_order(symbol)
+                                    await self.send_trade_notification('SELL', symbol, current_price, 
+                                        position.quantity, is_paper=True)
+                                else:
+                                    self._place_sell_order(symbol)
+                                continue
+                        
+                        # Check if we should buy
+                        elif self._should_trade(symbol, 'BUY'):
+                            # Calculate position size
+                            position_size = self._calculate_position_size(symbol)
+                            if position_size < 5.0:  # Minimum trade size
+                                continue
+                                
+                            if self.paper_trading:
+                                await self._simulate_buy_order(symbol)
+                                await self.send_trade_notification('BUY', symbol, current_price,
+                                    position_size / current_price, is_paper=True)
+                            else:
+                                self._place_buy_order(symbol)
                 
+                    except Exception as e:
+                        await self.async_log(f"Error processing {symbol}: {str(e)}", level="error")
+                        continue
+                    
+                # Send status update every hour
+                if datetime.now().minute == 0:
+                    await self.send_interval_update()
+                    
                 # Wait for next interval
-                await self.async_log(f"Waiting {self.trading_interval} seconds until next update")
                 await asyncio.sleep(self.trading_interval)
                 
             except Exception as e:
                 await self.async_log(f"Critical error in trading loop: {str(e)}", level="error")
-                # Wait a minute before retrying if there's an error
-                await asyncio.sleep(60)
+                await asyncio.sleep(60)  # Wait before retrying
     
     def _check_and_trade(self, symbol):
         try:
@@ -736,50 +681,124 @@ class TradingBot:
             self.log(f"Error checking market conditions: {str(e)}", level="error")
             raise
 
-    def _should_trade(self, symbol: str, action: str) -> bool:
-        """Enhanced trade confirmation with multiple timeframes"""
+    def _calculate_trade_signal(self, symbol: str) -> Dict[str, Any]:
+        """Calculate weighted trade signal (-100 to +100) for a symbol
+        -100 = Strong Sell
+        -50 to -99 = Sell
+        -49 to +49 = Hold
+        +50 to +99 = Buy
+        +100 = Strong Buy
+        """
         try:
-            # Get current price and volume data
+            # Get all analysis data
             current_price = float(self.client.get_product(f"{symbol}-USD").price)
+            ma_data = self.calculate_moving_averages(symbol)
             volume_data = self.analyze_volume(symbol)
-            
-            # Check if we have enough funds
+            sentiment = self.analyze_market_sentiment(symbol)
+            rsi = self.calculate_rsi(symbol)
+            market_conditions = self._check_market_conditions(symbol)
+
+            # Initialize score components
+            signals = {
+                'trend': 0,      # -25 to +25
+                'momentum': 0,   # -20 to +20
+                'volume': 0,     # -15 to +15
+                'sentiment': 0,  # -20 to +20
+                'risk': 0,       # -20 to +20
+            }
+
+            # 1. Trend Analysis (25%)
+            if ma_data['trend'] == 'Strong Uptrend':
+                signals['trend'] = 25
+            elif ma_data['trend'] == 'Weak Uptrend':
+                signals['trend'] = 15
+            elif ma_data['trend'] == 'Strong Downtrend':
+                signals['trend'] = -25
+            elif ma_data['trend'] == 'Weak Downtrend':
+                signals['trend'] = -15
+
+            # 2. Momentum/RSI (20%)
+            if rsi <= 30:
+                signals['momentum'] = 20  # Oversold
+            elif rsi >= 70:
+                signals['momentum'] = -20  # Overbought
+            elif 40 <= rsi <= 60:
+                signals['momentum'] = 10  # Neutral with upward potential
+
+            # 3. Volume Analysis (15%)
+            volume_score = (volume_data['volume_ratio'] - 1) * 10
+            signals['volume'] = max(min(volume_score, 15), -15)
+            if not volume_data['confirms_trend']:
+                signals['volume'] *= -1
+
+            # 4. Market Sentiment (20%)
+            sentiment_score = sentiment['sentiment_score'] / 5  # Scale -100/+100 to -20/+20
+            signals['sentiment'] = max(min(sentiment_score, 20), -20)
+
+            # 5. Risk Assessment (20%)
+            risk_score = 0
+            if market_conditions['is_volatile']:
+                risk_score -= 15
+            if not market_conditions['is_high_activity']:
+                risk_score -= 5
+            if not market_conditions['market_aligned']:
+                risk_score -= 10
+            if market_conditions['suitable_for_trading']:
+                risk_score += 20
+            signals['risk'] = max(min(risk_score, 20), -20)
+
+            # Calculate final weighted score
+            total_score = sum(signals.values())
+
+            # Add position-specific adjustments
+            position = self.paper_positions.get(symbol) if self.paper_trading else self.positions.get(symbol)
+            if position:
+                profit_info = position.calculate_profit(current_price)
+                
+                # Adjust for stop loss/take profit
+                if profit_info['profit_percentage'] <= -self.stop_loss_percentage:
+                    total_score = -100  # Force sell
+                elif profit_info['profit_percentage'] >= self.take_profit_percentage:
+                    total_score = -75  # Strong sell signal
+
+            return {
+                'symbol': symbol,
+                'score': total_score,
+                'signals': signals,
+                'action': 'STRONG_BUY' if total_score >= 100 else
+                         'BUY' if total_score >= 50 else
+                         'STRONG_SELL' if total_score <= -100 else
+                         'SELL' if total_score <= -50 else
+                         'HOLD',
+                'timestamp': datetime.now()
+            }
+
+        except Exception as e:
+            self.log(f"Error calculating trade signal for {symbol}: {str(e)}", level="error")
+            return None
+
+    def _should_trade(self, symbol: str, action: str) -> bool:
+        """Determine if we should trade based on the weighted signal system"""
+        try:
+            # Calculate position size first
             position_size = self._calculate_position_size(symbol)
             if position_size < 5.0:  # Minimum trade size
                 return False
-            
+
+            # Get trade signal
+            signal = self._calculate_trade_signal(symbol)
+            if not signal:
+                return False
+
             if action == 'BUY':
-                # Price must be above 20 EMA on shorter timeframe for uptrend confirmation
-                ma_data = self.calculate_moving_averages(symbol)
-                price_above_ema = current_price > ma_data['ema_20']
-                
-                # Volume should be increasing
-                volume_confirming = volume_data['volume_ratio'] > 1.2
-                
-                # Check if we're buying near recent support
-                recent_low = min(self._get_historical_prices(symbol, 
-                    datetime.now() - timedelta(days=7), 
-                    datetime.now()
-                ))
-                not_chasing = current_price < (recent_low * 1.1)  # Within 10% of recent low
-                
-                return price_above_ema and volume_confirming and not_chasing
-                
-            else:  # SELL
-                # Don't sell if we're near support levels
-                recent_low = min(self._get_historical_prices(symbol, 
-                    datetime.now() - timedelta(days=7), 
-                    datetime.now()
-                ))
-                near_support = current_price < (recent_low * 1.05)
-                
-                # Volume should confirm downtrend
-                volume_confirming = volume_data['volume_ratio'] > 1.2
-                
-                return not near_support and volume_confirming
-                
+                return signal['action'] in ['BUY', 'STRONG_BUY']
+            elif action == 'SELL':
+                return signal['action'] in ['SELL', 'STRONG_SELL']
+
+            return False
+
         except Exception as e:
-            logging.error(f"Error in trade decision: {str(e)}")
+            self.log(f"Error in trade decision: {str(e)}", level="error")
             return False
 
     def get_position_info(self, symbol: Optional[str] = None) -> Dict[str, Any]:
