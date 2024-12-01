@@ -1335,3 +1335,26 @@ class TradingBot:
         await self.async_log("Starting bot initialization...")
         await self.async_log("Coinbase client initialized successfully")
         await self.sync_positions()
+
+    async def async_log(self, message: str, level: str = "info") -> None:
+        """Asynchronously log messages to both file and Discord if available"""
+        # First log to file
+        if level == "error":
+            logging.error(message)
+        elif level == "warning":
+            logging.warning(message)
+        else:
+            logging.info(message)
+        
+        # Then try to send to Discord if we have a logs channel
+        try:
+            if hasattr(self, 'discord_channel') and self.discord_channel:
+                prefix = "🔴 ERROR: " if level == "error" else "⚠️ WARNING: " if level == "warning" else "ℹ️ INFO: "
+                await self.discord_channel.send(f"{prefix}{message}")
+        except Exception as e:
+            logging.error(f"Failed to send log to Discord: {str(e)}")
+
+    def set_logs_channel(self, channel):
+        """Set the Discord channel for logs"""
+        self.logs_channel = channel
+        logging.info(f"Discord logs channel set")
