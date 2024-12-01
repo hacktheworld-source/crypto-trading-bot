@@ -1342,18 +1342,29 @@ class TradingBot:
                     signal = self._calculate_trade_signal(symbol)
                     position = self.paper_positions.get(symbol) if self.paper_trading else self.positions.get(symbol)
                     
-                    # Build detailed message
-                    coin_msg = f"📊 {symbol} Analysis:\n"
-                    coin_msg += f"Price: ${current_price:,.2f}\n"
-                    coin_msg += f"Signal: {signal['action']}\n"
-                    coin_msg += f"Score: {signal['score']}\n\n"
-                    coin_msg += "Signal Components:\n"
-                    for component, value in signal['signals'].items():
-                        coin_msg += f"• {component}: {value:+d}\n"
+                    # Build detailed message with better formatting
+                    coin_msg = f"{'='*30}\n"
+                    coin_msg += f"📊 {symbol} Analysis\n"
+                    coin_msg += f"{'='*30}\n"
+                    coin_msg += f"💰 Price: ${current_price:,.2f}\n"
+                    coin_msg += f"📈 Signal: {signal['action']}\n"
+                    coin_msg += f"📊 Score: {signal['score']:.2f}\n\n"
+                    
+                    # Signal Components with emojis and better formatting
+                    coin_msg += "📋 Signal Components:\n"
+                    coin_msg += f"• 📈 Trend:     {signal['signals']['trend']:>6.1f}\n"
+                    coin_msg += f"• 🔄 Momentum:  {signal['signals']['momentum']:>6.1f}\n"
+                    coin_msg += f"• 📊 Volume:    {signal['signals']['volume']:>6.1f}\n"
+                    coin_msg += f"• 🌍 Sentiment: {signal['signals']['sentiment']:>6.1f}\n"
+                    coin_msg += f"• ⚠️ Risk:      {signal['signals']['risk']:>6.1f}\n"
                     
                     if position:
                         profit_info = position.calculate_profit(current_price)
-                        coin_msg += f"\nPosition P/L: {profit_info['profit_percentage']:+.2f}%\n"
+                        coin_msg += f"\n💼 Position Status:\n"
+                        coin_msg += f"• Entry Price: ${position.entry_price:,.2f}\n"
+                        coin_msg += f"• P/L: {profit_info['profit_percentage']:+.2f}%\n"
+                        coin_msg += f"• Max Profit: {profit_info['highest_profit_percentage']:+.2f}%\n"
+                        coin_msg += f"• Max Drawdown: {profit_info['drawdown_percentage']:+.2f}%\n"
                     
                     message += coin_msg + "\n"
                     await self.async_log(f"Analysis completed for {symbol}")
@@ -1362,6 +1373,12 @@ class TradingBot:
                     error_msg = f"Error analyzing {symbol}: {str(e)}"
                     await self.async_log(error_msg, level="error")
                     message += f"❌ {error_msg}\n\n"
+            
+            # Add summary footer
+            message += f"{'='*30}\n"
+            message += f"📈 Active Positions: {len(self.paper_positions) if self.paper_trading else len(self.positions)}\n"
+            message += f"💰 Mode: {'Paper' if self.paper_trading else 'Real'} Trading\n"
+            message += f"⏰ Next Update: {self.trading_interval//60} minutes\n"
             
             # Send to notifications channel
             await self.async_log("Sending interval update to notifications channel...")
