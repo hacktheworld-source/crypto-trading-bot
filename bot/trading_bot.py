@@ -690,35 +690,35 @@ class TradingBot:
             return 0
 
     def _check_market_conditions(self, symbol: str) -> Dict[str, Any]:
-        """Analyze current market conditions for trading"""
         try:
-            # Get sentiment analysis
             sentiment = self.analyze_market_sentiment(symbol)
             
-            # Get volatility (using price range as simple measure)
+            # Get volatility with adjusted window
             prices = self._get_historical_prices(symbol, 
-                                              start=datetime.now() - timedelta(days=7),
+                                              start=datetime.now() - timedelta(days=14),  # 2 weeks
                                               end=datetime.now())
             price_range = (prices.max() - prices.min()) / prices.min() * 100
             
-            # Check if market is too volatile
-            is_volatile = price_range > 10  # Consider >10% range as volatile
+            # Adjust volatility threshold based on market cap
+            is_major = symbol in ['BTC', 'ETH']
+            volatility_threshold = 15 if is_major else 25  # Allow more volatility for altcoins
+            is_volatile = price_range > volatility_threshold
             
-            # Check trading hours (some hours historically have more volatility)
+            # Adjust trading hours (crypto trades 24/7)
             current_hour = datetime.now().hour
-            is_high_activity = 13 <= current_hour <= 21  # 9 AM - 5 PM EST
+            is_high_activity = 0 <= current_hour <= 23  # Always True
             
-            # Get overall market trend (using BTC as proxy)
+            # Market alignment check
             if symbol != 'BTC':
                 btc_sentiment = self.analyze_market_sentiment('BTC')
                 market_aligned = (
-                    (sentiment['overall_sentiment'] == btc_sentiment['overall_sentiment']) or
-                    (sentiment['sentiment_score'] * btc_sentiment['sentiment_score'] > 0)
+                    sentiment['sentiment_score'] * btc_sentiment['sentiment_score'] > 0 or
+                    abs(sentiment['sentiment_score']) > 50  # Strong individual sentiment
                 )
             else:
                 market_aligned = True
             
-            conditions = {
+            return {
                 'sentiment': sentiment['overall_sentiment'],
                 'sentiment_score': sentiment['sentiment_score'],
                 'is_volatile': is_volatile,
@@ -726,15 +726,10 @@ class TradingBot:
                 'is_high_activity': is_high_activity,
                 'market_aligned': market_aligned,
                 'suitable_for_trading': (
-                    not is_volatile and
-                    (is_high_activity or abs(sentiment['sentiment_score']) > 50) and
+                    (not is_volatile or abs(sentiment['sentiment_score']) > 75) and  # Allow volatile if strong sentiment
                     market_aligned
                 )
             }
-            
-            self.log(f"Market conditions for {symbol}: {conditions}")
-            return conditions
-            
         except Exception as e:
             self.log(f"Error checking market conditions: {str(e)}", level="error")
             raise
@@ -996,14 +991,15 @@ class TradingBot:
     def calculate_moving_averages(self, symbol: str) -> Dict[str, Any]:
         """Calculate various moving averages and their signals"""
         try:
-            # Get 90 days of price data for reliable MA calculation
+            # Get 200+ days of price data for reliable MA calculation
             end = datetime.now()
-            start = end - timedelta(days=90)
+            start = end - timedelta(days=250)  # Extra days for proper 200MA calculation
             prices = self._get_historical_prices(symbol, start, end)
             
             # Calculate different MAs
             sma_20 = prices.rolling(window=20).mean()  # 20-day SMA
             sma_50 = prices.rolling(window=50).mean()  # 50-day SMA
+            sma_200 = prices.rolling(window=200).mean()  # 200-day SMA
             ema_12 = prices.ewm(span=12, adjust=False).mean()  # 12-day EMA
             ema_26 = prices.ewm(span=26, adjust=False).mean()  # 26-day EMA
             
@@ -1011,6 +1007,7 @@ class TradingBot:
             current_price = prices.iloc[-1]
             sma_20_current = sma_20.iloc[-1]
             sma_50_current = sma_50.iloc[-1]
+            sma_200_current = sma_200.iloc[-1]
             ema_12_current = ema_12.iloc[-1]
             ema_26_current = ema_26.iloc[-1]
             
@@ -1029,21 +1026,29 @@ class TradingBot:
             # Determine trend based on price position relative to MAs
             above_sma_20 = current_price > sma_20_current
             above_sma_50 = current_price > sma_50_current
+            above_sma_200 = current_price > sma_200_current
             
-            if above_sma_20 and above_sma_50:
+            if above_sma_20 and above_sma_50 and above_sma_200:
                 trend = "Strong Uptrend"
+            elif above_sma_20 and above_sma_50:
+                trend = "Moderate Uptrend"
             elif above_sma_20:
                 trend = "Weak Uptrend"
-            elif above_sma_50:
-                trend = "Mixed Trend"
+            elif not (above_sma_20 or above_sma_50 or above_sma_200):
+                trend = "Strong Downtrend"
             else:
-                trend = "Downtrend"
+                trend = "Mixed Trend"
                 
-            analysis = {
+            # Add EMA-20
+            ema_20 = prices.ewm(span=20, adjust=False).mean()  # 20-day EMA
+            
+            return {
                 'current_price': current_price,
                 'sma_20': sma_20_current,
                 'sma_50': sma_50_current,
+                'sma_200': sma_200_current,
                 'ema_12': ema_12_current,
+                'ema_20': ema_20.iloc[-1],  # Add EMA-20
                 'ema_26': ema_26_current,
                 'sma_cross_bullish': sma_cross_bullish,
                 'sma_cross_bearish': sma_cross_bearish,
@@ -1052,11 +1057,8 @@ class TradingBot:
                 'trend': trend
             }
             
-            logging.info(f"MA analysis for {symbol}: {analysis}")
-            return analysis
-            
         except Exception as e:
-            logging.error(f"Error calculating MAs for {symbol}: {str(e)}")
+            self.log(f"Error calculating MAs for {symbol}: {str(e)}", level="error")
             raise
 
     def get_performance_stats(self) -> Dict[str, Any]:
@@ -1611,20 +1613,10 @@ class TradingBot:
         await self.async_log("Coinbase client initialized successfully")
         await self.sync_positions()
 
-    async def async_log(self, message: str, level: str = "info") -> None:
-        """Asynchronously log messages to both file and Discord logs channel with embeds"""
-        # First log to file
-        if level == "error":
-            logging.error(message)
-        elif level == "warning":
-            logging.warning(message)
-        else:
-            logging.info(message)
-        
-        # Then try to send to Discord logs channel
+    async def async_log(self, message: str, level: str = "info", context: Dict[str, Any] = None) -> None:
+        """Enhanced logging with context"""
         try:
             if hasattr(self, 'logs_channel') and self.logs_channel:
-                # Create embed based on level
                 embed = discord.Embed(
                     timestamp=datetime.now(),
                     color=discord.Color.red() if level == "error" else
@@ -1632,12 +1624,11 @@ class TradingBot:
                           discord.Color.blue()
                 )
                 
-                # Set title based on level
                 embed.title = "🔴 ERROR" if level == "error" else \
                              "⚠️ WARNING" if level == "warning" else \
                              "ℹ️ INFO"
                 
-                # Split long messages into fields (Discord has 1024 char limit per field)
+                # Add main message
                 if len(message) > 1024:
                     parts = [message[i:i+1024] for i in range(0, len(message), 1024)]
                     for i, part in enumerate(parts):
@@ -1649,10 +1640,19 @@ class TradingBot:
                 else:
                     embed.description = f"```{message}```"
                 
+                # Add context if provided
+                if context:
+                    context_msg = "\n".join(f"{k}: {v}" for k, v in context.items())
+                    embed.add_field(
+                        name="Context",
+                        value=f"```{context_msg}```",
+                        inline=False
+                    )
+                
                 await self.logs_channel.send(embed=embed)
                 
         except Exception as e:
-            logging.error(f"Failed to send log to Discord logs channel: {str(e)}")
+            logging.error(f"Failed to send log: {str(e)}")
 
     def set_logs_channel(self, channel):
         """Set the Discord channel for logs"""
