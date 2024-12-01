@@ -1,0 +1,73 @@
+PAPER TRADING IMPLEMENTATION PLAN
+
+1. MODIFICATIONS NEEDED:
+
+A. Position Class:
+- Add is_paper: bool flag
+- Update string representations to show (Paper) for simulated trades
+
+B. TradingBot Class:
+- Add paper_trading: bool flag (default True when trading_active is False)
+- Add paper_balance: float (starting simulated USD)
+- Add paper_positions: Dict[str, Position]
+- Add paper_trade_history: List[Dict]
+- Add paper_portfolio_value: float
+
+C. Trading Logic:
+- Modify _place_buy_order and _place_sell_order to:
+  * Check if paper_trading is True
+  * If yes, simulate the trade with paper balance
+  * Include Coinbase fees in calculations (0.6% per trade)
+  * Update paper positions and history
+  * Don't make actual API calls
+
+D. Portfolio Tracking:
+- Update get_account_balance to include paper trades when paper_trading is True
+- Modify get_position_info to show both real and paper positions
+- Add (Paper) tag to all simulated positions in display
+
+2. NEW METHODS NEEDED: 
+
+def simulate_buy_order(self, symbol: str) -> None:
+"""Simulate a buy order with paper trading"""
+
+def simulate_sell_order(self, symbol: str) -> None:
+"""Simulate a sell order with paper trading"""
+
+def get_paper_balance(self) -> Dict[str, float]:
+"""Get paper trading account balance"""
+
+def reset_paper_trading(self, initial_balance: float = 1000.0) -> None:
+"""Reset paper trading with new balance"""
+
+3. COMMAND UPDATES:
+
+A. Add new commands:
+- !paper start    (Start paper trading with initial balance)
+- !paper reset    (Reset paper trading)
+- !paper balance  (Show paper trading balance)
+
+B. Update existing commands to show paper trades:
+- !positions      (Show both real and paper positions)
+- !poshistory     (Show both real and paper history)
+- !performance    (Include paper trading stats)
+- !status         (Show paper trading status)
+
+4. IMPLEMENTATION STEPS:
+
+1. Update Position class
+2. Add paper trading flags and storage
+3. Implement simulation methods
+4. Update portfolio tracking
+5. Add new commands
+6. Update display methods
+7. Add paper trading reset functionality
+
+5. CONSIDERATIONS:
+
+- Accurate fee simulation (0.6% Coinbase fee)
+- Slippage simulation (0.1-0.5% price difference)
+- Realistic trade execution timing
+- Clear distinction between real and paper trades
+- Separate performance tracking
+- Data persistence for paper trades
