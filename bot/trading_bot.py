@@ -10,6 +10,7 @@ from typing import Dict, Any, List, Union, Optional
 from decimal import Decimal
 from .position import Position
 import asyncio
+import discord
 
 # Set up logging
 logging.basicConfig(
@@ -1324,66 +1325,114 @@ class TradingBot:
             logging.error(f"Error sending trade notification: {str(e)}")
 
     async def send_interval_update(self):
-        """Enhanced periodic update of all watched coins"""
+        """Enhanced periodic update with individual coin notifications"""
         try:
             if not self.watched_coins:
                 await self.async_log("No coins in watchlist for update")
                 return
             
-            await self.async_log("Preparing trading update for all watched coins...")
-            message = "🔄 Trading Analysis Update\n\n"
+            await self.async_log("Starting periodic trading update...")
+            
+            # Send summary header
+            header = (
+                "🔄 Trading Update Started\n"
+                f"Mode: {'Paper' if self.paper_trading else 'Real'} Trading\n"
+                f"Analyzing {len(self.watched_coins)} coins..."
+            )
+            await self.send_notification(header, is_update=True)
             
             for symbol in self.watched_coins:
                 try:
-                    await self.async_log(f"Analyzing {symbol} for update...")
+                    await self.async_log(f"Analyzing {symbol}...")
                     
                     # Get comprehensive analysis
                     current_price = float(self.client.get_product(f"{symbol}-USD").price)
                     signal = self._calculate_trade_signal(symbol)
                     position = self.paper_positions.get(symbol) if self.paper_trading else self.positions.get(symbol)
                     
-                    # Build detailed message with better formatting
-                    coin_msg = f"{'='*30}\n"
-                    coin_msg += f"📊 {symbol} Analysis\n"
-                    coin_msg += f"{'='*30}\n"
-                    coin_msg += f"💰 Price: ${current_price:,.2f}\n"
-                    coin_msg += f"📈 Signal: {signal['action']}\n"
-                    coin_msg += f"📊 Score: {signal['score']:.2f}\n\n"
+                    # Create embed for this coin
+                    embed = discord.Embed(
+                        title=f"📊 {symbol} Analysis",
+                        timestamp=datetime.now(),
+                        color=discord.Color.green() if signal['action'] in ['BUY', 'STRONG_BUY'] else
+                              discord.Color.red() if signal['action'] in ['SELL', 'STRONG_SELL'] else
+                              discord.Color.blue()
+                    )
                     
-                    # Signal Components with emojis and better formatting
-                    coin_msg += "📋 Signal Components:\n"
-                    coin_msg += f"• 📈 Trend:     {signal['signals']['trend']:>6.1f}\n"
-                    coin_msg += f"• 🔄 Momentum:  {signal['signals']['momentum']:>6.1f}\n"
-                    coin_msg += f"• 📊 Volume:    {signal['signals']['volume']:>6.1f}\n"
-                    coin_msg += f"• 🌍 Sentiment: {signal['signals']['sentiment']:>6.1f}\n"
-                    coin_msg += f"• ⚠️ Risk:      {signal['signals']['risk']:>6.1f}\n"
+                    # Add price and signal info
+                    embed.add_field(
+                        name="💰 Price",
+                        value=f"${current_price:,.2f}",
+                        inline=True
+                    )
+                    embed.add_field(
+                        name="📈 Signal",
+                        value=signal['action'],
+                        inline=True
+                    )
+                    embed.add_field(
+                        name="📊 Score",
+                        value=f"{signal['score']:.2f}",
+                        inline=True
+                    )
                     
+                    # Add signal components
+                    components = "\n".join([
+                        f"• 📈 Trend:     {signal['signals']['trend']:>6.1f}",
+                        f"• 🔄 Momentum:  {signal['signals']['momentum']:>6.1f}",
+                        f"• 📊 Volume:    {signal['signals']['volume']:>6.1f}",
+                        f"• 🌍 Sentiment: {signal['signals']['sentiment']:>6.1f}",
+                        f"• ⚠️ Risk:      {signal['signals']['risk']:>6.1f}"
+                    ])
+                    embed.add_field(
+                        name="📋 Signal Components",
+                        value=f"```{components}```",
+                        inline=False
+                    )
+                    
+                    # Add position info if exists
                     if position:
                         profit_info = position.calculate_profit(current_price)
-                        coin_msg += f"\n💼 Position Status:\n"
-                        coin_msg += f"• Entry Price: ${position.entry_price:,.2f}\n"
-                        coin_msg += f"• P/L: {profit_info['profit_percentage']:+.2f}%\n"
-                        coin_msg += f"• Max Profit: {profit_info['highest_profit_percentage']:+.2f}%\n"
-                        coin_msg += f"• Max Drawdown: {profit_info['drawdown_percentage']:+.2f}%\n"
+                        position_info = (
+                            f"Entry Price: ${position.entry_price:,.2f}\n"
+                            f"P/L: {profit_info['profit_percentage']:+.2f}%\n"
+                            f"Max Profit: {profit_info['highest_profit_percentage']:+.2f}%\n"
+                            f"Max Drawdown: {profit_info['drawdown_percentage']:+.2f}%"
+                        )
+                        embed.add_field(
+                            name="💼 Position Status",
+                            value=f"```{position_info}```",
+                            inline=False
+                        )
                     
-                    message += coin_msg + "\n"
-                    await self.async_log(f"Analysis completed for {symbol}")
+                    # Send individual coin analysis
+                    if self.discord_channel:
+                        await self.discord_channel.send(embed=embed)
+                    await self.async_log(f"Analysis sent for {symbol}")
+                    
+                    # Small delay between messages to prevent rate limiting
+                    await asyncio.sleep(1)
                     
                 except Exception as e:
                     error_msg = f"Error analyzing {symbol}: {str(e)}"
                     await self.async_log(error_msg, level="error")
-                    message += f"❌ {error_msg}\n\n"
+                    if self.discord_channel:
+                        error_embed = discord.Embed(
+                            title=f"❌ {symbol} Analysis Error",
+                            description=error_msg,
+                            color=discord.Color.red()
+                        )
+                        await self.discord_channel.send(embed=error_embed)
             
-            # Add summary footer
-            message += f"{'='*30}\n"
-            message += f"📈 Active Positions: {len(self.paper_positions) if self.paper_trading else len(self.positions)}\n"
-            message += f"💰 Mode: {'Paper' if self.paper_trading else 'Real'} Trading\n"
-            message += f"⏰ Next Update: {self.trading_interval//60} minutes\n"
-            
-            # Send to notifications channel
-            await self.async_log("Sending interval update to notifications channel...")
-            await self.send_notification(message, is_update=True)
-            await self.async_log("Interval update sent successfully")
+            # Send summary footer
+            footer = (
+                f"{'='*30}\n"
+                f"📈 Active Positions: {len(self.paper_positions) if self.paper_trading else len(self.positions)}\n"
+                f"💰 Mode: {'Paper' if self.paper_trading else 'Real'} Trading\n"
+                f"⏰ Next Update: {self.trading_interval//60} minutes"
+            )
+            await self.send_notification(footer, is_update=True)
+            await self.async_log("Periodic update completed")
             
         except Exception as e:
             await self.async_log(f"Error sending interval update: {str(e)}", level="error")
@@ -1456,7 +1505,7 @@ class TradingBot:
         await self.sync_positions()
 
     async def async_log(self, message: str, level: str = "info") -> None:
-        """Asynchronously log messages to both file and Discord logs channel"""
+        """Asynchronously log messages to both file and Discord logs channel with embeds"""
         # First log to file
         if level == "error":
             logging.error(message)
@@ -1465,11 +1514,36 @@ class TradingBot:
         else:
             logging.info(message)
         
-        # Then try to send to Discord logs channel (not notifications)
+        # Then try to send to Discord logs channel
         try:
-            if hasattr(self, 'logs_channel') and self.logs_channel:  # Changed from discord_channel
-                prefix = "🔴 ERROR: " if level == "error" else "⚠️ WARNING: " if level == "warning" else "ℹ️ INFO: "
-                await self.logs_channel.send(f"{prefix}{message}")
+            if hasattr(self, 'logs_channel') and self.logs_channel:
+                # Create embed based on level
+                embed = discord.Embed(
+                    timestamp=datetime.now(),
+                    color=discord.Color.red() if level == "error" else
+                          discord.Color.yellow() if level == "warning" else
+                          discord.Color.blue()
+                )
+                
+                # Set title based on level
+                embed.title = "🔴 ERROR" if level == "error" else \
+                             "⚠️ WARNING" if level == "warning" else \
+                             "ℹ️ INFO"
+                
+                # Split long messages into fields (Discord has 1024 char limit per field)
+                if len(message) > 1024:
+                    parts = [message[i:i+1024] for i in range(0, len(message), 1024)]
+                    for i, part in enumerate(parts):
+                        embed.add_field(
+                            name=f"Details (Part {i+1})" if i > 0 else "Details",
+                            value=f"```{part}```",
+                            inline=False
+                        )
+                else:
+                    embed.description = f"```{message}```"
+                
+                await self.logs_channel.send(embed=embed)
+                
         except Exception as e:
             logging.error(f"Failed to send log to Discord logs channel: {str(e)}")
 
