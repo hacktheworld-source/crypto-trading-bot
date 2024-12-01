@@ -1593,14 +1593,25 @@ class TradingBot:
         self.logs_channel = channel
         logging.info(f"Discord logs channel set")
 
-    def log(self, message: str, level: str = "info") -> None:
-        """Synchronous logging to file"""
+    def log(self, message: str, level: str = "info", context: Dict[str, Any] = None) -> None:
+        """Synchronous logging to file and console"""
+        # Log the main message
         if level == "error":
             logging.error(message)
         elif level == "warning":
             logging.warning(message)
         else:
             logging.info(message)
+        
+        # Log context if provided
+        if context:
+            for key, value in context.items():
+                if level == "error":
+                    logging.error(f"{key}: {value}")
+                elif level == "warning":
+                    logging.warning(f"{key}: {value}")
+                else:
+                    logging.info(f"{key}: {value}")
 
     def _calculate_macd(self, symbol: str) -> Dict[str, float]:
         """Calculate MACD (Moving Average Convergence Divergence)"""
