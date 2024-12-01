@@ -525,3 +525,61 @@ class CommandHandler:
             response += "\n"
         response += "```"
         return response
+        
+    def analyze_coin(self, symbol: str) -> str:
+        """Get detailed analysis for a specific coin"""
+        try:
+            # Get current price and basic info
+            product = self.trading_bot.client.get_product(f"{symbol}-USD")
+            current_price = float(product.price)
+            
+            # Get technical analysis data
+            ma_data = self.trading_bot.calculate_moving_averages(symbol)
+            volume_data = self.trading_bot.analyze_volume(symbol)
+            sentiment = self.trading_bot.analyze_market_sentiment(symbol)
+            market_conditions = self.trading_bot._check_market_conditions(symbol)
+            rsi = self.trading_bot.calculate_rsi(symbol)
+            
+            # Format response
+            response = f"Analysis for {symbol}\n```"
+            
+            # Price info
+            response += f"\nPrice: ${current_price:,.2f}"
+            
+            # Moving Averages
+            response += "\n\nMoving Averages:"
+            response += f"\n• SMA 50: ${ma_data['sma_50']:,.2f}"
+            response += f"\n• SMA 200: ${ma_data['sma_200']:,.2f}"
+            response += f"\n• Trend: {ma_data['trend']}"
+            
+            # Volume Analysis
+            response += "\n\nVolume Analysis:"
+            response += f"\n• Current Volume: {volume_data['current_volume']:,.2f}"
+            response += f"\n• Average Volume: {volume_data['average_volume']:,.2f}"
+            response += f"\n• Volume Ratio: {volume_data['volume_ratio']:.2f}"
+            response += f"\n• Trend Strength: {volume_data['trend_strength']}"
+            response += f"\n• Confirms Trend: {'Yes' if volume_data['confirms_trend'] else 'No'}"
+            
+            # Market Sentiment
+            response += "\n\nMarket Sentiment:"
+            response += f"\n• Score: {sentiment['sentiment_score']:.2f}"
+            response += f"\n• Overall: {sentiment['overall_sentiment']}"
+            for timeframe, change in sentiment['price_changes'].items():
+                response += f"\n• {timeframe.replace('_', ' ').title()} Change: {change:+.2f}%"
+            
+            # Market Conditions
+            response += "\n\nMarket Conditions:"
+            response += f"\n• Volatile: {'Yes' if market_conditions['is_volatile'] else 'No'}"
+            response += f"\n• High Activity: {'Yes' if market_conditions['is_high_activity'] else 'No'}"
+            response += f"\n• Market Aligned: {'Yes' if market_conditions['market_aligned'] else 'No'}"
+            response += f"\n• 7d Price Range: {market_conditions['price_range_7d']:.2f}%"
+            
+            # Technical Indicators
+            response += "\n\nTechnical Indicators:"
+            response += f"\n• RSI: {rsi:.2f}"
+            
+            response += "```"
+            return response
+            
+        except Exception as e:
+            return f"Error analyzing {symbol}: {str(e)}"

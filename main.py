@@ -248,6 +248,12 @@ async def get_trades(ctx):
     response = command_handler.get_trades()
     await ctx.send(response)
 
+@bot.command(name='coin')
+async def analyze_coin(ctx, symbol: str):
+    """Get detailed analysis for a specific coin"""
+    response = command_handler.analyze_coin(symbol.upper())
+    await ctx.send(response)
+
 # Run the bot
 keep_alive()
 bot.run(os.getenv('DISCORD_TOKEN')) 
