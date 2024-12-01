@@ -1,22 +1,11 @@
-language = "python3"
-run = "python3 main.py"
+entrypoint = "main.py"
+modules = ["python-3.9:v18-20230807-322e88b"]
+
+hidden = [".pythonlibs"]
 
 [nix]
 channel = "stable-22_11"
 
-[packager]
-language = "python3"
-ignoredPackages = ["discord.py"]
-
-[packager.features]
-enabledForHosting = true
-packageSearch = true
-
-[languages]
-python = "3.9"
-
-[env]
-PYTHONPATH = "${PYTHONPATH}:${REPL_HOME}"
-
-[unitTest]
-language = "python3" 
+[deployment]
+run = ["python3", "main.py"]
+deploymentTarget = "cloudrun" 
