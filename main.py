@@ -14,16 +14,18 @@ command_handler = CommandHandler(trading_bot)
 async def on_ready():
     print(f'Bot is ready! Logged in as {bot.user}')
     
-    # Look for notifications channel in all guilds (servers) the bot is in
-    notification_channel = None
-    for guild in bot.guilds:
-        # Try to find channel named 'notifications' (case-insensitive)
-        channel = discord.utils.get(guild.text_channels, name='notifications')
-        if channel:
-            notification_channel = channel
-            break
+    # Initialize trading bot
+    await trading_bot.post_init()  # Call the async post-init method
     
-    # Set up notification channel if found
+    # Look for notifications and logs channels in all guilds (servers) the bot is in
+    notification_channel = None
+    logs_channel = None
+    for guild in bot.guilds:
+        if not notification_channel:
+            notification_channel = discord.utils.get(guild.text_channels, name='notifications')
+        if not logs_channel:
+            logs_channel = discord.utils.get(guild.text_channels, name='logs')
+    
     if notification_channel:
         trading_bot.set_discord_channel(notification_channel)
         await trading_bot.send_notification("Trading bot initialized and ready!")
@@ -31,6 +33,13 @@ async def on_ready():
     else:
         print("No 'notifications' channel found. Bot will run without sending notifications.")
         trading_bot.set_discord_channel(None)
+    
+    if logs_channel:
+        trading_bot.set_logs_channel(logs_channel)
+        print(f"Found logs channel: #{logs_channel.name} in {logs_channel.guild.name}")
+    else:
+        print("No 'logs' channel found. Bot will run without sending logs to Discord.")
+        trading_bot.set_logs_channel(None)
 
 # Command to add a coin to watchlist
 @bot.command(name='addcoin')

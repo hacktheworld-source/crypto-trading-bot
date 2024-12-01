@@ -7,8 +7,10 @@ class CommandHandler:
         results = []
         for symbol in symbols:
             if self.trading_bot.add_coin(symbol):
+                self.trading_bot.log(f"Added {symbol} to watchlist")
                 results.append(f"✅ Added {symbol}")
             else:
+                self.trading_bot.log(f"Failed to add {symbol}", level="error")
                 results.append(f"❌ Failed to add {symbol}")
         
         return "\n".join(results)
@@ -18,8 +20,10 @@ class CommandHandler:
         results = []
         for symbol in symbols:
             if self.trading_bot.remove_coin(symbol):
+                self.trading_bot.log(f"Removed {symbol} from watchlist")
                 results.append(f"✅ Removed {symbol}")
             else:
+                self.trading_bot.log(f"{symbol} not in watchlist", level="warning")
                 results.append(f"❌ {symbol} not in watchlist")
         
         return "\n".join(results)

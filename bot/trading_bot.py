@@ -1278,3 +1278,60 @@ class TradingBot:
             await self.send_notification(message)
         except Exception as e:
             logging.error(f"Error sending alert: {str(e)}")
+
+    async def sync_positions(self):
+        """Sync local position tracking with Coinbase positions"""
+        try:
+            if self.paper_trading:
+                return
+            
+            await self.async_log("Syncing positions with Coinbase...")
+            
+            # Get all accounts with balances
+            accounts = self.client.get_accounts()
+            
+            for account in accounts.accounts:
+                if account.currency != 'USD' and float(account.available_balance.value) > 0:
+                    symbol = account.currency
+                    await self.async_log(f"Found active position in {symbol}")
+                    
+                    try:
+                        # Get current price
+                        current_price = float(self.client.get_product(f"{symbol}-USD").price)
+                        quantity = float(account.available_balance.value)
+                        
+                        # Get order history to find entry price
+                        orders = self.client.get_orders(product_id=f"{symbol}-USD")
+                        buy_orders = [o for o in orders if o.side == 'BUY' and o.status == 'FILLED']
+                        
+                        if buy_orders:
+                            # Use most recent buy order as entry
+                            entry_order = buy_orders[0]
+                            entry_price = float(entry_order.average_filled_price)
+                            entry_time = datetime.fromtimestamp(float(entry_order.created_time))
+                            
+                            # Create position object
+                            self.positions[symbol] = Position(
+                                symbol=symbol,
+                                entry_price=entry_price,
+                                quantity=quantity,
+                                entry_time=entry_time,
+                                is_paper=False
+                            )
+                            
+                            await self.async_log(f"Restored position tracking for {symbol}:")
+                            await self.async_log(f"Entry Price: ${entry_price}")
+                            await self.async_log(f"Quantity: {quantity}")
+                            await self.async_log(f"Current Value: ${quantity * current_price}")
+                            
+                    except Exception as e:
+                        await self.async_log(f"Error syncing position for {symbol}: {str(e)}", level="error")
+                    
+        except Exception as e:
+            await self.async_log(f"Error syncing positions: {str(e)}", level="error")
+
+    async def post_init(self):
+        """Perform post-initialization tasks"""
+        await self.async_log("Starting bot initialization...")
+        await self.async_log("Coinbase client initialized successfully")
+        await self.sync_positions()
