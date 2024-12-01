@@ -100,19 +100,28 @@ class TradingBot:
         
     async def _trading_loop(self):
         """Enhanced trading loop with proper execution and logging"""
-        await self.async_log("Trading loop started")
+        await self.async_log("Trading loop started", context={
+            'mode': 'Paper' if self.paper_trading else 'Real',
+            'watched_coins': list(self.watched_coins),
+            'trading_interval': f"{self.trading_interval//60} minutes"
+        })
+        
         last_update_hour = None
         
         while self.trading_active or self.paper_trading:
             try:
                 current_hour = datetime.now().hour
                 
-                # Log start of iteration
+                # Log iteration start with context
                 await self.async_log(
-                    f"Starting trading iteration\n"
-                    f"Mode: {'Paper' if self.paper_trading else 'Real'}\n"
-                    f"Active coins: {', '.join(self.watched_coins)}\n"
-                    f"Current hour: {current_hour:02d}:00"
+                    "Starting trading iteration",
+                    context={
+                        'mode': 'Paper' if self.paper_trading else 'Real',
+                        'active_coins': list(self.watched_coins),
+                        'current_hour': f"{current_hour:02d}:00",
+                        'paper_positions': len(self.paper_positions),
+                        'real_positions': len(self.positions)
+                    }
                 )
                 
                 for symbol in self.watched_coins:
@@ -718,6 +727,19 @@ class TradingBot:
             else:
                 market_aligned = True
             
+            self.log(
+                f"Market conditions analyzed for {symbol}",
+                context={
+                    'sentiment': sentiment['overall_sentiment'],
+                    'sentiment_score': f"{sentiment['sentiment_score']:+.1f}",
+                    'volatility': f"{price_range:.1f}%",
+                    'is_volatile': str(is_volatile),
+                    'market_aligned': str(market_aligned),
+                    'trading_suitable': str(conditions['suitable_for_trading']),
+                    'btc_correlation': f"{self._calculate_btc_correlation(symbol):.2f}" if symbol != 'BTC' else 'N/A'
+                }
+            )
+            
             return {
                 'sentiment': sentiment['overall_sentiment'],
                 'sentiment_score': sentiment['sentiment_score'],
@@ -885,7 +907,7 @@ class TradingBot:
             buy_threshold = 35 if market_conditions['is_volatile'] else 30
             sell_threshold = -35 if market_conditions['is_volatile'] else -30
             
-            return {
+            signal = {
                 'symbol': symbol,
                 'score': total_score,
                 'signals': signals,
@@ -897,6 +919,26 @@ class TradingBot:
                 'timestamp': datetime.now(),
                 'market_conditions': market_conditions
             }
+
+            # Enhanced logging with full context
+            self.log(
+                f"Trade signal calculated for {symbol}",
+                context={
+                    'action': signal['action'],
+                    'score': f"{total_score:.2f}",
+                    'trend_score': f"{signals['trend']:+.1f}",
+                    'momentum_score': f"{signals['momentum']:+.1f}",
+                    'volume_score': f"{signals['volume']:+.1f}",
+                    'sentiment_score': f"{signals['sentiment']:+.1f}",
+                    'risk_score': f"{signals['risk']:+.1f}",
+                    'market_conditions': market_conditions,
+                    'current_price': f"${current_price:,.2f}",
+                    'rsi': f"{rsi:.2f}",
+                    'macd_trend': macd['trend']
+                }
+            )
+            
+            return signal
 
         except Exception as e:
             self.log(f"Error calculating trade signal for {symbol}: {str(e)}", level="error")
@@ -1229,7 +1271,7 @@ class TradingBot:
             self.log(f"Error analyzing market sentiment for {symbol}: {str(e)}", level="error")
             raise
 
-    def _simulate_buy_order(self, symbol: str) -> None:
+    async def _simulate_buy_order(self, symbol: str) -> None:
         """Simulate a buy order with paper trading"""
         try:
             product_id = f"{symbol}-USD"
@@ -1271,6 +1313,18 @@ class TradingBot:
             })
             
             logging.info(f"Paper buy order placed for {symbol}: ${self.trade_amount}")
+            
+            await self.async_log(
+                f"Paper buy order executed for {symbol}",
+                context={
+                    'price': f"${current_price:,.2f}",
+                    'quantity': f"{quantity:.8f}",
+                    'total_value': f"${self.trade_amount:,.2f}",
+                    'fees': f"${fee:.2f}",
+                    'remaining_balance': f"${self.paper_balance:,.2f}",
+                    'position_count': len(self.paper_positions)
+                }
+            )
             
         except Exception as e:
             logging.error(f"Error simulating buy order for {symbol}: {str(e)}")
@@ -1614,7 +1668,6 @@ class TradingBot:
         await self.sync_positions()
 
     async def async_log(self, message: str, level: str = "info", context: Dict[str, Any] = None) -> None:
-        """Enhanced logging with context"""
         try:
             if hasattr(self, 'logs_channel') and self.logs_channel:
                 embed = discord.Embed(
@@ -1624,30 +1677,48 @@ class TradingBot:
                           discord.Color.blue()
                 )
                 
-                embed.title = "🔴 ERROR" if level == "error" else \
-                             "⚠️ WARNING" if level == "warning" else \
-                             "ℹ️ INFO"
+                # Enhanced error formatting
+                if level == "error":
+                    embed.title = "🔴 ERROR DETECTED"
+                    if context and 'error_trace' in context:
+                        embed.add_field(
+                            name="Stack Trace",
+                            value=f"```python\n{context['error_trace']}\n```",
+                            inline=False
+                        )
+                else:
+                    embed.title = "⚠️ WARNING" if level == "warning" else "ℹ️ INFO"
                 
-                # Add main message
+                # Add main message with better formatting
                 if len(message) > 1024:
                     parts = [message[i:i+1024] for i in range(0, len(message), 1024)]
                     for i, part in enumerate(parts):
                         embed.add_field(
                             name=f"Details (Part {i+1})" if i > 0 else "Details",
-                            value=f"```{part}```",
+                            value=f"```yaml\n{part}\n```",
                             inline=False
                         )
                 else:
-                    embed.description = f"```{message}```"
+                    embed.description = f"```yaml\n{message}\n```"
                 
-                # Add context if provided
+                # Add context with better organization
                 if context:
-                    context_msg = "\n".join(f"{k}: {v}" for k, v in context.items())
-                    embed.add_field(
-                        name="Context",
-                        value=f"```{context_msg}```",
-                        inline=False
-                    )
+                    # Group context items by category
+                    categories = {
+                        'Market Data': ['price', 'volume', 'trend'],
+                        'Analysis': ['rsi', 'macd', 'signal'],
+                        'Trading': ['position', 'balance', 'mode'],
+                        'System': ['timestamp', 'iteration', 'status']
+                    }
+                    
+                    for category, fields in categories.items():
+                        category_items = {k: v for k, v in context.items() if any(f in k.lower() for f in fields)}
+                        if category_items:
+                            embed.add_field(
+                                name=category,
+                                value=f"```yaml\n" + "\n".join(f"{k}: {v}" for k, v in category_items.items()) + "\n```",
+                                inline=True
+                            )
                 
                 await self.logs_channel.send(embed=embed)
                 
