@@ -1828,3 +1828,102 @@ class TradingBot:
         except Exception as e:
             self.log(f"Error calculating BTC correlation for {symbol}: {str(e)}", level="error")
             return 0.0  # Default to no correlation on error
+
+    def _calculate_signal_components(self, ma_data: Dict[str, Any], volume_data: Dict[str, Any], 
+                                   sentiment: Dict[str, Any], market_conditions: Dict[str, Any]) -> Dict[str, float]:
+        """Calculate individual signal components for trading decision"""
+        try:
+            signals = {
+                'trend': 0,          # -30 to +30 (Primary trend)
+                'momentum': 0,       # -25 to +25 (Combined momentum indicators)
+                'volume': 0,         # -20 to +20 (Volume analysis)
+                'risk': 0,          # -10 to +10 (Risk assessment)
+            }
+            
+            # 1. Trend Analysis (30%)
+            trend_score = 0
+            if ma_data['trend'] == 'Strong Uptrend':
+                trend_score += 30
+            elif ma_data['trend'] == 'Uptrend':
+                trend_score += 15
+            elif ma_data['trend'] == 'Strong Downtrend':
+                trend_score -= 30
+            elif ma_data['trend'] == 'Downtrend':
+                trend_score -= 15
+                
+            signals['trend'] = max(min(trend_score, 30), -30)
+            
+            # 2. Momentum Analysis (25%)
+            momentum_score = 0
+            if sentiment['momentum']['short_term'] == 'bullish':
+                momentum_score += 8
+            elif sentiment['momentum']['short_term'] == 'bearish':
+                momentum_score -= 8
+                
+            if sentiment['momentum']['medium_term'] == 'bullish':
+                momentum_score += 9
+            elif sentiment['momentum']['medium_term'] == 'bearish':
+                momentum_score -= 9
+                
+            if sentiment['momentum']['long_term'] == 'bullish':
+                momentum_score += 8
+            elif sentiment['momentum']['long_term'] == 'bearish':
+                momentum_score -= 8
+                
+            signals['momentum'] = max(min(momentum_score, 25), -25)
+            
+            # 3. Volume Analysis (20%)
+            volume_score = 0
+            if volume_data['volume_ratio'] > 2.0:
+                volume_score += 10
+            elif volume_data['volume_ratio'] > 1.5:
+                volume_score += 5
+            elif volume_data['volume_ratio'] < 0.5:
+                volume_score -= 10
+                
+            if volume_data['confirms_trend']:
+                volume_score += 10
+            else:
+                volume_score -= 5
+                
+            signals['volume'] = max(min(volume_score, 20), -20)
+            
+            # 4. Risk Assessment (10%)
+            risk_score = 0
+            if market_conditions['suitable_for_trading']:
+                risk_score += 5
+            if market_conditions['market_aligned']:
+                risk_score += 5
+            if market_conditions['is_volatile']:
+                risk_score -= 5
+            if not market_conditions['is_high_activity']:
+                risk_score -= 3
+                
+            signals['risk'] = max(min(risk_score, 10), -10)
+            
+            return signals
+            
+        except Exception as e:
+            self.log(f"Error calculating signal components: {str(e)}", level="error")
+            raise DataError(f"Signal component calculation failed: {str(e)}")
+
+    def _format_signal_response(self, symbol: str, signals: Dict[str, float], current_price: float) -> Dict[str, Any]:
+        """Format the final trading signal response"""
+        total_score = sum(signals.values())
+        
+        # Dynamic thresholds based on market conditions
+        buy_threshold = 35
+        sell_threshold = -35
+        
+        return {
+            'symbol': symbol,
+            'score': total_score,
+            'signals': signals,
+            'action': 'STRONG_BUY' if total_score >= 70 else
+                     'BUY' if total_score >= buy_threshold else
+                     'STRONG_SELL' if total_score <= -70 else
+                     'SELL' if total_score <= sell_threshold else
+                     'HOLD',
+            'timestamp': datetime.now(),
+            'price': current_price
+        }
