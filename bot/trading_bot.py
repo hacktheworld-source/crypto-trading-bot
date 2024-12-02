@@ -919,6 +919,7 @@ class TradingBot:
                     signal['signals']['risk'] < -15 or
                     (signal['signals']['trend'] < -10 and signal['signals']['momentum'] < -10) or
                     not market_conditions['suitable_for_trading']
+                )
             
             return False
             
