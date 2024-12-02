@@ -1884,7 +1884,7 @@ class TradingBot:
                 'nearest_resistance': nearest_resistance,
                 'all_supports': sorted(supports, reverse=True)[:3],  # Top 3 support levels
                 'all_resistances': sorted(resistances)[:3],  # Top 3 resistance levels
-                'support_strength': len([p for p in pivot_lows if abs(p - nearest_support) / nearest_support < 0.02])
+                'support_strength': len([p for p in pivot_lows if abs(p - nearest_support) / nearest_support < 0.02])}
         except Exception as e:
             self.log(f"Error finding support/resistance for {symbol}: {str(e)}", level="error")
             raise
