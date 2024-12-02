@@ -622,3 +622,41 @@ class CommandHandler:
                        
         except Exception as e:
             return f"❌ Error updating trailing stop settings: {str(e)}"
+        
+    def set_take_profit(self, full_tp: float = None, partial_tp: float = None, partial_size: float = None) -> str:
+        """Configure take profit settings"""
+        try:
+            changes = []
+            
+            if full_tp is not None:
+                if 0.1 <= full_tp <= 100.0:
+                    self.trading_bot.take_profit_percentage = full_tp
+                    changes.append(f"full take profit: {full_tp}%")
+                else:
+                    return "❌ Full take profit must be between 0.1 and 100.0"
+                    
+            if partial_tp is not None:
+                if 0.1 <= partial_tp <= full_tp:
+                    self.trading_bot.partial_tp_percentage = partial_tp
+                    changes.append(f"partial take profit: {partial_tp}%")
+                else:
+                    return "❌ Partial take profit must be between 0.1 and full take profit"
+                    
+            if partial_size is not None:
+                if 0.1 <= partial_size <= 0.9:
+                    self.trading_bot.partial_tp_size = partial_size
+                    changes.append(f"partial size: {partial_size*100}%")
+                else:
+                    return "❌ Partial size must be between 0.1 and 0.9"
+                    
+            if changes:
+                self.trading_bot.save_config()
+                return f"✅ Updated take profit settings: {', '.join(changes)}"
+            else:
+                return (f"Current take profit settings:\n"
+                       f"• Full TP: {self.trading_bot.take_profit_percentage}%\n"
+                       f"• Partial TP: {self.trading_bot.partial_tp_percentage}%\n"
+                       f"• Partial Size: {self.trading_bot.partial_tp_size*100}%")
+                   
+        except Exception as e:
+            return f"❌ Error updating take profit settings: {str(e)}"

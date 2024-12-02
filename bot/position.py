@@ -12,6 +12,7 @@ class Position:
         self.lowest_price = entry_price
         self.is_paper = is_paper
         self.partial_exit_taken = False
+        self.original_quantity = quantity
         
         # Initialize trailing stop based on bot settings
         self.trailing_stop_enabled = trading_bot.trailing_stop_enabled
@@ -25,7 +26,7 @@ class Position:
         
     def calculate_profit(self, current_price: float) -> Dict[str, float]:
         current_value = self.quantity * current_price
-        initial_value = self.quantity * self.entry_price
+        initial_value = self.original_quantity * self.entry_price
         
         if initial_value <= 0:
             return {
@@ -33,19 +34,21 @@ class Position:
                 'profit_percentage': 0,
                 'highest_profit_percentage': 0,
                 'drawdown_percentage': 0,
-                'fees_paid': 0
+                'fees_paid': 0,
+                'partial_exit': self.partial_exit_taken
             }
         
         total_fee = (initial_value * 0.006) + (current_value * 0.006)
-        profit = current_value - initial_value - total_fee
-        profit_percentage = (profit / initial_value) * 100
+        profit = current_value - (self.quantity/self.original_quantity * initial_value) - total_fee
+        profit_percentage = (profit / (self.quantity/self.original_quantity * initial_value)) * 100
         
         return {
             'profit_usd': profit,
             'profit_percentage': profit_percentage,
             'highest_profit_percentage': ((self.highest_price - self.entry_price) / self.entry_price) * 100,
             'drawdown_percentage': ((self.lowest_price - self.entry_price) / self.entry_price) * 100,
-            'fees_paid': total_fee
+            'fees_paid': total_fee,
+            'partial_exit': self.partial_exit_taken
         }
 
     def should_trigger_trailing_stop(self, current_price: float) -> bool:

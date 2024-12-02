@@ -280,6 +280,29 @@ async def set_trailing_stop(ctx, setting: str = None, value: float = None):
     
     await ctx.send(response)
 
+@bot.command(name='takeprofit', aliases=['tp'])
+async def set_take_profit(ctx, setting: str = None, value: float = None):
+    """Configure take profit settings"""
+    if not setting:
+        # Show current settings
+        response = command_handler.set_take_profit()
+    elif setting.lower() == 'full' and value is not None:
+        response = command_handler.set_take_profit(full_tp=value)
+    elif setting.lower() == 'partial' and value is not None:
+        response = command_handler.set_take_profit(partial_tp=value)
+    elif setting.lower() == 'size' and value is not None:
+        response = command_handler.set_take_profit(partial_size=value)
+    else:
+        response = (
+            "Usage:\n"
+            "!tp                - Show current settings\n"
+            "!tp full 10       - Set full take profit to 10%\n"
+            "!tp partial 7     - Set partial take profit to 7%\n"
+            "!tp size 0.5      - Set partial size to 50%"
+        )
+    
+    await ctx.send(response)
+
 # Run the bot
 keep_alive()
 bot.run(os.getenv('DISCORD_TOKEN')) 

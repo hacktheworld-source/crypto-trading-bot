@@ -67,6 +67,8 @@ class TradingBot:
             self.position_history: List[Dict[str, Any]] = []  # Track closed positions
             self.stop_loss_percentage = 5.0  # Default 5% stop loss
             self.take_profit_percentage = 10.0  # Default 10% take profit
+            self.partial_tp_percentage = 7.0  # Take partial profits at 7%
+            self.partial_tp_size = 0.5  # Sell 50% at first take profit
             self.max_position_size = 1000.0  # Maximum USD in any single position
             
             # Add configurable trailing stop
@@ -403,9 +405,8 @@ class TradingBot:
             logging.error(f"Error placing buy order for {symbol}: {str(e)}")
             raise
             
-    def _place_sell_order(self, symbol: str) -> None:
+    def _place_sell_order(self, symbol: str, partial: bool = False) -> None:
         try:
-            # Get current position
             position = self.positions.get(symbol)
             if not position:
                 logging.warning(f"No position found for {symbol}, cannot sell")
@@ -414,12 +415,16 @@ class TradingBot:
             product_id = f"{symbol}-USD"
             current_price = float(self.client.get_product(product_id).price)
             
+            # Calculate sell amount based on whether it's partial or full
+            sell_quantity = position.quantity * (self.partial_tp_size if partial else 1.0)
+            sell_amount = sell_quantity * current_price
+            
             self.client.create_order(
                 product_id=product_id,
                 side='SELL',
                 order_configuration={
                     'market_market_ioc': {
-                        'quote_size': str(self.trade_amount)
+                        'base_size': str(sell_quantity)  # Use base_size instead of quote_size for selling
                     }
                 },
                 client_order_id=str(int(time.time())))
@@ -427,30 +432,40 @@ class TradingBot:
             # Calculate final profit
             profit_info = position.calculate_profit(current_price)
             
-            # Add to position history
-            self.position_history.append({
-                'symbol': symbol,
-                'entry_price': position.entry_price,
-                'exit_price': current_price,
-                'quantity': position.quantity,
-                'entry_time': position.entry_time,
-                'exit_time': datetime.now(),
-                'profit_usd': profit_info['profit_usd'],
-                'profit_percentage': profit_info['profit_percentage'],
-                'max_profit_percentage': profit_info['highest_profit_percentage'],
-                'max_drawdown': profit_info['drawdown_percentage']
-            })
-            
-            # Remove the position
-            del self.positions[symbol]
+            # Add to position history only on full exit
+            if not partial:
+                self.position_history.append({
+                    'symbol': symbol,
+                    'entry_price': position.entry_price,
+                    'exit_price': current_price,
+                    'quantity': position.original_quantity,  # Use original quantity for history
+                    'entry_time': position.entry_time,
+                    'exit_time': datetime.now(),
+                    'profit_usd': profit_info['profit_usd'],
+                    'profit_percentage': profit_info['profit_percentage'],
+                    'max_profit_percentage': profit_info['highest_profit_percentage'],
+                    'max_drawdown': profit_info['drawdown_percentage'],
+                    'partial_exits_taken': position.partial_exit_taken
+                })
+                # Remove the position
+                del self.positions[symbol]
+            else:
+                # Update position for partial exit
+                position.quantity -= sell_quantity
+                position.partial_exit_taken = True
             
             self.trade_history.append({
                 'timestamp': datetime.now(),
-                'action': 'SELL',
+                'action': 'PARTIAL_SELL' if partial else 'SELL',
                 'symbol': symbol,
-                'amount_usd': self.trade_amount
+                'amount_usd': sell_amount,
+                'price': current_price,
+                'quantity': sell_quantity,
+                'profit': profit_info['profit_usd'],
+                'profit_percentage': profit_info['profit_percentage']
             })
-            logging.info(f"Sell order placed for {symbol}: ${self.trade_amount}")
+            
+            logging.info(f"{'Partial' if partial else 'Full'} sell order placed for {symbol}: {sell_quantity} @ ${current_price}")
             
         except Exception as e:
             logging.error(f"Error placing sell order for {symbol}: {str(e)}")
@@ -551,13 +566,21 @@ class TradingBot:
             return False 
 
     def save_config(self):
+        """Save current configuration to file"""
         config = {
             'watched_coins': list(self.watched_coins),
             'trading_interval': self.trading_interval,
             'rsi_period': self.rsi_period,
             'rsi_overbought': self.rsi_overbought,
             'rsi_oversold': self.rsi_oversold,
-            'trade_amount': self.trade_amount
+            'trade_amount': self.trade_amount,
+            'stop_loss_percentage': self.stop_loss_percentage,
+            'take_profit_percentage': self.take_profit_percentage,
+            'partial_tp_percentage': self.partial_tp_percentage,
+            'partial_tp_size': self.partial_tp_size,
+            'trailing_stop_percentage': self.trailing_stop_percentage,
+            'trailing_stop_enabled': self.trailing_stop_enabled,
+            'trailing_stop_activation': self.trailing_stop_activation
         }
         try:
             with open('bot_config.json', 'w') as f:
@@ -1081,38 +1104,61 @@ class TradingBot:
             return False
 
     def _check_risk_management(self, symbol: str) -> None:
-        """Enhanced risk management with trailing stops"""
         try:
-            position = self.positions.get(symbol)
+            position = self.positions.get(symbol) or self.paper_positions.get(symbol)
             if not position:
                 return
             
             current_price = float(self.client.get_product(f"{symbol}-USD").price)
             profit_info = position.calculate_profit(current_price)
             
-            # Update trailing stop as profit increases
-            if profit_info['profit_percentage'] > 5:  # Above 5% profit
-                # Move stop loss to break even
-                adjusted_stop = max(
-                    position.entry_price,  # Don't go below entry price
-                    current_price * (1 - self.stop_loss_percentage/200)  # Tighter stop
-                )
-            else:
-                adjusted_stop = position.entry_price * (1 - self.stop_loss_percentage/100)
+            # Validate take-profit thresholds
+            if self.take_profit_percentage <= self.partial_tp_percentage:
+                self.log(f"Warning: Full TP ({self.take_profit_percentage}%) is lower than partial TP ({self.partial_tp_percentage}%)", 
+                        level="warning")
+                return
             
-            # Check stops
-            if current_price <= adjusted_stop:
-                self.log(f"Stop loss triggered for {symbol} at {profit_info['profit_percentage']}%")
-                self._place_sell_order(symbol)
-            
-            # Take partial profits at targets
-            elif profit_info['profit_percentage'] >= self.take_profit_percentage:
-                # Sell half the position
+            # Check trailing stop
+            if position.should_trigger_trailing_stop(current_price):
+                self.log(f"Trailing stop triggered for {symbol} at {profit_info['profit_percentage']:.2f}%")
+                if self.paper_trading:
+                    await self._simulate_sell_order(symbol)
+                else:
+                    self._place_sell_order(symbol)
+                return
+
+            # Take partial profits if enabled and not already taken
+            if (not position.partial_exit_taken and 
+                profit_info['profit_percentage'] >= self.partial_tp_percentage):
+                
                 original_quantity = position.quantity
-                self.trade_amount = (original_quantity * current_price) / 2
-                self.log(f"Taking partial profits for {symbol} at {profit_info['profit_percentage']}%")
-                self._place_sell_order(symbol)
-            
+                # Modify trade amount for partial exit
+                self.trade_amount = (original_quantity * current_price * self.partial_tp_size)
+                
+                self.log(f"Taking partial profits ({self.partial_tp_size*100}%) for {symbol} at {profit_info['profit_percentage']:.2f}%")
+                
+                if self.paper_trading:
+                    await self._simulate_sell_order(symbol, partial=True)
+                else:
+                    self._place_sell_order(symbol, partial=True)
+                
+                # Update position after partial exit
+                position.quantity *= (1 - self.partial_tp_size)
+                position.partial_exit_taken = True
+                
+                # Reset trade amount
+                self.trade_amount = self.original_trade_amount
+                return
+
+            # Full take profit
+            if profit_info['profit_percentage'] >= self.take_profit_percentage:
+                self.log(f"Take profit triggered for {symbol} at {profit_info['profit_percentage']:.2f}%")
+                if self.paper_trading:
+                    await self._simulate_sell_order(symbol)
+                else:
+                    self._place_sell_order(symbol)
+                return
+                
         except Exception as e:
             self.log(f"Error in risk management: {str(e)}", level="error")
 
@@ -1240,7 +1286,7 @@ class TradingBot:
             logging.error(f"Error simulating buy order for {symbol}: {str(e)}")
             raise
 
-    def _simulate_sell_order(self, symbol: str) -> None:
+    async def _simulate_sell_order(self, symbol: str, partial: bool = False) -> None:
         """Simulate a sell order with paper trading"""
         try:
             position = self.paper_positions.get(symbol)
@@ -1265,7 +1311,7 @@ class TradingBot:
             # Record trade
             self.paper_trade_history.append({
                 'timestamp': datetime.now(),
-                'action': 'SELL',
+                'action': 'PARTIAL_SELL' if partial else 'SELL',
                 'symbol': symbol,
                 'amount_usd': total_value,
                 'price': current_price,
@@ -1273,13 +1319,19 @@ class TradingBot:
                 'fees': fee,
                 'profit': profit_info['profit_usd'],
                 'profit_percentage': profit_info['profit_percentage'],
-                'is_paper': True
+                'is_paper': True,
+                'is_partial': partial
             })
             
-            # Remove position
-            del self.paper_positions[symbol]
-            
-            logging.info(f"Paper sell order placed for {symbol}: ${total_value:.2f} (Profit: ${profit_info['profit_usd']:.2f})")
+            # For partial sells, update position instead of removing it
+            if partial:
+                position.quantity *= (1 - self.partial_tp_size)
+                position.partial_exit_taken = True
+                logging.info(f"Partial paper sell for {symbol}: ${total_value:.2f} (Remaining: {position.quantity:.8f})")
+            else:
+                # Remove position for full sells
+                del self.paper_positions[symbol]
+                logging.info(f"Full paper sell for {symbol}: ${total_value:.2f}")
             
         except Exception as e:
             logging.error(f"Error simulating sell order for {symbol}: {str(e)}")
@@ -1352,7 +1404,8 @@ class TradingBot:
 
     async def send_trade_notification(self, action: str, symbol: str, price: float, 
                                     quantity: float, is_paper: bool = False, 
-                                    profit_info: Dict[str, float] = None):
+                                    profit_info: Dict[str, float] = None,
+                                    is_partial: bool = False):
         """Enhanced trade notification with market context"""
         try:
             # Create rich embed
@@ -1360,8 +1413,12 @@ class TradingBot:
                     discord.Color.red() if action == 'SELL' else \
                     discord.Color.blue()
             
+            title = f"{'📈' if action == 'BUY' else '📉'} {action} {symbol}"
+            if is_partial:
+                title = f"💰 PARTIAL SELL {symbol}"
+            
             embed = discord.Embed(
-                title=f"{'📈' if action == 'BUY' else '📉'} {action} {symbol}",
+                title=title,
                 timestamp=datetime.now(),
                 color=color
             )
