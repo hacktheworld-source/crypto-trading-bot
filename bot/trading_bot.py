@@ -134,10 +134,18 @@ class TradingBot:
             'trading_interval': f"{self.trading_interval//60} minutes"
         })
         
-        last_update_hour = None
+        last_update_time = datetime.now()
         
         while self.trading_active or self.paper_trading:
             try:
+                current_time = datetime.now()
+                
+                # Check if it's time for periodic update
+                if (current_time - last_update_time).total_seconds() >= self.trading_interval:
+                    await self.async_log("Preparing periodic update...")
+                    await self.send_interval_update()
+                    last_update_time = current_time
+                
                 # Add recovery delay for serious errors
                 recovery_delay = 60  # 1 minute
                 
@@ -237,12 +245,6 @@ class TradingBot:
                         except Exception as e:
                             await self.async_log(f"Error processing {symbol}: {str(e)}", level="error")
                             continue
-                        
-                    # Send periodic update if hour has changed
-                    if current_hour != last_update_hour:
-                        await self.async_log("Preparing hourly update...")
-                        await self.send_interval_update()
-                        last_update_hour = current_hour
                         
                     # Log end of iteration
                     await self.async_log(
@@ -361,7 +363,6 @@ class TradingBot:
             prices = pd.Series(
                 [float(candle.close) for candle in reversed(candles)],
                 index=[datetime.fromtimestamp(float(candle.start)) for candle in reversed(candles)]
-            )
             self._last_api_call = time.time()
             self.log(f"Fetched {len(candles)} candles for {symbol}")
             return prices
@@ -1460,6 +1461,41 @@ class TradingBot:
         except Exception as e:
             self.log(f"Error sending trade notification: {str(e)}", level="error")
 
+    def _format_signal_text(self, symbol: str, signal: Dict[str, Any]) -> str:
+        """Format signal data into readable text"""
+        try:
+            # Format basic info
+            text = (
+                f"💰 {symbol} Analysis\n"
+                f"💰 Price: ${signal['price']:,.2f}\n"
+                f"📈 Signal: {signal['action']}\n"
+                f"📊 Score: {signal['score']:.2f}\n"
+                f"📋 Signal Components\n"
+                f"• 📈 Trend (0.4x):    {signal['signals']['trend']:>6.1f}\n"
+                f"• 🔄 Momentum (0.3x): {signal['signals']['momentum']:>6.1f}\n"
+                f"• 📊 Volume (0.2x):   {signal['signals']['volume']:>6.1f}\n"
+                f"• ⚠️ Risk (0.1x):     {signal['signals']['risk']:>6.1f}\n"
+            )
+            
+            # Add position info if exists
+            position = self.paper_positions.get(symbol) if self.paper_trading else self.positions.get(symbol)
+            if position:
+                profit_info = position.calculate_profit(signal['price'])
+                text += (
+                    f"\n💼 Position Status\n"
+                    f"Entry Price: ${position.entry_price:.2f}\n"
+                    f"P/L: {profit_info['profit_percentage']:+.2f}%\n"
+                    f"Max Profit: {profit_info['highest_profit_percentage']:+.2f}%\n"
+                    f"Max Drawdown: {profit_info['drawdown_percentage']:+.2f}%\n"
+                )
+            
+            text += "\n"  # Add spacing between coins
+            return text
+            
+        except Exception as e:
+            self.log(f"Error formatting signal text: {str(e)}", level="error")
+            return f"Error formatting {symbol} signal: {str(e)}\n"
+
     async def send_interval_update(self):
         """Send periodic trading update to Discord"""
         try:
@@ -1467,38 +1503,46 @@ class TradingBot:
             update_text += f"Mode: {'Paper' if self.paper_trading else 'Real'} Trading\n"
             update_text += f"Analyzing {len(self.watched_coins)} coins...\n\n"
             
+            # Split the message into chunks to avoid rate limits
+            chunk_size = 1500  # Discord has a 2000 char limit, we use less to be safe
+            chunks = []
+            current_chunk = ""
+            
             for symbol in self.watched_coins:
                 signal = self._calculate_trade_signal(symbol)
-                current_price = signal['price']
+                signal_text = self._format_signal_text(symbol, signal)
                 
-                # Format signal info with weights
-                signal_info = (
-                    f"📊 {symbol} Analysis\n"
-                    f"💰 Price\n${current_price:,.2f}\n"
-                    f"📈 Signal\n{signal['action']}\n"
-                    f"📊 Score\n{signal['score']:.2f}\n"
-                    f"📋 Signal Components\n"
-                    f"• 📈 Trend ({1.2:.1f}x):    {signal['signals']['trend']:.1f}\n"
-                    f"• 🔄 Momentum (1.0x): {signal['signals']['momentum']:.1f}\n"
-                    f"• 📊 Volume (0.8x):   {signal['signals']['volume']:.1f}\n"
-                    f"• ⚠️ Risk (0.6x):     {signal['signals']['risk']:.1f}"
+                # If adding this signal would exceed chunk size, start new chunk
+                if len(current_chunk) + len(signal_text) > chunk_size:
+                    chunks.append(current_chunk)
+                    current_chunk = signal_text
+                else:
+                    current_chunk += signal_text
+                
+                # Add delay between API calls
+                await asyncio.sleep(0.5)
+            
+            # Add final chunk
+            if current_chunk:
+                chunks.append(current_chunk)
+            
+            # Send chunks with delay between each
+            for i, chunk in enumerate(chunks):
+                await self.send_notification(
+                    f"Part {i+1}/{len(chunks)}:\n{chunk}", 
+                    is_update=True
                 )
-                
-                # Add position info if exists
-                position = self.paper_positions.get(symbol) if self.paper_trading else self.positions.get(symbol)
-                if position:
-                    profit_info = position.calculate_profit(current_price)
-                    signal_info += (
-                        f"\n💼 Position Status\n"
-                        f"Entry Price: ${position.entry_price:.2f}\n"
-                        f"P/L: {profit_info['profit_percentage']:+.2f}%\n"
-                        f"Max Profit: {profit_info['highest_profit_percentage']:+.2f}%\n"
-                        f"Max Drawdown: {profit_info['drawdown_percentage']:+.2f}%"
-                    )
-                
-                update_text += f"{signal_info}\n"
-                
-            await self.send_notification(update_text, is_update=True)
+                await asyncio.sleep(2)  # 2 second delay between messages to avoid rate limits
+            
+            # Send summary footer
+            footer = (
+                f"{'='*30}\n"
+                f"📈 Active Positions: {len(self.paper_positions) if self.paper_trading else len(self.positions)}\n"
+                f"💰 Mode: {'Paper' if self.paper_trading else 'Real'} Trading\n"
+                f"⏰ Next Update: {self.trading_interval//60} minutes"
+            )
+            await asyncio.sleep(1)  # Wait before sending footer
+            await self.send_notification(footer, is_update=True)
             
         except Exception as e:
             self.log(f"Error sending interval update: {str(e)}", level="error")
@@ -2010,7 +2054,7 @@ class TradingBot:
             # Market alignment
             if market_conditions['market_aligned']:
                 btc_correlation = market_conditions.get('btc_correlation', 0)
-                score += min(abs(btc_correlation) * 5, 5)  # Scale based on correlation
+                score += min(abs(btc_correlation) * 5,  # Scale based on correlation
                 
             # Trading conditions
             if market_conditions['suitable_for_trading']:
