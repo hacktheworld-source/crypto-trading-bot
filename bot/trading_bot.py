@@ -2056,8 +2056,8 @@ class TradingBot:
             # Market alignment
             if market_conditions['market_aligned']:
                 btc_correlation = market_conditions.get('btc_correlation', 0)
-                score += min(abs(btc_correlation) * 5,  # Scale based on correlation
-                
+                score += min(abs(btc_correlation) * 5, 5)  # Scale based on correlation, cap at 5
+            
             # Trading conditions
             if market_conditions['suitable_for_trading']:
                 score += 3
