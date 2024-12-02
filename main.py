@@ -254,6 +254,32 @@ async def analyze_coin(ctx, symbol: str):
     response = command_handler.analyze_coin(symbol.upper())
     await ctx.send(response)
 
+@bot.command(name='trailing')
+async def set_trailing_stop(ctx, setting: str = None, value: float = None):
+    """Configure trailing stop settings"""
+    if not setting:
+        # Show current settings
+        response = command_handler.set_trailing_stop()
+    elif setting.lower() == 'enable':
+        response = command_handler.set_trailing_stop(enabled=True)
+    elif setting.lower() == 'disable':
+        response = command_handler.set_trailing_stop(enabled=False)
+    elif setting.lower() == 'percent' and value is not None:
+        response = command_handler.set_trailing_stop(percentage=value)
+    elif setting.lower() == 'activation' and value is not None:
+        response = command_handler.set_trailing_stop(activation=value)
+    else:
+        response = (
+            "Usage:\n"
+            "!trailing              - Show current settings\n"
+            "!trailing enable       - Enable trailing stop\n"
+            "!trailing disable      - Disable trailing stop\n"
+            "!trailing percent 5.0  - Set trailing stop percentage\n"
+            "!trailing activation 3 - Set profit % before activation"
+        )
+    
+    await ctx.send(response)
+
 # Run the bot
 keep_alive()
 bot.run(os.getenv('DISCORD_TOKEN')) 

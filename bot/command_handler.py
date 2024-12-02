@@ -587,3 +587,38 @@ class CommandHandler:
             
         except Exception as e:
             return f"Error analyzing {symbol}: {str(e)}"
+        
+    def set_trailing_stop(self, percentage: float = None, enabled: bool = None, activation: float = None) -> str:
+        """Configure trailing stop settings"""
+        try:
+            changes = []
+            
+            if percentage is not None:
+                if 0.1 <= percentage <= 20.0:
+                    self.trading_bot.trailing_stop_percentage = percentage
+                    changes.append(f"percentage: {percentage}%")
+                else:
+                    return "❌ Percentage must be between 0.1 and 20.0"
+                    
+            if enabled is not None:
+                self.trading_bot.trailing_stop_enabled = enabled
+                changes.append(f"enabled: {enabled}")
+                
+            if activation is not None:
+                if 0.0 <= activation <= 10.0:
+                    self.trading_bot.trailing_stop_activation = activation
+                    changes.append(f"activation: {activation}%")
+                else:
+                    return "❌ Activation must be between 0.0 and 10.0"
+                    
+            if changes:
+                self.trading_bot.save_config()
+                return f"✅ Updated trailing stop settings: {', '.join(changes)}"
+            else:
+                return (f"Current trailing stop settings:\n"
+                       f"• Enabled: {self.trading_bot.trailing_stop_enabled}\n"
+                       f"• Percentage: {self.trading_bot.trailing_stop_percentage}%\n"
+                       f"• Activation: {self.trading_bot.trailing_stop_activation}%")
+                       
+        except Exception as e:
+            return f"❌ Error updating trailing stop settings: {str(e)}"

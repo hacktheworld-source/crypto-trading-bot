@@ -68,6 +68,12 @@ class TradingBot:
             self.stop_loss_percentage = 5.0  # Default 5% stop loss
             self.take_profit_percentage = 10.0  # Default 10% take profit
             self.max_position_size = 1000.0  # Maximum USD in any single position
+            
+            # Add configurable trailing stop
+            self.trailing_stop_percentage = 5.0  # Default 5%
+            self.trailing_stop_enabled = True
+            self.trailing_stop_activation = 3.0  # Only activate after 3% profit
+            
             self.load_config()
             
             # Paper trading attributes
@@ -845,7 +851,7 @@ class TradingBot:
         }
 
     def _should_trade(self, symbol: str, action: str) -> bool:
-        """Determine if we should trade based on the weighted signal system"""
+        """Enhanced trade validation"""
         try:
             # Calculate position size first
             position_size = self._calculate_position_size(symbol)
@@ -856,16 +862,36 @@ class TradingBot:
             signal = self._calculate_trade_signal(symbol)
             if not signal:
                 return False
-
+                
+            # Validate signal consistency
             if action == 'BUY':
-                return signal['action'] in ['BUY', 'STRONG_BUY']
+                if signal['action'] not in ['BUY', 'STRONG_BUY']:
+                    return False
+                if signal['signals']['trend'] <= 0:
+                    self.log(f"Rejecting buy: Non-positive trend ({signal['signals']['trend']})")
+                    return False
+                if abs(signal['signals']['volume']) >= abs(signal['signals']['trend']):
+                    self.log(f"Rejecting buy: Volume concerns (v:{signal['signals']['volume']}, t:{signal['signals']['trend']})")
+                    return False
+                    
             elif action == 'SELL':
-                return signal['action'] in ['SELL', 'STRONG_SELL']
+                if signal['action'] not in ['SELL', 'STRONG_SELL']:
+                    return False
+                if signal['signals']['trend'] >= 0:
+                    self.log(f"Rejecting sell: Non-negative trend ({signal['signals']['trend']})")
+                    return False
 
-            return False
+            # Log trade validation
+            self.log(f"Trade validation for {symbol} {action}:", context={
+                'signal': signal['action'],
+                'score': signal['score'],
+                'components': signal['signals']
+            })
+            
+            return True
 
         except Exception as e:
-            self.log(f"Error in trade decision: {str(e)}", level="error")
+            self.log(f"Error in trade validation: {str(e)}", level="error")
             return False
 
     def get_position_info(self, symbol: Optional[str] = None) -> Dict[str, Any]:
@@ -1828,13 +1854,22 @@ class TradingBot:
             # Calculate trend signal (-30 to +30)
             if ma_data['trend'] == 'Strong Uptrend':
                 signals['trend'] = 30
+            elif ma_data['trend'] == 'Moderate Uptrend':
+                signals['trend'] = 20
             elif ma_data['trend'] == 'Weak Uptrend':
                 signals['trend'] = 15
             elif ma_data['trend'] == 'Strong Downtrend':
                 signals['trend'] = -30
+            elif ma_data['trend'] == 'Moderate Downtrend':
+                signals['trend'] = -20
             elif ma_data['trend'] == 'Weak Downtrend':
                 signals['trend'] = -15
+            else:  # Mixed or Neutral trend
+                signals['trend'] = 0
                 
+            # Log trend calculation
+            self.log(f"Trend signal calculated: {signals['trend']} based on {ma_data['trend']}")
+            
             # Calculate momentum signal (-25 to +25)
             momentum_score = 0
             if sentiment['momentum']['short_term'] == 'bullish':
@@ -1897,15 +1932,28 @@ class TradingBot:
             buy_threshold = 35
             sell_threshold = -35
             
+            # Validate final score
+            action = ('STRONG_BUY' if total_score >= 70 else
+                     'BUY' if total_score >= buy_threshold else
+                     'STRONG_SELL' if total_score <= -70 else
+                     'SELL' if total_score <= sell_threshold else
+                     'HOLD')
+            
+            # Validate signal consistency
+            if action in ['BUY', 'STRONG_BUY'] and signals['trend'] <= 0:
+                self.log(f"Warning: Buy signal with non-positive trend", level="warning")
+                action = 'HOLD'
+                
+            if action != 'HOLD' and abs(signals['volume']) >= abs(signals['trend']):
+                self.log(f"Warning: Volume signal ({signals['volume']}) overshadows trend ({signals['trend']})", 
+                        level="warning")
+                action = 'HOLD'
+            
             return {
                 'symbol': ma_data['symbol'],
                 'score': total_score,
                 'signals': signals,
-                'action': 'STRONG_BUY' if total_score >= 70 else
-                         'BUY' if total_score >= buy_threshold else
-                         'STRONG_SELL' if total_score <= -70 else
-                         'SELL' if total_score <= sell_threshold else
-                         'HOLD',
+                'action': action,
                 'timestamp': datetime.now(),
                 'price': current_price
             }
