@@ -357,7 +357,6 @@ class TradingBot:
                     }
                 },
                 client_order_id=str(int(time.time()))
-            )
             
             # Create new position
             self.positions[symbol] = Position(
@@ -1124,7 +1123,6 @@ class TradingBot:
             raise
 
     async def _simulate_buy_order(self, symbol: str) -> None:
-        """Simulate a buy order with paper trading"""
         try:
             product_id = f"{symbol}-USD"
             current_price = float(self.client.get_product(product_id).price)
@@ -1140,13 +1138,14 @@ class TradingBot:
             
             quantity = actual_trade_amount / current_price
             
-            # Create new paper position
+            # Create new paper position - Pass self as trading_bot
             self.paper_positions[symbol] = Position(
                 symbol=symbol,
                 entry_price=current_price,
                 quantity=quantity,
                 entry_time=datetime.now(),
-                is_paper=True
+                is_paper=True,
+                trading_bot=self  # Add this line
             )
             
             # Update paper balance
@@ -1360,73 +1359,78 @@ class TradingBot:
                 try:
                     await self.async_log(f"Analyzing {symbol}...")
                     
-                    # Get comprehensive analysis
-                    current_price = float(self.client.get_product(f"{symbol}-USD").price)
-                    signal = self._calculate_trade_signal(symbol)
-                    position = self.paper_positions.get(symbol) if self.paper_trading else self.positions.get(symbol)
-                    
-                    # Create embed for this coin
-                    embed = discord.Embed(
-                        title=f"📊 {symbol} Analysis",
-                        timestamp=datetime.now(),
-                        color=discord.Color.green() if signal['action'] in ['BUY', 'STRONG_BUY'] else
-                              discord.Color.red() if signal['action'] in ['SELL', 'STRONG_SELL'] else
-                              discord.Color.blue()
-                    )
-                    
-                    # Add price and signal info
-                    embed.add_field(
-                        name="💰 Price",
-                        value=f"${current_price:,.2f}",
-                        inline=True
-                    )
-                    embed.add_field(
-                        name="📈 Signal",
-                        value=signal['action'],
-                        inline=True
-                    )
-                    embed.add_field(
-                        name="📊 Score",
-                        value=f"{signal['score']:.2f}",
-                        inline=True
-                    )
-                    
-                    # Add signal components
-                    components = "\n".join([
-                        f"• 📈 Trend:     {signal['signals']['trend']:>6.1f}",
-                        f"• 🔄 Momentum:  {signal['signals']['momentum']:>6.1f}",
-                        f"• 📊 Volume:    {signal['signals']['volume']:>6.1f}",
-                        f"• 🌍 Sentiment: {signal['signals']['sentiment']:>6.1f}",
-                        f"• ⚠️ Risk:      {signal['signals']['risk']:>6.1f}"
-                    ])
-                    embed.add_field(
-                        name="📋 Signal Components",
-                        value=f"```{components}```",
-                        inline=False
-                    )
-                    
-                    # Add position info if exists
-                    if position:
-                        profit_info = position.calculate_profit(current_price)
-                        position_info = (
-                            f"Entry Price: ${position.entry_price:,.2f}\n"
-                            f"P/L: {profit_info['profit_percentage']:+.2f}%\n"
-                            f"Max Profit: {profit_info['highest_profit_percentage']:+.2f}%\n"
-                            f"Max Drawdown: {profit_info['drawdown_percentage']:+.2f}%"
+                    # Get comprehensive analysis with error handling
+                    try:
+                        current_price = float(self.client.get_product(f"{symbol}-USD").price)
+                        signal = self._calculate_trade_signal(symbol)
+                        position = self.paper_positions.get(symbol) if self.paper_trading else self.positions.get(symbol)
+                        
+                        # Create embed for this coin
+                        embed = discord.Embed(
+                            title=f"📊 {symbol} Analysis",
+                            timestamp=datetime.now(),
+                            color=discord.Color.green() if signal['action'] in ['BUY', 'STRONG_BUY'] else
+                                  discord.Color.red() if signal['action'] in ['SELL', 'STRONG_SELL'] else
+                                  discord.Color.blue()
+                        )
+                        
+                        # Add price and signal info
+                        embed.add_field(
+                            name="💰 Price",
+                            value=f"${current_price:,.2f}",
+                            inline=True
                         )
                         embed.add_field(
-                            name="💼 Position Status",
-                            value=f"```{position_info}```",
+                            name="📈 Signal",
+                            value=signal['action'],
+                            inline=True
+                        )
+                        embed.add_field(
+                            name="📊 Score",
+                            value=f"{signal['score']:.2f}",
+                            inline=True
+                        )
+                        
+                        # Add signal components
+                        components = "\n".join([
+                            f"• 📈 Trend:     {signal['signals']['trend']:>6.1f}",
+                            f"• 🔄 Momentum:  {signal['signals']['momentum']:>6.1f}",
+                            f"• 📊 Volume:    {signal['signals']['volume']:>6.1f}",
+                            f"• 🌍 Sentiment: {signal['signals']['sentiment']:>6.1f}",
+                            f"• ⚠️ Risk:      {signal['signals']['risk']:>6.1f}"
+                        ])
+                        embed.add_field(
+                            name="📋 Signal Components",
+                            value=f"```{components}```",
                             inline=False
                         )
-                    
-                    # Send individual coin analysis
-                    if self.discord_channel:
-                        await self.discord_channel.send(embed=embed)
-                    await self.async_log(f"Analysis sent for {symbol}")
-                    
-                    # Small delay between messages to prevent rate limiting
-                    await asyncio.sleep(1)
+                        
+                        # Add position info if exists
+                        if position:
+                            profit_info = position.calculate_profit(current_price)
+                            position_info = (
+                                f"Entry Price: ${position.entry_price:,.2f}\n"
+                                f"P/L: {profit_info['profit_percentage']:+.2f}%\n"
+                                f"Max Profit: {profit_info['highest_profit_percentage']:+.2f}%\n"
+                                f"Max Drawdown: {profit_info['drawdown_percentage']:+.2f}%"
+                            )
+                            embed.add_field(
+                                name="💼 Position Status",
+                                value=f"```{position_info}```",
+                                inline=False
+                            )
+                        
+                        # Send individual coin analysis
+                        if self.discord_channel:
+                            await self.discord_channel.send(embed=embed)
+                        await self.async_log(f"Analysis sent for {symbol}")
+                        
+                        # Small delay between messages to prevent rate limiting
+                        await asyncio.sleep(1)
+                        
+                    except Exception as analysis_error:
+                        await self.async_log(f"Error in analysis for {symbol}: {str(analysis_error)}", level="error")
+                        continue
                     
                 except Exception as e:
                     error_msg = f"Error analyzing {symbol}: {str(e)}"
