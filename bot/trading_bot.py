@@ -898,14 +898,14 @@ class TradingBot:
             
             # Define thresholds as class constants
             TREND_THRESHOLD = 15
-            MOMENTUM_THRESHOLD = 10
-            VOLUME_THRESHOLD = 5
+            MOMENTUM_THRESHOLD = 5  # Reduced from 10
+            VOLUME_THRESHOLD = 3    # Reduced from 5
             RISK_THRESHOLD = -10
-            SCORE_THRESHOLD = 50
+            SCORE_THRESHOLD = 15    # Matches BUY_THRESHOLD from signal components
             
-            if action == 'BUY' and not has_position:  # Only buy if no position exists
+            if action == 'BUY' and not has_position:
                 return (
-                    signal['action'] in ['STRONG_BUY'] and 
+                    signal['action'] in ['BUY', 'STRONG_BUY'] and
                     signal['signals']['trend'] > TREND_THRESHOLD and
                     signal['signals']['momentum'] > MOMENTUM_THRESHOLD and
                     signal['signals']['volume'] > VOLUME_THRESHOLD and
@@ -919,7 +919,6 @@ class TradingBot:
                     signal['signals']['risk'] < -15 or
                     (signal['signals']['trend'] < -10 and signal['signals']['momentum'] < -10) or
                     not market_conditions['suitable_for_trading']
-                )
             
             return False
             
@@ -1108,18 +1107,13 @@ class TradingBot:
             
             current_price = float(self.client.get_product(f"{symbol}-USD").price)
             profit_info = position.calculate_profit(current_price)
-            
-            # Update technical indicators for risk assessment
             signal = self._calculate_trade_signal(symbol)
-            risk_score = signal['signals']['risk']
             
-            # Enhanced stop loss with dynamic adjustment
-            stop_loss_price = position.entry_price * (1 - self.stop_loss_percentage/100)
-            if risk_score < -10:  # High risk environment
-                stop_loss_price = position.entry_price * (1 - (self.stop_loss_percentage * 0.8)/100)  # Tighter stop
+            # Dynamic risk adjustment based on signal
+            risk_multiplier = 0.8 if signal['signals']['risk'] < -10 else 1.0
+            stop_loss_price = position.entry_price * (1 - (self.stop_loss_percentage * risk_multiplier)/100)
             
             if current_price <= stop_loss_price:
-                self.log(f"Stop loss triggered for {symbol} at {profit_info['profit_percentage']:.2f}%")
                 await self._execute_exit(symbol, "Stop Loss", position.is_paper)
                 return
             
@@ -1892,11 +1886,16 @@ class TradingBot:
                                sentiment: Dict[str, Any], 
                                market_conditions: Dict[str, Any]) -> Dict[str, Any]:
         try:
-            # Define component weights as class constants
-            TREND_WEIGHT = 0.4     # 40% weight
-            MOMENTUM_WEIGHT = 0.3  # 30% weight
-            VOLUME_WEIGHT = 0.2    # 20% weight
-            RISK_WEIGHT = 0.1      # 10% weight
+            # Define component weights and thresholds as class constants
+            TREND_WEIGHT = 0.4
+            MOMENTUM_WEIGHT = 0.3
+            VOLUME_WEIGHT = 0.2
+            RISK_WEIGHT = 0.1
+            
+            STRONG_BUY_THRESHOLD = 20
+            BUY_THRESHOLD = 15
+            STRONG_SELL_THRESHOLD = -20
+            SELL_THRESHOLD = -15
             
             # Calculate scores
             trend_score = self._calculate_trend_score(ma_data)
@@ -1912,15 +1911,15 @@ class TradingBot:
                 risk_score * RISK_WEIGHT
             )
             
-            # More balanced action determination
+            # Action determination with trend and volume requirements
             action = 'HOLD'
-            if final_score >= 30 and trend_score > 15 and volume_score > 5:
+            if final_score >= STRONG_BUY_THRESHOLD and trend_score > 15 and volume_score > 5:
                 action = 'STRONG_BUY'
-            elif final_score >= 15 and trend_score > 10:
+            elif final_score >= BUY_THRESHOLD and trend_score > 10:
                 action = 'BUY'
-            elif final_score <= -30 and trend_score < -15 and volume_score < -5:
+            elif final_score <= STRONG_SELL_THRESHOLD and trend_score < -15 and volume_score < -5:
                 action = 'STRONG_SELL'
-            elif final_score <= -15 and trend_score < -10:
+            elif final_score <= SELL_THRESHOLD and trend_score < -10:
                 action = 'SELL'
             
             return {
