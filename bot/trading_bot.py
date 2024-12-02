@@ -356,7 +356,7 @@ class TradingBot:
                         'quote_size': str(self.trade_amount)
                     }
                 },
-                client_order_id=str(int(time.time()))
+                client_order_id=str(int(time.time())))
             
             # Create new position
             self.positions[symbol] = Position(
