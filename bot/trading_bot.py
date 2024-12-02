@@ -1410,7 +1410,6 @@ class TradingBot:
                             f"• 📈 Trend:     {signal['signals']['trend']:>6.1f}",
                             f"• 🔄 Momentum:  {signal['signals']['momentum']:>6.1f}",
                             f"• 📊 Volume:    {signal['signals']['volume']:>6.1f}",
-                            f"• 🌍 Sentiment: {signal['signals']['sentiment']:>6.1f}",
                             f"• ⚠️ Risk:      {signal['signals']['risk']:>6.1f}"
                         ])
                         embed.add_field(
