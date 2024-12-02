@@ -20,6 +20,9 @@ class Position:
         self.trailing_stop_activation = trading_bot.trailing_stop_activation
         self.trailing_stop_price = entry_price * (1 - self.trailing_stop_percentage/100)
         
+        # Add stop loss tracking
+        self.stop_loss_price = entry_price * (1 - trading_bot.stop_loss_percentage/100)
+        
     def update_price(self, current_price: float) -> None:
         self.highest_price = max(self.highest_price, current_price)
         self.lowest_price = min(self.lowest_price, current_price)

@@ -303,6 +303,15 @@ async def set_take_profit(ctx, setting: str = None, value: float = None):
     
     await ctx.send(response)
 
+@bot.command(name='sl')
+async def set_stop_loss(ctx, percentage: float = None):
+    """Configure stop loss settings"""
+    if percentage is None:
+        response = command_handler.set_stop_loss()
+    else:
+        response = command_handler.set_stop_loss(percentage)
+    await ctx.send(response)
+
 # Run the bot
 keep_alive()
 bot.run(os.getenv('DISCORD_TOKEN')) 

@@ -574,7 +574,7 @@ class TradingBot:
             'rsi_overbought': self.rsi_overbought,
             'rsi_oversold': self.rsi_oversold,
             'trade_amount': self.trade_amount,
-            'stop_loss_percentage': self.stop_loss_percentage,
+            'stop_loss_percentage': self.stop_loss_percentage,  # Add this
             'take_profit_percentage': self.take_profit_percentage,
             'partial_tp_percentage': self.partial_tp_percentage,
             'partial_tp_size': self.partial_tp_size,
@@ -1112,6 +1112,22 @@ class TradingBot:
             current_price = float(self.client.get_product(f"{symbol}-USD").price)
             profit_info = position.calculate_profit(current_price)
             
+            # Stop loss check - do this first before other checks
+            stop_loss_price = position.entry_price * (1 - self.stop_loss_percentage/100)
+            if current_price <= stop_loss_price:
+                self.log(f"Stop loss triggered for {symbol} at {profit_info['profit_percentage']:.2f}%")
+                if self.paper_trading:
+                    await self._simulate_sell_order(symbol)
+                else:
+                    self._place_sell_order(symbol)
+                await self.send_trade_notification(
+                    'SELL', symbol, current_price, 
+                    position.quantity, is_paper=self.paper_trading,
+                    profit_info=profit_info,
+                    reason="Stop Loss"
+                )
+                return
+            
             # Validate take-profit thresholds
             if self.take_profit_percentage <= self.partial_tp_percentage:
                 self.log(f"Warning: Full TP ({self.take_profit_percentage}%) is lower than partial TP ({self.partial_tp_percentage}%)", 
@@ -1150,7 +1166,7 @@ class TradingBot:
                 self.trade_amount = self.original_trade_amount
                 return
 
-            # Full take profit
+            # Take profit checks
             if profit_info['profit_percentage'] >= self.take_profit_percentage:
                 self.log(f"Take profit triggered for {symbol} at {profit_info['profit_percentage']:.2f}%")
                 if self.paper_trading:
@@ -1158,7 +1174,7 @@ class TradingBot:
                 else:
                     self._place_sell_order(symbol)
                 return
-                
+
         except Exception as e:
             self.log(f"Error in risk management: {str(e)}", level="error")
 
@@ -1405,17 +1421,20 @@ class TradingBot:
     async def send_trade_notification(self, action: str, symbol: str, price: float, 
                                     quantity: float, is_paper: bool = False, 
                                     profit_info: Dict[str, float] = None,
-                                    is_partial: bool = False):
+                                    reason: str = None):
         """Enhanced trade notification with market context"""
         try:
-            # Create rich embed
             color = discord.Color.green() if action == 'BUY' else \
                     discord.Color.red() if action == 'SELL' else \
                     discord.Color.blue()
             
+            # Add reason to title if provided
             title = f"{'📈' if action == 'BUY' else '📉'} {action} {symbol}"
-            if is_partial:
-                title = f"💰 PARTIAL SELL {symbol}"
+            if reason:
+                title += f" ({reason})"
+            
+            if is_paper:
+                title = "📝 PAPER " + title
             
             embed = discord.Embed(
                 title=title,
@@ -1866,7 +1885,6 @@ class TradingBot:
                 'all_supports': sorted(supports, reverse=True)[:3],  # Top 3 support levels
                 'all_resistances': sorted(resistances)[:3],  # Top 3 resistance levels
                 'support_strength': len([p for p in pivot_lows if abs(p - nearest_support) / nearest_support < 0.02])
-            }
         except Exception as e:
             self.log(f"Error finding support/resistance for {symbol}: {str(e)}", level="error")
             raise

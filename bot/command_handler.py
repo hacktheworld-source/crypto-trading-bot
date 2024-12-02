@@ -660,3 +660,19 @@ class CommandHandler:
                    
         except Exception as e:
             return f"❌ Error updating take profit settings: {str(e)}"
+        
+    def set_stop_loss(self, percentage: float = None) -> str:
+        """Configure stop loss settings"""
+        try:
+            if percentage is None:
+                return f"Current stop loss: {self.trading_bot.stop_loss_percentage}%"
+            
+            if 0.1 <= percentage <= 20.0:
+                self.trading_bot.stop_loss_percentage = percentage
+                self.trading_bot.save_config()
+                return f"✅ Updated stop loss to {percentage}%"
+            else:
+                return "❌ Stop loss must be between 0.1% and 20.0%"
+            
+        except Exception as e:
+            return f"❌ Error updating stop loss: {str(e)}"
