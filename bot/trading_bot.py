@@ -965,6 +965,10 @@ class TradingBot:
 
     def calculate_moving_averages(self, symbol: str) -> Dict[str, Any]:
         try:
+            # Get enough historical data for calculations
+            end = datetime.now()
+            start = end - timedelta(days=250)  # Need enough data for 200MA
+            
             # Get candles with OHLCV data
             response = self.client.get_candles(
                 product_id=f"{symbol}-USD",
@@ -973,8 +977,24 @@ class TradingBot:
                 granularity="ONE_DAY"
             )
             
-            # Extract candle data for trend analysis
-            candles = [
+            # Convert candles to pandas Series
+            prices = pd.Series(
+                [float(candle.close) for candle in reversed(response.candles)],
+                index=[datetime.fromtimestamp(float(candle.start)) for candle in reversed(response.candles)]
+            )
+            
+            # Calculate moving averages
+            sma_20 = prices.rolling(window=20).mean()
+            sma_50 = prices.rolling(window=50).mean()
+            sma_200 = prices.rolling(window=200).mean()
+            ema_12 = prices.ewm(span=12, adjust=False).mean()
+            ema_26 = prices.ewm(span=26, adjust=False).mean()
+            
+            # Get latest values
+            current_price = prices.iloc[-1]
+            
+            # Store recent candles for trend analysis
+            recent_candles = [
                 {
                     'open': float(candle.open),
                     'high': float(candle.high),
@@ -982,25 +1002,23 @@ class TradingBot:
                     'close': float(candle.close),
                     'volume': float(candle.volume)
                 }
-                for candle in response.candles
+                for candle in response.candles[-10:]  # Keep last 10 candles
             ]
             
-            # Calculate MAs using pandas
-            prices = pd.Series([c['close'] for c in candles])
-            
             return {
-                'current_price': prices.iloc[-1],
-                'sma_20': prices.rolling(20).mean().iloc[-1],
-                'sma_50': prices.rolling(50).mean().iloc[-1],
-                'sma_200': prices.rolling(200).mean().iloc[-1],
-                'ema_12': prices.ewm(span=12).mean().iloc[-1],
-                'ema_26': prices.ewm(span=26).mean().iloc[-1],
-                'candles': candles[-10:],  # Keep last 10 candles for trend analysis
-                'trend': self._determine_trend(prices.iloc[-1], 
-                                             prices.rolling(20).mean().iloc[-1],
-                                             prices.rolling(50).mean().iloc[-1],
-                                             prices.rolling(200).mean().iloc[-1])
+                'current_price': current_price,
+                'sma_20': sma_20.iloc[-1],
+                'sma_50': sma_50.iloc[-1],
+                'sma_200': sma_200.iloc[-1],
+                'ema_12': ema_12.iloc[-1],
+                'ema_26': ema_26.iloc[-1],
+                'candles': recent_candles,
+                'trend': self._determine_trend(current_price, 
+                                             sma_20.iloc[-1],
+                                             sma_50.iloc[-1],
+                                             sma_200.iloc[-1])
             }
+            
         except Exception as e:
             self.log(f"Error calculating MAs for {symbol}: {str(e)}", level="error")
             raise
@@ -1802,136 +1820,98 @@ class TradingBot:
             self.log(f"Error calculating BTC correlation for {symbol}: {str(e)}", level="error")
             return 0.0  # Default to no correlation on error
 
-    def _calculate_trend_score(self, ma_data: Dict[str, Any]) -> float:
-        """Calculate detailed trend score based on multiple weighted factors"""
+    def _calculate_signal_components(self, ma_data: Dict[str, Any], 
+                               volume_data: Dict[str, Any],
+                               sentiment: Dict[str, Any], 
+                               market_conditions: Dict[str, Any]) -> Dict[str, Any]:
+        """Calculate comprehensive trading signal with all components"""
         try:
-            score = 0
-            current_price = ma_data['current_price']
+            # Calculate individual component scores
+            trend_score = self._calculate_trend_score(ma_data)
+            momentum_score = self._calculate_momentum_score(sentiment, ma_data)
+            volume_score = self._calculate_volume_score(volume_data, market_conditions)
+            risk_score = self._calculate_risk_score(market_conditions, sentiment)
             
-            # 1. Price vs Moving Averages (weighted by distance)
-            sma50_diff = ((current_price - ma_data['sma_50']) / ma_data['sma_50']) * 100
-            sma200_diff = ((current_price - ma_data['sma_200']) / ma_data['sma_200']) * 100
+            # Log individual scores for debugging
+            self.log(f"Component scores for {ma_data['symbol']}:", context={
+                'trend': trend_score,
+                'momentum': momentum_score,
+                'volume': volume_score,
+                'risk': risk_score
+            })
             
-            # Weight recent MA more heavily
-            score += min(max(sma50_diff * 0.8, -15), 15)   # Max ±15 points
-            score += min(max(sma200_diff * 0.4, -10), 10)  # Max ±10 points
-            
-            # 2. Moving Average Alignment
-            if ma_data['sma_50'] > ma_data['sma_200']:  # Golden cross condition
-                ma_spread = ((ma_data['sma_50'] - ma_data['sma_200']) / ma_data['sma_200']) * 100
-                score += min(ma_spread * 0.5, 5)  # Max 5 points for strong alignment
-                
-            # 3. EMA Crossovers (more responsive to recent price action)
-            ema_diff = ((ma_data['ema_12'] - ma_data['ema_26']) / ma_data['ema_26']) * 100
-            score += min(max(ema_diff * 0.6, -5), 5)  # Max ±5 points
-            
-            # 4. Price Action Trends
-            if 'candles' in ma_data:
-                recent_candles = ma_data['candles'][-3:]  # Last 3 candles
-                if all(c['close'] > c['open'] for c in recent_candles):  # Strong uptrend
-                    score += 5
-                elif all(c['close'] < c['open'] for c in recent_candles):  # Strong downtrend
-                    score -= 5
-            
-            # Cap final score with clear boundaries
-            final_score = min(max(score, -30), 30)
-            
-            self.log(f"Trend score calculated: {final_score}", 
-                    context={
-                        'price': current_price,
-                        'sma50_diff': sma50_diff,
-                        'sma200_diff': sma200_diff,
-                        'ema_diff': ema_diff,
-                        'ma_alignment': ma_spread if 'ma_spread' in locals() else None
-                    })
-            return final_score
-            
-        except Exception as e:
-            self.log(f"Error calculating trend score: {str(e)}", level="error")
-            return 0
-
-    def _calculate_signal_components(self, ma_data: Dict[str, Any], volume_data: Dict[str, Any], 
-                               sentiment: Dict[str, Any], market_conditions: Dict[str, Any]) -> Dict[str, Any]:
-        """Calculate detailed signal components with comprehensive scoring"""
-        try:
-            signals = {}
-            current_price = ma_data['current_price']
-            
-            # Calculate individual components
-            signals['trend'] = self._calculate_trend_score(ma_data)
-            signals['volume'] = self._calculate_volume_score(volume_data, market_conditions)
-            signals['momentum'] = self._calculate_momentum_score(sentiment, ma_data)
-            signals['risk'] = self._calculate_risk_score(market_conditions, sentiment)
-            
-            # Calculate total score with weighted components
-            total_score = (
-                signals['trend'] * 1.2 +      # Trend gets highest weight
-                signals['momentum'] * 1.0 +    # Standard weight
-                signals['volume'] * 0.8 +      # Slightly lower weight
-                signals['risk'] * 0.6          # Lowest weight but still significant
+            # Calculate weighted final score
+            final_score = (
+                trend_score * 0.4 +      # 40% weight on trend
+                momentum_score * 0.3 +    # 30% weight on momentum
+                volume_score * 0.2 +      # 20% weight on volume
+                risk_score * 0.1          # 10% weight on risk
             )
             
-            # Define dynamic thresholds based on market conditions
-            base_threshold = 35
-            if market_conditions['is_volatile']:
-                base_threshold = 45  # Require stronger signals in volatile markets
-            if not market_conditions['suitable_for_trading']:
-                base_threshold = 50  # Even higher threshold in poor conditions
-                
-            # Determine action based on weighted score
-            if total_score >= base_threshold * 1.5:
+            # Determine action based on final score and conditions
+            action = 'HOLD'
+            if final_score >= 15 and trend_score > 0 and volume_score > 0:
                 action = 'STRONG_BUY'
-            elif total_score >= base_threshold:
+            elif final_score >= 5 and trend_score > 0:
                 action = 'BUY'
-            elif total_score <= -base_threshold * 1.5:
+            elif final_score <= -15 and trend_score < 0 and volume_score < 0:
                 action = 'STRONG_SELL'
-            elif total_score <= -base_threshold:
+            elif final_score <= -5 and trend_score < 0:
                 action = 'SELL'
-            else:
-                action = 'HOLD'
-                
-            # Additional validation checks
-            if action in ['BUY', 'STRONG_BUY']:
-                if signals['risk'] < -5:  # High risk environment
-                    self.log("Buy signal rejected due to high risk", level="warning")
-                    action = 'HOLD'
-                if signals['trend'] <= 0:  # No trend confirmation
-                    self.log("Buy signal rejected due to lack of trend confirmation", level="warning")
-                    action = 'HOLD'
-                
+            
             return {
                 'symbol': ma_data['symbol'],
-                'score': total_score,
-                'signals': signals,
+                'price': ma_data['current_price'],
+                'score': final_score,
+                'signals': {
+                    'trend': trend_score,
+                    'momentum': momentum_score,
+                    'volume': volume_score,
+                    'risk': risk_score
+                },
                 'action': action,
-                'timestamp': datetime.now(),
-                'price': current_price,
-                'thresholds': {
-                    'base': base_threshold,
-                    'risk_limit': -5,
-                    'trend_requirement': 0
-                }
+                'timestamp': datetime.now()
             }
             
         except Exception as e:
             self.log(f"Error calculating signal components: {str(e)}", level="error")
             return self._get_fallback_signal(ma_data['symbol'], str(e))
 
-    def _get_fallback_signal(self, symbol: str, error_type: str) -> Dict[str, Any]:
-        """Get a safe fallback signal when errors occur"""
-        return {
-            'symbol': symbol,
-            'score': 0,
-            'signals': {
-                'trend': 0,
-                'momentum': 0,
-                'volume': 0,
-                'risk': 0
-            },
-            'action': 'HOLD',
-            'timestamp': datetime.now(),
-            'error': error_type
-        }
+    def _calculate_trend_score(self, ma_data: Dict[str, Any]) -> float:
+        """Calculate trend score based on moving averages"""
+        try:
+            score = 0
+            current_price = ma_data['current_price']
+            
+            # Score based on MA relationships
+            if current_price > ma_data['sma_20']:
+                score += 5
+            if current_price > ma_data['sma_50']:
+                score += 7
+            if current_price > ma_data['sma_200']:
+                score += 8
+                
+            # Add trend strength
+            trend = ma_data.get('trend', 'Mixed Trend')
+            if trend == 'Strong Uptrend':
+                score += 10
+            elif trend == 'Moderate Uptrend':
+                score += 5
+            elif trend == 'Strong Downtrend':
+                score -= 10
+            elif trend == 'Moderate Downtrend':
+                score -= 5
+                
+            # Cap the score
+            final_score = min(max(score, -20), 20)
+            
+            self.log(f"Trend score calculated: {final_score}", 
+                    context={'trend': trend, 'price': current_price})
+            return final_score
+            
+        except Exception as e:
+            self.log(f"Error calculating trend score: {str(e)}", level="error")
+            return 0
 
     def _calculate_volume_score(self, volume_data: Dict[str, Any], 
                               market_conditions: Dict[str, Any]) -> float:
