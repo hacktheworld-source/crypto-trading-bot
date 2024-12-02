@@ -1,3 +1,5 @@
+from datetime import datetime
+
 class CommandHandler:
     def __init__(self, trading_bot):
         self.trading_bot = trading_bot
@@ -472,25 +474,27 @@ class CommandHandler:
         return response
         
     def get_paper_positions(self):
-        """Show current paper positions only"""
-        positions = self.trading_bot.paper_positions
-        if not positions:
-            return "No active paper positions"
-        
+        """Show paper trading positions"""
+        if not self.trading_bot.paper_positions:
+            return "No paper trading positions"
+            
         response = "Paper Trading Positions:\n```"
-        for symbol, pos in positions.items():
+        
+        for symbol, pos in self.trading_bot.paper_positions.items():
             current_price = float(self.trading_bot.client.get_product(f"{symbol}-USD").price)
             profit_info = pos.calculate_profit(current_price)
             
             response += f"\n{symbol}:"
-            response += f"\n  Current Price: ${current_price:,.2f}"
             response += f"\n  Entry Price: ${pos.entry_price:,.2f}"
+            response += f"\n  Current Price: ${current_price:,.2f}"
             response += f"\n  Quantity: {pos.quantity:.8f}"
-            response += f"\n  Position Value: ${(current_price * pos.quantity):,.2f}"
-            response += f"\n  Unrealized P/L: ${profit_info['profit_usd']:+,.2f} ({profit_info['profit_percentage']:+.2f}%)"
+            response += f"\n  Value: ${current_price * pos.quantity:,.2f}"
+            response += f"\n  P/L: ${profit_info['profit_usd']:+,.2f} ({profit_info['profit_percentage']:+.2f}%)"
             response += f"\n  Fees Paid: ${profit_info['fees_paid']:.2f}"
             response += f"\n  Holding Time: {datetime.now() - pos.entry_time}"
             response += "\n"
+            
+        response += f"\nPaper Balance: ${self.trading_bot.paper_balance:,.2f}"
         response += "```"
         return response
         
