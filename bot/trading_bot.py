@@ -827,20 +827,20 @@ class TradingBot:
             raise
 
     def _calculate_trade_signal(self, symbol: str) -> Dict[str, Any]:
-        """Enhanced trade signal calculation with comprehensive error handling"""
         try:
             # Get current price
             current_price = float(self.client.get_product(f"{symbol}-USD").price)
             
-            # Get technical analysis data
+            # Get technical analysis data with proper candle data
             ma_data = self.calculate_moving_averages(symbol)
-            ma_data['symbol'] = symbol  # Add symbol to ma_data
-            ma_data['current_price'] = current_price  # Add current price to ma_data
+            ma_data['symbol'] = symbol
+            ma_data['current_price'] = current_price
+            ma_data['rsi'] = self.calculate_rsi(symbol)  # Add RSI for momentum calculation
             
             volume_data = self.analyze_volume(symbol)
             sentiment = self.analyze_market_sentiment(symbol)
             market_conditions = self._check_market_conditions(symbol)
-
+            
             # Log raw data for debugging
             self.log(f"Raw signal data for {symbol}:", context={
                 'ma_data': ma_data,
@@ -858,11 +858,7 @@ class TradingBot:
                 raise DataError("Missing required sentiment data")
 
             # Calculate signal components
-            signals = self._calculate_signal_components(
-                ma_data, volume_data, sentiment, market_conditions
-            )
-
-            return signals
+            return self._calculate_signal_components(ma_data, volume_data, sentiment, market_conditions)
 
         except Exception as e:
             self.log(f"Error calculating trade signal for {symbol}: {str(e)}", level="error")
@@ -968,12 +964,7 @@ class TradingBot:
             return {}
 
     def calculate_moving_averages(self, symbol: str) -> Dict[str, Any]:
-        """Calculate various moving averages and their signals"""
         try:
-            # Get 200+ days of price data for reliable MA calculation
-            end = datetime.now()
-            start = end - timedelta(days=250)  # Extra days for proper 200MA calculation
-            
             # Get candles with OHLCV data
             response = self.client.get_candles(
                 product_id=f"{symbol}-USD",
@@ -991,47 +982,25 @@ class TradingBot:
                     'close': float(candle.close),
                     'volume': float(candle.volume)
                 }
-                for candle in response.candles[-10:]  # Keep last 10 candles
+                for candle in response.candles
             ]
             
-            # Calculate prices series for MAs
-            prices = pd.Series(
-                [float(candle.close) for candle in reversed(response.candles)],
-                index=[datetime.fromtimestamp(float(candle.start)) for candle in reversed(response.candles)]
-            )
-            
-            # Calculate different MAs
-            sma_20 = prices.rolling(window=20).mean()
-            sma_50 = prices.rolling(window=50).mean()
-            sma_200 = prices.rolling(window=200).mean()
-            ema_12 = prices.ewm(span=12, adjust=False).mean()
-            ema_26 = prices.ewm(span=26, adjust=False).mean()
-            ema_20 = prices.ewm(span=20, adjust=False).mean()
-            
-            # Get latest values
-            current_price = prices.iloc[-1]
+            # Calculate MAs using pandas
+            prices = pd.Series([c['close'] for c in candles])
             
             return {
-                'current_price': current_price,
-                'sma_20': sma_20.iloc[-1],
-                'sma_50': sma_50.iloc[-1],
-                'sma_200': sma_200.iloc[-1],
-                'ema_12': ema_12.iloc[-1],
-                'ema_20': ema_20.iloc[-1],
-                'ema_26': ema_26.iloc[-1],
-                'sma_cross_bullish': (sma_20.iloc[-2] <= sma_50.iloc[-2] and 
-                                    sma_20.iloc[-1] > sma_50.iloc[-1]),
-                'sma_cross_bearish': (sma_20.iloc[-2] >= sma_50.iloc[-2] and 
-                                    sma_20.iloc[-1] < sma_50.iloc[-1]),
-                'ema_cross_bullish': (ema_12.iloc[-2] <= ema_26.iloc[-2] and 
-                                    ema_12.iloc[-1] > ema_26.iloc[-1]),
-                'ema_cross_bearish': (ema_12.iloc[-2] >= ema_26.iloc[-2] and 
-                                    ema_12.iloc[-1] < ema_26.iloc[-1]),
-                'trend': self._determine_trend(current_price, sma_20.iloc[-1], 
-                                             sma_50.iloc[-1], sma_200.iloc[-1]),
-                'candles': candles  # Add candle data
+                'current_price': prices.iloc[-1],
+                'sma_20': prices.rolling(20).mean().iloc[-1],
+                'sma_50': prices.rolling(50).mean().iloc[-1],
+                'sma_200': prices.rolling(200).mean().iloc[-1],
+                'ema_12': prices.ewm(span=12).mean().iloc[-1],
+                'ema_26': prices.ewm(span=26).mean().iloc[-1],
+                'candles': candles[-10:],  # Keep last 10 candles for trend analysis
+                'trend': self._determine_trend(prices.iloc[-1], 
+                                             prices.rolling(20).mean().iloc[-1],
+                                             prices.rolling(50).mean().iloc[-1],
+                                             prices.rolling(200).mean().iloc[-1])
             }
-            
         except Exception as e:
             self.log(f"Error calculating MAs for {symbol}: {str(e)}", level="error")
             raise
@@ -2082,3 +2051,16 @@ class TradingBot:
         except Exception as e:
             self.log(f"Error calculating risk score: {str(e)}", level="error")
             return 0
+
+    def _determine_trend(self, current_price: float, sma20: float, sma50: float, sma200: float) -> str:
+        """Determine trend based on price vs moving averages"""
+        if current_price > sma20 and current_price > sma50 and current_price > sma200:
+            return "Strong Uptrend"
+        elif current_price > sma50 and current_price > sma200:
+            return "Moderate Uptrend"
+        elif current_price < sma20 and current_price < sma50 and current_price < sma200:
+            return "Strong Downtrend"
+        elif current_price < sma50 and current_price < sma200:
+            return "Moderate Downtrend"
+        else:
+            return "Mixed Trend"
