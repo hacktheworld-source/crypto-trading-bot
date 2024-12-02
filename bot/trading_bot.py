@@ -143,7 +143,7 @@ class TradingBot:
                 # Check if it's time for periodic update
                 if (current_time - last_update_time).total_seconds() >= self.trading_interval:
                     await self.async_log("Preparing periodic update...")
-                    await self.send_interval_update()
+                    await self.send_interval_update()  # This should send the update
                     last_update_time = current_time
                 
                 # Add recovery delay for serious errors
@@ -1888,10 +1888,10 @@ class TradingBot:
             
             # Calculate weighted final score
             final_score = (
-                trend_score * 0.4 +      # 40% weight on trend
-                momentum_score * 0.3 +    # 30% weight on momentum
-                volume_score * 0.2 +      # 20% weight on volume
-                risk_score * 0.1          # 10% weight on risk
+                trend_score * 1.2 +      # Trend weight
+                momentum_score * 1.0 +    # Momentum weight
+                volume_score * 0.8 +      # Volume weight
+                risk_score * 0.6          # Risk weight
             )
             
             # Determine action based on final score and conditions
@@ -1929,27 +1929,27 @@ class TradingBot:
             score = 0
             current_price = ma_data['current_price']
             
-            # Score based on MA relationships
+            # Score based on MA relationships (adjusted for 1.2 weight)
             if current_price > ma_data['sma_20']:
-                score += 5
+                score += 15  # Was 5
             if current_price > ma_data['sma_50']:
-                score += 7
+                score += 21  # Was 7
             if current_price > ma_data['sma_200']:
-                score += 8
+                score += 24  # Was 8
                 
-            # Add trend strength
+            # Add trend strength (adjusted for 1.2 weight)
             trend = ma_data.get('trend', 'Mixed Trend')
             if trend == 'Strong Uptrend':
-                score += 10
+                score += 30  # Was 10
             elif trend == 'Moderate Uptrend':
-                score += 5
+                score += 15  # Was 5
             elif trend == 'Strong Downtrend':
-                score -= 10
+                score -= 30  # Was -10
             elif trend == 'Moderate Downtrend':
-                score -= 5
+                score -= 15  # Was -5
                 
-            # Cap the score
-            final_score = min(max(score, -20), 20)
+            # Cap at ±60 (adjusted for 1.2 weight)
+            final_score = min(max(score, -60), 60)  # Was ±20
             
             self.log(f"Trend score calculated: {final_score}", 
                     context={'trend': trend, 'price': current_price})
@@ -1959,121 +1959,113 @@ class TradingBot:
             self.log(f"Error calculating trend score: {str(e)}", level="error")
             return 0
 
-    def _calculate_volume_score(self, volume_data: Dict[str, Any], 
-                              market_conditions: Dict[str, Any]) -> float:
+    def _calculate_volume_score(self, volume_data: Dict[str, Any], market_conditions: Dict[str, Any]) -> float:
         """Calculate detailed volume score with market context"""
         try:
             base_score = 0
             volume_ratio = volume_data['volume_ratio']
             
-            # Progressive volume scoring
+            # Progressive volume scoring (adjusted for 0.8 weight)
             if volume_ratio > 2.0:
-                base_score = 20
+                base_score = 40  # Was 20
             elif volume_ratio > 1.5:
-                base_score = 15
+                base_score = 30  # Was 15
             elif volume_ratio > 1.2:
-                base_score = 10
+                base_score = 20  # Was 10
             elif volume_ratio > 1.0:
-                base_score = 5
+                base_score = 10  # Was 5
             elif volume_ratio < 0.5:
-                base_score = -15
+                base_score = -30  # Was -15
             elif volume_ratio < 0.8:
-                base_score = -10
+                base_score = -20  # Was -10
                 
             # Apply modifiers
             if volume_data['confirms_trend']:
                 base_score *= 1.1
             if market_conditions['is_high_activity']:
-                base_score *= 0.9  # Reduce impact during high activity
+                base_score *= 0.9
                 
-            final_score = min(max(base_score, -20), 20)  # Cap between -20 and 20
+            # Cap at ±40 (adjusted for 0.8 weight)
+            final_score = min(max(base_score, -40), 40)  # Was ±20
             
-            self.log(f"Volume score calculated: {final_score}", 
-                    context={'volume_ratio': volume_ratio})
             return final_score
             
         except Exception as e:
             self.log(f"Error calculating volume score: {str(e)}", level="error")
             return 0
 
-    def _calculate_momentum_score(self, sentiment: Dict[str, Any], 
-                              ma_data: Dict[str, Any]) -> float:
+    def _calculate_momentum_score(self, sentiment: Dict[str, Any], ma_data: Dict[str, Any]) -> float:
         """Calculate detailed momentum score"""
         try:
             score = 0
             
-            # Price momentum from different timeframes
+            # Price momentum (adjusted for 1.0 weight)
             if sentiment['momentum']['short_term'] == 'bullish':
-                score += 8
+                score += 24  # Was 8
             elif sentiment['momentum']['short_term'] == 'bearish':
-                score -= 8
+                score -= 24  # Was -8
                 
             if sentiment['momentum']['medium_term'] == 'bullish':
-                score += 7
+                score += 21  # Was 7
             elif sentiment['momentum']['medium_term'] == 'bearish':
-                score -= 7
+                score -= 21  # Was -7
                 
             if sentiment['momentum']['long_term'] == 'bullish':
-                score += 5
+                score += 15  # Was 5
             elif sentiment['momentum']['long_term'] == 'bearish':
-                score -= 5
+                score -= 15  # Was -5
                 
-            # Add RSI influence if available
+            # Add RSI influence (adjusted for 1.0 weight)
             if 'rsi' in ma_data:
                 rsi = ma_data['rsi']
                 if rsi > 70:
-                    score -= 5  # Overbought
+                    score -= 15  # Was -5
                 elif rsi < 30:
-                    score += 5  # Oversold
+                    score += 15  # Was 5
                     
-            final_score = min(max(score, -25), 25)  # Cap between -25 and 25
+            # Cap at ±50 (adjusted for 1.0 weight)
+            final_score = min(max(score, -50), 50)  # Was ±25
             
-            self.log(f"Momentum score calculated: {final_score}", 
-                    context={'sentiment': sentiment})
             return final_score
-            
         except Exception as e:
             self.log(f"Error calculating momentum score: {str(e)}", level="error")
             return 0
 
-    def _calculate_risk_score(self, market_conditions: Dict[str, Any], 
-                           sentiment: Dict[str, Any]) -> float:
+    def _calculate_risk_score(self, market_conditions: Dict[str, Any], sentiment: Dict[str, Any]) -> float:
         """Calculate detailed risk score"""
         try:
             score = 0
             
-            # Volatility impact (scaled)
+            # Volatility impact (adjusted for 0.6 weight)
             volatility = market_conditions['price_range_7d']
             if volatility > 20:
-                score -= 10
+                score -= 30  # Was -10
             elif volatility > 15:
-                score -= 7
+                score -= 21  # Was -7
             elif volatility > 10:
-                score -= 5
+                score -= 15  # Was -5
             elif volatility < 5:
-                score += 3  # Low volatility bonus
+                score += 9   # Was 3
                 
-            # Market alignment
+            # Market alignment (adjusted for 0.6 weight)
             if market_conditions['market_aligned']:
                 btc_correlation = market_conditions.get('btc_correlation', 0)
-                score += min(abs(btc_correlation) * 5, 5)  # Scale based on correlation, cap at 5
+                score += min(abs(btc_correlation) * 15, 15)  # Was 5
             
-            # Trading conditions
+            # Trading conditions (adjusted for 0.6 weight)
             if market_conditions['suitable_for_trading']:
-                score += 3
+                score += 9   # Was 3
             if market_conditions['is_high_activity']:
-                score -= 2
+                score -= 6   # Was -2
                 
-            # Sentiment alignment
+            # Sentiment alignment (adjusted for 0.6 weight)
             if abs(sentiment['sentiment_score']) > 50:
-                score += 2
+                score += 6   # Was 2
                 
-            final_score = min(max(score, -10), 10)  # Cap between -10 and 10
+            # Cap at ±30 (adjusted for 0.6 weight)
+            final_score = min(max(score, -30), 30)  # Was ±10
             
-            self.log(f"Risk score calculated: {final_score}", 
-                    context={'market_conditions': market_conditions})
             return final_score
-            
         except Exception as e:
             self.log(f"Error calculating risk score: {str(e)}", level="error")
             return 0
