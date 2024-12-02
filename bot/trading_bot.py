@@ -1080,47 +1080,61 @@ class TradingBot:
             start_medium = end - timedelta(days=30)  
             start_short = end - timedelta(days=7)    
             
-            # Get price data for different timeframes
+            # Get price data for different timeframes with validation
             prices_long = self._get_historical_prices(symbol, start_long, end)
+            if len(prices_long) < 2:
+                raise DataError(f"Insufficient historical data for {symbol}")
+                
+            self.log(f"Got {len(prices_long)} price points for {symbol}")
+            
             prices_medium = prices_long[prices_long.index >= start_medium]
             prices_short = prices_long[prices_long.index >= start_short]
             
-            # Calculate price changes
-            price_change_long = ((prices_long.iloc[-1] - prices_long.iloc[0]) / prices_long.iloc[0]) * 100
-            price_change_medium = ((prices_medium.iloc[-1] - prices_medium.iloc[0]) / prices_medium.iloc[0]) * 100
-            price_change_short = ((prices_short.iloc[-1] - prices_short.iloc[0]) / prices_short.iloc[0]) * 100
-            
-            # Determine momentum
-            momentum_signals = {
-                'short_term': 'bullish' if price_change_short > 0 else 'bearish',
-                'medium_term': 'bullish' if price_change_medium > 0 else 'bearish',
-                'long_term': 'bullish' if price_change_long > 0 else 'bearish'
+            # Validate we have enough data points
+            if len(prices_short) < 2 or len(prices_medium) < 2:
+                raise DataError(f"Insufficient data points for sentiment calculation")
+                
+            # Calculate and log price changes
+            price_changes = {
+                'long': ((prices_long.iloc[-1] - prices_long.iloc[0]) / prices_long.iloc[0]) * 100,
+                'medium': ((prices_medium.iloc[-1] - prices_medium.iloc[0]) / prices_medium.iloc[0]) * 100,
+                'short': ((prices_short.iloc[-1] - prices_short.iloc[0]) / prices_short.iloc[0]) * 100
             }
-
-            # Log sentiment calculation
-            self.log(f"Calculated sentiment for {symbol}", context={
-                'price_changes': {
-                    'short_term': price_change_short,
-                    'medium_term': price_change_medium,
-                    'long_term': price_change_long
-                },
-                'momentum': momentum_signals
-            })
-
+            
+            self.log(f"Price changes for {symbol}:", context=price_changes)
+            
             return {
-                'sentiment_score': price_change_short,  # Use short-term change as sentiment score
-                'overall_sentiment': 'Bullish' if price_change_short > 0 else 'Bearish',
-                'momentum': momentum_signals,
+                'sentiment_score': price_changes['short'],
+                'overall_sentiment': 'Bullish' if price_changes['short'] > 0 else 'Bearish',
+                'momentum': {
+                    'short_term': 'bullish' if price_changes['short'] > 0 else 'bearish',
+                    'medium_term': 'bullish' if price_changes['medium'] > 0 else 'bearish',
+                    'long_term': 'bullish' if price_changes['long'] > 0 else 'bearish'
+                },
                 'price_changes': {
-                    'short_term': price_change_short,
-                    'medium_term': price_change_medium,
-                    'long_term': price_change_long
+                    'short_term': price_changes['short'],
+                    'medium_term': price_changes['medium'],
+                    'long_term': price_changes['long']
                 }
             }
-
+                
         except Exception as e:
-            self.log(f"Error analyzing market sentiment for {symbol}: {str(e)}", level="error")
-            raise
+            self.log(f"Error in sentiment analysis for {symbol}: {str(e)}", level="error")
+            # Return a neutral sentiment rather than raising
+            return {
+                'sentiment_score': 0,
+                'overall_sentiment': 'Neutral',
+                'momentum': {
+                    'short_term': 'neutral',
+                    'medium_term': 'neutral',
+                    'long_term': 'neutral'
+                },
+                'price_changes': {
+                    'short_term': 0,
+                    'medium_term': 0,
+                    'long_term': 0
+                }
+            }
 
     async def _simulate_buy_order(self, symbol: str) -> None:
         try:
