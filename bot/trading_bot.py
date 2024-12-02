@@ -888,7 +888,7 @@ class TradingBot:
         """Validate if we should execute a trade based on comprehensive scoring"""
         try:
             signal = self._calculate_trade_signal(symbol)
-                
+            
             if action == 'BUY':
                 # Require positive trend and acceptable risk
                 return (signal['action'] in ['BUY', 'STRONG_BUY'] and 
@@ -899,8 +899,8 @@ class TradingBot:
                 return (signal['action'] in ['SELL', 'STRONG_SELL'] or
                        (signal['signals']['risk'] < -5 and signal['signals']['trend'] < 0))
             
-                    return False
-
+            return False
+        
         except Exception as e:
             self.log(f"Trade validation error: {str(e)}", level="error")
             return False
