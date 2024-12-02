@@ -1447,15 +1447,8 @@ class TradingBot:
                         continue
                     
                 except Exception as e:
-                    error_msg = f"Error analyzing {symbol}: {str(e)}"
-                    await self.async_log(error_msg, level="error")
-                    if self.discord_channel:
-                        error_embed = discord.Embed(
-                            title=f"❌ {symbol} Analysis Error",
-                            description=error_msg,
-                            color=discord.Color.red()
-                        )
-                        await self.discord_channel.send(embed=error_embed)
+                    await self.async_log(f"Error analyzing {symbol}: {str(e)}", level="error")
+                    continue
             
             # Send summary footer
             footer = (
