@@ -1620,7 +1620,7 @@ class TradingBot:
                     parts = [message[i:i+1024] for i in range(0, len(message), 1024)]
                     for i, part in enumerate(parts):
                         embed.add_field(
-                            name=f"Details (Part {i+1}) if i > 0 else "Details",
+                            name=f"Details (Part {i+1})" if i > 0 else "Details",
                             value=f"```yaml\n{part}\n```",
                             inline=False
                         )
