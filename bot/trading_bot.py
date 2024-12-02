@@ -187,6 +187,9 @@ class TradingBot:
                                 position.update_price(current_price)
                                 profit_info = position.calculate_profit(current_price)
                                 
+                                # Check risk management first
+                                await self._check_risk_management(symbol)
+                                
                                 await self.async_log(
                                     f"{symbol} Position Update:\n"
                                     f"Entry Price: ${position.entry_price:,.2f}\n"
@@ -1103,7 +1106,7 @@ class TradingBot:
         except ValueError:
             return False
 
-    def _check_risk_management(self, symbol: str) -> None:
+    async def _check_risk_management(self, symbol: str) -> None:
         try:
             position = self.positions.get(symbol) or self.paper_positions.get(symbol)
             if not position:
