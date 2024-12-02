@@ -130,119 +130,138 @@ class TradingBot:
         
         while self.trading_active or self.paper_trading:
             try:
-                current_hour = datetime.now().hour
+                # Add recovery delay for serious errors
+                recovery_delay = 60  # 1 minute
                 
-                # Log iteration start with context
-                await self.async_log(
-                    "Starting trading iteration",
-                    context={
-                        'mode': 'Paper' if self.paper_trading else 'Real',
-                        'active_coins': list(self.watched_coins),
-                        'current_hour': f"{current_hour:02d}:00",
-                        'paper_positions': len(self.paper_positions),
-                        'real_positions': len(self.positions)
-                    }
-                )
-                
-                for symbol in self.watched_coins:
-                    try:
-                        await self.async_log(f"Processing {symbol}...")
-                        
-                        # Get current analysis
-                        current_price = float(self.client.get_product(f"{symbol}-USD").price)
-                        position = self.paper_positions.get(symbol) if self.paper_trading else self.positions.get(symbol)
-                        
-                        # Log current state
-                        await self.async_log(
-                            f"{symbol} Status:\n"
-                            f"Current Price: ${current_price:,.2f}\n"
-                            f"Has Position: {position is not None}\n"
-                            f"Trading Mode: {'Paper' if self.paper_trading else 'Real'}"
-                        )
-                        
-                        # Get trade signal and log it
-                        signal = self._calculate_trade_signal(symbol)
-                        await self.async_log(
-                            f"{symbol} Signal Analysis:\n"
-                            f"Action: {signal['action']}\n"
-                            f"Score: {signal['score']}\n"
-                            f"Components:\n" +
-                            '\n'.join(f"- {k}: {v}" for k, v in signal['signals'].items())
-                        )
-                        
-                        # Update position tracking if we have one
-                        if position:
-                            position.update_price(current_price)
-                            profit_info = position.calculate_profit(current_price)
+                try:
+                    current_hour = datetime.now().hour
+                    
+                    # Log iteration start with context
+                    await self.async_log(
+                        "Starting trading iteration",
+                        context={
+                            'mode': 'Paper' if self.paper_trading else 'Real',
+                            'active_coins': list(self.watched_coins),
+                            'current_hour': f"{current_hour:02d}:00",
+                            'paper_positions': len(self.paper_positions),
+                            'real_positions': len(self.positions)
+                        }
+                    )
+                    
+                    for symbol in self.watched_coins:
+                        try:
+                            await self.async_log(f"Processing {symbol}...")
                             
+                            # Get current analysis
+                            current_price = float(self.client.get_product(f"{symbol}-USD").price)
+                            position = self.paper_positions.get(symbol) if self.paper_trading else self.positions.get(symbol)
+                            
+                            # Log current state
                             await self.async_log(
-                                f"{symbol} Position Update:\n"
-                                f"Entry Price: ${position.entry_price:,.2f}\n"
-                                f"Current P/L: {profit_info['profit_percentage']:+.2f}%\n"
-                                f"Max Profit: {profit_info['highest_profit_percentage']:+.2f}%\n"
-                                f"Max Drawdown: {profit_info['drawdown_percentage']:+.2f}%"
+                                f"{symbol} Status:\n"
+                                f"Current Price: ${current_price:,.2f}\n"
+                                f"Has Position: {position is not None}\n"
+                                f"Trading Mode: {'Paper' if self.paper_trading else 'Real'}"
                             )
                             
-                            # Check if we should sell
-                            if self._should_trade(symbol, 'SELL'):
-                                await self.async_log(f"SELL signal confirmed for {symbol}")
+                            # Get trade signal and log it
+                            signal = self._calculate_trade_signal(symbol)
+                            await self.async_log(
+                                f"{symbol} Signal Analysis:\n"
+                                f"Action: {signal['action']}\n"
+                                f"Score: {signal['score']}\n"
+                                f"Components:\n" +
+                                '\n'.join(f"- {k}: {v}" for k, v in signal['signals'].items())
+                            )
+                            
+                            # Update position tracking if we have one
+                            if position:
+                                position.update_price(current_price)
+                                profit_info = position.calculate_profit(current_price)
                                 
+                                await self.async_log(
+                                    f"{symbol} Position Update:\n"
+                                    f"Entry Price: ${position.entry_price:,.2f}\n"
+                                    f"Current P/L: {profit_info['profit_percentage']:+.2f}%\n"
+                                    f"Max Profit: {profit_info['highest_profit_percentage']:+.2f}%\n"
+                                    f"Max Drawdown: {profit_info['drawdown_percentage']:+.2f}%"
+                                )
+                                
+                                # Check if we should sell
+                                if self._should_trade(symbol, 'SELL'):
+                                    await self.async_log(f"SELL signal confirmed for {symbol}")
+                                    
+                                    if self.paper_trading:
+                                        await self._simulate_sell_order(symbol)
+                                        await self.send_trade_notification(
+                                            'SELL', symbol, current_price, 
+                                            position.quantity, is_paper=True,
+                                            profit_info=profit_info
+                                        )
+                                    else:
+                                        self._place_sell_order(symbol)
+                                    continue
+                        
+                            # Check if we should buy
+                            elif self._should_trade(symbol, 'BUY'):
+                                position_size = self._calculate_position_size(symbol)
+                                await self.async_log(
+                                    f"BUY signal confirmed for {symbol}\n"
+                                    f"Calculated position size: ${position_size:,.2f}"
+                                )
+                                
+                                if position_size < 5.0:
+                                    await self.async_log(f"Position size too small for {symbol}, skipping")
+                                    continue
+                                    
                                 if self.paper_trading:
-                                    await self._simulate_sell_order(symbol)
+                                    await self._simulate_buy_order(symbol)
                                     await self.send_trade_notification(
-                                        'SELL', symbol, current_price, 
-                                        position.quantity, is_paper=True,
-                                        profit_info=profit_info
+                                        'BUY', symbol, current_price,
+                                        position_size / current_price, is_paper=True
                                     )
                                 else:
-                                    self._place_sell_order(symbol)
-                                continue
+                                    self._place_buy_order(symbol)
                     
-                        # Check if we should buy
-                        elif self._should_trade(symbol, 'BUY'):
-                            position_size = self._calculate_position_size(symbol)
-                            await self.async_log(
-                                f"BUY signal confirmed for {symbol}\n"
-                                f"Calculated position size: ${position_size:,.2f}"
-                            )
-                            
-                            if position_size < 5.0:
-                                await self.async_log(f"Position size too small for {symbol}, skipping")
-                                continue
-                                
-                            if self.paper_trading:
-                                await self._simulate_buy_order(symbol)
-                                await self.send_trade_notification(
-                                    'BUY', symbol, current_price,
-                                    position_size / current_price, is_paper=True
-                                )
-                            else:
-                                self._place_buy_order(symbol)
-                
-                    except Exception as e:
-                        await self.async_log(f"Error processing {symbol}: {str(e)}", level="error")
-                        continue
+                        except Exception as e:
+                            await self.async_log(f"Error processing {symbol}: {str(e)}", level="error")
+                            continue
+                        
+                    # Send periodic update if hour has changed
+                    if current_hour != last_update_hour:
+                        await self.async_log("Preparing hourly update...")
+                        await self.send_interval_update()
+                        last_update_hour = current_hour
+                        
+                    # Log end of iteration
+                    await self.async_log(
+                        "Trading iteration completed\n"
+                        f"Paper Positions: {len(self.paper_positions)}\n"
+                        f"Real Positions: {len(self.positions)}\n"
+                        f"Next update in {self.trading_interval} seconds"
+                    )
                     
-                # Send periodic update if hour has changed
-                if current_hour != last_update_hour:
-                    await self.async_log("Preparing hourly update...")
-                    await self.send_interval_update()
-                    last_update_hour = current_hour
+                    # Normal delay between iterations
+                    await asyncio.sleep(self.trading_interval)
                     
-                # Log end of iteration
-                await self.async_log(
-                    "Trading iteration completed\n"
-                    f"Paper Positions: {len(self.paper_positions)}\n"
-                    f"Real Positions: {len(self.positions)}\n"
-                    f"Next update in {self.trading_interval} seconds"
-                )
-                
-                # Wait for next interval
-                await asyncio.sleep(self.trading_interval)
-                
+                except APIError as e:
+                    await self.async_log(f"API Error in trading loop: {str(e)}", level="error")
+                    await asyncio.sleep(recovery_delay)
+                    continue
+                    
+                except DataError as e:
+                    await self.async_log(f"Data Error in trading loop: {str(e)}", level="error")
+                    await asyncio.sleep(recovery_delay)
+                    continue
+                    
+                except Exception as e:
+                    await self.async_log(f"Unexpected error in trading loop: {str(e)}", level="error")
+                    await asyncio.sleep(recovery_delay * 2)  # Longer delay for unexpected errors
+                    continue
+                    
             except Exception as e:
                 await self.async_log(f"Critical error in trading loop: {str(e)}", level="error")
-                await asyncio.sleep(60)
+                await asyncio.sleep(recovery_delay * 3)  # Even longer delay for critical errors
     
     def _check_and_trade(self, symbol):
         try:
@@ -1275,24 +1294,35 @@ class TradingBot:
         logging.info(f"Discord notifications channel set")
 
     async def send_notification(self, message: str, is_update: bool = False):
-        """Send a notification to Discord channel if available"""
-        if not self.discord_channel:
-            # Just log the message if no channel is set
-            logging.info(f"Notification (no channel): {message}")
-            return
+        max_retries = 3
+        retry_delay = 5  # seconds
         
-        try:
-            # Format based on type
-            if is_update:
-                formatted_message = f"📊 Trading Update:\n```{message}```"
-            else:
-                formatted_message = f"🔔 Alert:\n```{message}```"
-            
-            await self.discord_channel.send(formatted_message)
-            logging.info(f"Notification sent: {message}")
-        except Exception as e:
-            logging.error(f"Error sending notification: {str(e)}")
-            self.discord_channel = None  # Reset channel if we can't send messages
+        for attempt in range(max_retries):
+            try:
+                if not self.discord_channel:
+                    logging.info(f"Notification (no channel): {message}")
+                    return
+                
+                # Format based on type
+                if is_update:
+                    formatted_message = f"📊 Trading Update:\n```{message}```"
+                else:
+                    formatted_message = f"🔔 Alert:\n```{message}```"
+                
+                await self.discord_channel.send(formatted_message)
+                logging.info(f"Notification sent: {message}")
+                return
+                
+            except discord.errors.HTTPException as e:
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(retry_delay)
+                    continue
+                logging.error(f"HTTP Error sending notification: {str(e)}")
+                
+            except Exception as e:
+                logging.error(f"Error sending notification: {str(e)}")
+                self.discord_channel = None  # Reset channel if we can't send messages
+                break
 
     async def send_trade_notification(self, action: str, symbol: str, price: float, 
                                     quantity: float, is_paper: bool = False, 

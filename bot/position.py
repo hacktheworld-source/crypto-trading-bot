@@ -21,9 +21,18 @@ class Position:
         current_value = self.quantity * current_price
         initial_value = self.quantity * self.entry_price
         
+        if initial_value <= 0:
+            return {
+                'profit_usd': 0,
+                'profit_percentage': 0,
+                'highest_profit_percentage': 0,
+                'drawdown_percentage': 0,
+                'fees_paid': 0
+            }
+        
         total_fee = (initial_value * 0.006) + (current_value * 0.006)
         profit = current_value - initial_value - total_fee
-        profit_percentage = (profit / initial_value) * 100 if initial_value > 0 else 0
+        profit_percentage = (profit / initial_value) * 100
         
         return {
             'profit_usd': profit,
