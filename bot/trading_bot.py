@@ -363,6 +363,8 @@ class TradingBot:
             prices = pd.Series(
                 [float(candle.close) for candle in reversed(candles)],
                 index=[datetime.fromtimestamp(float(candle.start)) for candle in reversed(candles)]
+            )  # Add closing parenthesis here
+            
             self._last_api_call = time.time()
             self.log(f"Fetched {len(candles)} candles for {symbol}")
             return prices
