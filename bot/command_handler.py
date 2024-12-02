@@ -1,6 +1,15 @@
 from datetime import datetime
 
 class CommandHandler:
+    ERROR_PREFIX = "❌ "
+    SUCCESS_PREFIX = "✅ "
+    
+    def _format_error(self, message: str) -> str:
+        return f"{self.ERROR_PREFIX}{message}"
+        
+    def _format_success(self, message: str) -> str:
+        return f"{self.SUCCESS_PREFIX}{message}"
+        
     def __init__(self, trading_bot):
         self.trading_bot = trading_bot
         

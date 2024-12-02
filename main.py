@@ -4,6 +4,14 @@ from bot.command_handler import CommandHandler
 from discord.ext import commands
 import discord
 from keep_alive import keep_alive
+import logging
+
+# Add at top of file
+logging.basicConfig(
+    filename='trading_bot.log',
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 
 # Initialize Discord bot
 bot = commands.Bot(command_prefix='!', intents=discord.Intents.all())
@@ -12,7 +20,7 @@ command_handler = CommandHandler(trading_bot)
 
 @bot.event
 async def on_ready():
-    print(f'Bot is ready! Logged in as {bot.user}')
+    logging.info(f'Bot is ready! Logged in as {bot.user}')
     
     # Initialize trading bot
     await trading_bot.post_init()  # Call the async post-init method

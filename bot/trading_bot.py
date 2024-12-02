@@ -40,6 +40,8 @@ class TradeError(TradingBotError):
     pass
 
 class TradingBot:
+    FEE_RATE = 0.006  # 0.6% Coinbase fee
+    
     def __init__(self):
         try:
             logging.info("Starting bot initialization...")
@@ -86,6 +88,9 @@ class TradingBot:
             self.paper_portfolio_value = self.paper_balance
             
             self.discord_channel = None  # Will be set when bot starts
+            
+            # Pass fee rate to Position
+            self.fee_rate = self.FEE_RATE
             
         except Exception as e:
             logging.error(f"Failed to initialize trading bot: {str(e)}")
@@ -884,22 +889,40 @@ class TradingBot:
         }
 
     def _should_trade(self, symbol: str, action: str) -> bool:
-        """Validate if we should execute a trade based on comprehensive scoring"""
         try:
             signal = self._calculate_trade_signal(symbol)
+            market_conditions = self._check_market_conditions(symbol)
             
-            if action == 'BUY':
-                # Require positive trend and acceptable risk
-                return (signal['action'] in ['BUY', 'STRONG_BUY'] and 
-                       signal['signals']['trend'] > 0 and 
-                       signal['signals']['risk'] > -5)
+            # Add position check
+            has_position = symbol in (self.positions if not self.paper_trading else self.paper_positions)
+            
+            # Define thresholds as class constants
+            TREND_THRESHOLD = 15
+            MOMENTUM_THRESHOLD = 10
+            VOLUME_THRESHOLD = 5
+            RISK_THRESHOLD = -10
+            SCORE_THRESHOLD = 50
+            
+            if action == 'BUY' and not has_position:  # Only buy if no position exists
+                return (
+                    signal['action'] in ['STRONG_BUY'] and 
+                    signal['signals']['trend'] > TREND_THRESHOLD and
+                    signal['signals']['momentum'] > MOMENTUM_THRESHOLD and
+                    signal['signals']['volume'] > VOLUME_THRESHOLD and
+                    signal['signals']['risk'] > RISK_THRESHOLD and
+                    signal['score'] > SCORE_THRESHOLD and
+                    market_conditions['suitable_for_trading']
+                )
             elif action == 'SELL':
-                # More lenient on sells for risk management
-                return (signal['action'] in ['SELL', 'STRONG_SELL'] or
-                       (signal['signals']['risk'] < -5 and signal['signals']['trend'] < 0))
+                return (
+                    signal['action'] in ['SELL', 'STRONG_SELL'] or
+                    signal['signals']['risk'] < -15 or
+                    (signal['signals']['trend'] < -10 and signal['signals']['momentum'] < -10) or
+                    not market_conditions['suitable_for_trading']
+                )
             
             return False
-        
+            
         except Exception as e:
             self.log(f"Trade validation error: {str(e)}", level="error")
             return False
@@ -1086,20 +1109,18 @@ class TradingBot:
             current_price = float(self.client.get_product(f"{symbol}-USD").price)
             profit_info = position.calculate_profit(current_price)
             
-            # Stop loss check - do this first before other checks
+            # Update technical indicators for risk assessment
+            signal = self._calculate_trade_signal(symbol)
+            risk_score = signal['signals']['risk']
+            
+            # Enhanced stop loss with dynamic adjustment
             stop_loss_price = position.entry_price * (1 - self.stop_loss_percentage/100)
+            if risk_score < -10:  # High risk environment
+                stop_loss_price = position.entry_price * (1 - (self.stop_loss_percentage * 0.8)/100)  # Tighter stop
+            
             if current_price <= stop_loss_price:
                 self.log(f"Stop loss triggered for {symbol} at {profit_info['profit_percentage']:.2f}%")
-                if self.paper_trading:
-                    await self._simulate_sell_order(symbol)
-                else:
-                    self._place_sell_order(symbol)
-                await self.send_trade_notification(
-                    'SELL', symbol, current_price, 
-                    position.quantity, is_paper=self.paper_trading,
-                    profit_info=profit_info,
-                    reason="Stop Loss"
-                )
+                await self._execute_exit(symbol, "Stop Loss", position.is_paper)
                 return
             
             # Validate take-profit thresholds
@@ -1403,7 +1424,7 @@ class TradingBot:
                     discord.Color.blue()
             
             # Add reason to title if provided
-            title = f"{'📈' if action == 'BUY' else '📉'} {action} {symbol}"
+            title = f"{'������' if action == 'BUY' else '📉'} {action} {symbol}"
             if reason:
                 title += f" ({reason})"
             
@@ -1870,39 +1891,36 @@ class TradingBot:
                                volume_data: Dict[str, Any],
                                sentiment: Dict[str, Any], 
                                market_conditions: Dict[str, Any]) -> Dict[str, Any]:
-        """Calculate comprehensive trading signal with all components"""
         try:
-            # Calculate individual component scores
+            # Define component weights as class constants
+            TREND_WEIGHT = 0.4     # 40% weight
+            MOMENTUM_WEIGHT = 0.3  # 30% weight
+            VOLUME_WEIGHT = 0.2    # 20% weight
+            RISK_WEIGHT = 0.1      # 10% weight
+            
+            # Calculate scores
             trend_score = self._calculate_trend_score(ma_data)
             momentum_score = self._calculate_momentum_score(sentiment, ma_data)
             volume_score = self._calculate_volume_score(volume_data, market_conditions)
             risk_score = self._calculate_risk_score(market_conditions, sentiment)
             
-            # Log individual scores for debugging
-            self.log(f"Component scores for {ma_data['symbol']}:", context={
-                'trend': trend_score,
-                'momentum': momentum_score,
-                'volume': volume_score,
-                'risk': risk_score
-            })
-            
-            # Calculate weighted final score
+            # Calculate weighted score
             final_score = (
-                trend_score * 1.2 +      # Trend weight
-                momentum_score * 1.0 +    # Momentum weight
-                volume_score * 0.8 +      # Volume weight
-                risk_score * 0.6          # Risk weight
+                trend_score * TREND_WEIGHT +
+                momentum_score * MOMENTUM_WEIGHT +
+                volume_score * VOLUME_WEIGHT +
+                risk_score * RISK_WEIGHT
             )
             
-            # Determine action based on final score and conditions
+            # More balanced action determination
             action = 'HOLD'
-            if final_score >= 15 and trend_score > 0 and volume_score > 0:
+            if final_score >= 30 and trend_score > 15 and volume_score > 5:
                 action = 'STRONG_BUY'
-            elif final_score >= 5 and trend_score > 0:
+            elif final_score >= 15 and trend_score > 10:
                 action = 'BUY'
-            elif final_score <= -15 and trend_score < 0 and volume_score < 0:
+            elif final_score <= -30 and trend_score < -15 and volume_score < -5:
                 action = 'STRONG_SELL'
-            elif final_score <= -5 and trend_score < 0:
+            elif final_score <= -15 and trend_score < -10:
                 action = 'SELL'
             
             return {
@@ -1924,60 +1942,72 @@ class TradingBot:
             return self._get_fallback_signal(ma_data['symbol'], str(e))
 
     def _calculate_trend_score(self, ma_data: Dict[str, Any]) -> float:
-        """Calculate trend score based on moving averages"""
+        # Add Bollinger Band integration
+        bb_data = self._calculate_bollinger_bands(ma_data['symbol'])
+        support_resistance = self._find_support_resistance(ma_data['symbol'])
+        
         try:
             score = 0
             current_price = ma_data['current_price']
             
-            # Score based on MA relationships (adjusted for 1.2 weight)
+            # Price vs MA scoring (max ±20)
             if current_price > ma_data['sma_20']:
-                score += 15  # Was 5
+                score += 5
             if current_price > ma_data['sma_50']:
-                score += 21  # Was 7
+                score += 7
             if current_price > ma_data['sma_200']:
-                score += 24  # Was 8
+                score += 8
                 
-            # Add trend strength (adjusted for 1.2 weight)
+            # Trend strength (max ±10)
             trend = ma_data.get('trend', 'Mixed Trend')
             if trend == 'Strong Uptrend':
-                score += 30  # Was 10
+                score += 10
             elif trend == 'Moderate Uptrend':
-                score += 15  # Was 5
+                score += 5
             elif trend == 'Strong Downtrend':
-                score -= 30  # Was -10
+                score -= 10
             elif trend == 'Moderate Downtrend':
-                score -= 15  # Was -5
+                score -= 5
                 
-            # Cap at ±60 (adjusted for 1.2 weight)
-            final_score = min(max(score, -60), 60)  # Was ±20
-            
-            self.log(f"Trend score calculated: {final_score}", 
-                    context={'trend': trend, 'price': current_price})
-            return final_score
+            # Add Bollinger Band influence (max ±5)
+            if bb_data['percent_b'] > 0.8:
+                score -= 3  # Overbought
+            elif bb_data['percent_b'] < 0.2:
+                score += 3  # Oversold
+            if bb_data['is_squeeze']:
+                score += 2  # Potential breakout
+                
+            # Support/Resistance influence (max ±5)
+            if current_price > support_resistance['nearest_resistance']:
+                score += 5  # Breakout
+            elif current_price < support_resistance['nearest_support']:
+                score -= 5  # Breakdown
+                
+            return min(max(score, -30), 30)  # Cap at ±30
             
         except Exception as e:
             self.log(f"Error calculating trend score: {str(e)}", level="error")
             return 0
 
     def _calculate_volume_score(self, volume_data: Dict[str, Any], market_conditions: Dict[str, Any]) -> float:
-        """Calculate detailed volume score with market context"""
+        """Calculate volume score with reduced weights"""
         try:
             base_score = 0
             volume_ratio = volume_data['volume_ratio']
             
-            # Progressive volume scoring (adjusted for 0.8 weight)
+            # Reduced scoring
             if volume_ratio > 2.0:
-                base_score = 40  # Was 20
+                base_score = 20  # Reduced from 40
             elif volume_ratio > 1.5:
-                base_score = 30  # Was 15
+                base_score = 15  # Reduced from 30
             elif volume_ratio > 1.2:
-                base_score = 20  # Was 10
+                base_score = 10  # Reduced from 20
             elif volume_ratio > 1.0:
-                base_score = 10  # Was 5
+                base_score = 5   # Reduced from 10
             elif volume_ratio < 0.5:
-                base_score = -30  # Was -15
+                base_score = -15 # Changed from -30
             elif volume_ratio < 0.8:
-                base_score = -20  # Was -10
+                base_score = -10 # Changed from -20
                 
             # Apply modifiers
             if volume_data['confirms_trend']:
@@ -1985,87 +2015,90 @@ class TradingBot:
             if market_conditions['is_high_activity']:
                 base_score *= 0.9
                 
-            # Cap at ±40 (adjusted for 0.8 weight)
-            final_score = min(max(base_score, -40), 40)  # Was ±20
-            
-            return final_score
+            # Cap at ±20 (reduced from ±40)
+            return min(max(base_score, -20), 20)
             
         except Exception as e:
             self.log(f"Error calculating volume score: {str(e)}", level="error")
             return 0
 
     def _calculate_momentum_score(self, sentiment: Dict[str, Any], ma_data: Dict[str, Any]) -> float:
-        """Calculate detailed momentum score"""
+        """Calculate momentum score with standardized weights"""
         try:
             score = 0
             
-            # Price momentum (adjusted for 1.0 weight)
+            # Price momentum (max ±15 from timeframes)
             if sentiment['momentum']['short_term'] == 'bullish':
-                score += 24  # Was 8
+                score += 7  # Short term highest weight
             elif sentiment['momentum']['short_term'] == 'bearish':
-                score -= 24  # Was -8
+                score -= 7
                 
             if sentiment['momentum']['medium_term'] == 'bullish':
-                score += 21  # Was 7
+                score += 5  # Medium term middle weight
             elif sentiment['momentum']['medium_term'] == 'bearish':
-                score -= 21  # Was -7
+                score -= 5
                 
             if sentiment['momentum']['long_term'] == 'bullish':
-                score += 15  # Was 5
+                score += 3  # Long term lowest weight
             elif sentiment['momentum']['long_term'] == 'bearish':
-                score -= 15  # Was -5
+                score -= 3
                 
-            # Add RSI influence (adjusted for 1.0 weight)
+            # RSI influence (max ±10)
             if 'rsi' in ma_data:
                 rsi = ma_data['rsi']
                 if rsi > 70:
-                    score -= 15  # Was -5
+                    score -= 10  # Overbought
+                elif rsi > 60:
+                    score -= 5   # Approaching overbought
                 elif rsi < 30:
-                    score += 15  # Was 5
-                    
-            # Cap at ±50 (adjusted for 1.0 weight)
-            final_score = min(max(score, -50), 50)  # Was ±25
+                    score += 10  # Oversold
+                elif rsi < 40:
+                    score += 5   # Approaching oversold
+                
+            # Cap at ±25 to align with other components
+            return min(max(score, -25), 25)
             
-            return final_score
         except Exception as e:
             self.log(f"Error calculating momentum score: {str(e)}", level="error")
             return 0
 
     def _calculate_risk_score(self, market_conditions: Dict[str, Any], sentiment: Dict[str, Any]) -> float:
-        """Calculate detailed risk score"""
+        """Calculate risk score with standardized weights"""
         try:
             score = 0
             
-            # Volatility impact (adjusted for 0.6 weight)
+            # Volatility impact (max ±6)
             volatility = market_conditions['price_range_7d']
             if volatility > 20:
-                score -= 30  # Was -10
+                score -= 6
             elif volatility > 15:
-                score -= 21  # Was -7
+                score -= 4
             elif volatility > 10:
-                score -= 15  # Was -5
+                score -= 2
             elif volatility < 5:
-                score += 9   # Was 3
+                score += 2
                 
-            # Market alignment (adjusted for 0.6 weight)
+            # Market alignment (max ±4)
             if market_conditions['market_aligned']:
                 btc_correlation = market_conditions.get('btc_correlation', 0)
-                score += min(abs(btc_correlation) * 15, 15)  # Was 5
+                score += min(abs(btc_correlation) * 4, 4)
+            else:
+                score -= 2
             
-            # Trading conditions (adjusted for 0.6 weight)
+            # Trading conditions (max ±3)
             if market_conditions['suitable_for_trading']:
-                score += 9   # Was 3
+                score += 3
             if market_conditions['is_high_activity']:
-                score -= 6   # Was -2
+                score -= 2
                 
-            # Sentiment alignment (adjusted for 0.6 weight)
-            if abs(sentiment['sentiment_score']) > 50:
-                score += 6   # Was 2
+            # Sentiment alignment (max ±2)
+            sentiment_score = sentiment.get('sentiment_score', 0)
+            if abs(sentiment_score) > 50:
+                score += 2 if sentiment_score > 0 else -2
                 
-            # Cap at ±30 (adjusted for 0.6 weight)
-            final_score = min(max(score, -30), 30)  # Was ±10
+            # Cap at ±15 to align with other components
+            return min(max(score, -15), 15)
             
-            return final_score
         except Exception as e:
             self.log(f"Error calculating risk score: {str(e)}", level="error")
             return 0
@@ -2082,3 +2115,26 @@ class TradingBot:
             return "Moderate Downtrend"
         else:
             return "Mixed Trend"
+
+    async def _execute_exit(self, symbol: str, reason: str, is_paper: bool) -> None:
+        """Centralized exit execution"""
+        try:
+            current_price = float(self.client.get_product(f"{symbol}-USD").price)  # Add this line
+            
+            if is_paper:
+                await self._simulate_sell_order(symbol)
+            else:
+                self._place_sell_order(symbol)
+                
+            position = self.paper_positions.get(symbol) if is_paper else self.positions.get(symbol)
+            if position:
+                profit_info = position.calculate_profit(current_price)
+                await self.send_trade_notification(
+                    'SELL', symbol, current_price,
+                    position.quantity, is_paper=is_paper,
+                    profit_info=profit_info,
+                    reason=reason
+                )
+        except Exception as e:
+            self.log(f"Error executing exit for {symbol}: {str(e)}", level="error")
+            raise  # Add this to propagate errors to calling functions

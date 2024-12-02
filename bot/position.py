@@ -28,10 +28,28 @@ class Position:
         self.lowest_price = min(self.lowest_price, current_price)
         
     def calculate_profit(self, current_price: float) -> Dict[str, float]:
-        current_value = self.quantity * current_price
-        initial_value = self.original_quantity * self.entry_price
-        
-        if initial_value <= 0:
+        try:
+            current_value = self.quantity * current_price
+            initial_value = self.original_quantity * self.entry_price
+            
+            if initial_value <= 0:
+                return self._get_zero_profit_info()
+            
+            total_fee = (initial_value * self.trading_bot.fee_rate) + (current_value * self.trading_bot.fee_rate)
+            position_ratio = self.quantity / self.original_quantity
+            profit = current_value - (position_ratio * initial_value) - total_fee
+            profit_percentage = (profit / (position_ratio * initial_value)) * 100
+            
+            return {
+                'profit_usd': profit,
+                'profit_percentage': profit_percentage,
+                'highest_profit_percentage': ((self.highest_price - self.entry_price) / self.entry_price) * 100,
+                'drawdown_percentage': ((self.lowest_price - self.entry_price) / self.entry_price) * 100,
+                'fees_paid': total_fee,
+                'partial_exit': self.partial_exit_taken
+            }
+        except Exception as e:
+            self.trading_bot.log(f"Error calculating profit for {self.symbol}: {str(e)}", level="error")
             return {
                 'profit_usd': 0,
                 'profit_percentage': 0,
@@ -40,50 +58,34 @@ class Position:
                 'fees_paid': 0,
                 'partial_exit': self.partial_exit_taken
             }
-        
-        total_fee = (initial_value * 0.006) + (current_value * 0.006)
-        profit = current_value - (self.quantity/self.original_quantity * initial_value) - total_fee
-        profit_percentage = (profit / (self.quantity/self.original_quantity * initial_value)) * 100
-        
-        return {
-            'profit_usd': profit,
-            'profit_percentage': profit_percentage,
-            'highest_profit_percentage': ((self.highest_price - self.entry_price) / self.entry_price) * 100,
-            'drawdown_percentage': ((self.lowest_price - self.entry_price) / self.entry_price) * 100,
-            'fees_paid': total_fee,
-            'partial_exit': self.partial_exit_taken
-        }
 
     def should_trigger_trailing_stop(self, current_price: float) -> bool:
-        """Enhanced trailing stop with activation threshold"""
         if not self.trailing_stop_enabled:
             return False
         
-        # Calculate current profit percentage
         profit_pct = ((current_price - self.entry_price) / self.entry_price) * 100
         
-        # Only activate trailing stop after reaching activation threshold
+        # Enhanced trailing stop logic
         if profit_pct >= self.trailing_stop_activation:
-            # Update trailing stop if we have a new high
+            # Dynamic trailing stop based on volatility
+            volatility_adjustment = 1.0
+            if hasattr(self.trading_bot, '_calculate_bollinger_bands'):
+                bb_data = self.trading_bot._calculate_bollinger_bands(self.symbol)
+                if bb_data['bandwidth'] > 5.0:  # High volatility
+                    volatility_adjustment = 1.2  # Wider trailing stop
+            
+            adjusted_stop_percentage = self.trailing_stop_percentage * volatility_adjustment
+            
             if current_price > self.highest_price:
                 self.trailing_stop_price = max(
                     self.trailing_stop_price,
-                    current_price * (1 - self.trailing_stop_percentage/100)
+                    current_price * (1 - adjusted_stop_percentage/100)
                 )
                 self.trading_bot.log(f"Updated trailing stop for {self.symbol} to ${self.trailing_stop_price:.2f}")
             
-            # Check if price fell below trailing stop
             if current_price < self.trailing_stop_price:
-                self.trading_bot.log(
-                    f"Trailing stop triggered for {self.symbol}",
-                    context={
-                        'current_price': current_price,
-                        'stop_price': self.trailing_stop_price,
-                        'profit_pct': profit_pct
-                    }
-                )
                 return True
-                
+        
         return False
 
     def __str__(self) -> str:
