@@ -12,6 +12,22 @@ class CommandHandler:
         
     def __init__(self, trading_bot):
         self.trading_bot = trading_bot
+        self.commands = {
+            'add': self.add_coin,
+            'remove': self.remove_coin,
+            'list': self.list_coins,
+            'position': self.get_position_details,
+            'metrics': self.get_position_metrics
+        }
+        
+    async def handle_command(self, command: str, *args) -> str:
+        """Centralized command handling"""
+        try:
+            if command not in self.commands:
+                return self._format_error(f"Unknown command: {command}")
+            return await self.commands[command](*args)
+        except Exception as e:
+            return self._format_error(f"Command error: {str(e)}")
         
     def add_coin(self, *symbols):
         """Add multiple coins to watchlist"""
@@ -540,57 +556,18 @@ class CommandHandler:
         return response
         
     def analyze_coin(self, symbol: str) -> str:
-        """Get detailed analysis for a specific coin"""
         try:
-            # Get current price and basic info
-            product = self.trading_bot.client.get_product(f"{symbol}-USD")
-            current_price = float(product.price)
+            signal = self.trading_bot._calculate_trade_signal(symbol)
             
-            # Get technical analysis data
-            ma_data = self.trading_bot.calculate_moving_averages(symbol)
-            volume_data = self.trading_bot.analyze_volume(symbol)
-            sentiment = self.trading_bot.analyze_market_sentiment(symbol)
-            market_conditions = self.trading_bot._check_market_conditions(symbol)
-            rsi = self.trading_bot.calculate_rsi(symbol)
-            
-            # Format response
-            response = f"Analysis for {symbol}\n```"
-            
-            # Price info
-            response += f"\nPrice: ${current_price:,.2f}"
-            
-            # Moving Averages
-            response += "\n\nMoving Averages:"
-            response += f"\n• SMA 50: ${ma_data['sma_50']:,.2f}"
-            response += f"\n• SMA 200: ${ma_data['sma_200']:,.2f}"
-            response += f"\n• Trend: {ma_data['trend']}"
-            
-            # Volume Analysis
-            response += "\n\nVolume Analysis:"
-            response += f"\n• Current Volume: {volume_data['current_volume']:,.2f}"
-            response += f"\n• Average Volume: {volume_data['average_volume']:,.2f}"
-            response += f"\n• Volume Ratio: {volume_data['volume_ratio']:.2f}"
-            response += f"\n• Trend Strength: {volume_data['trend_strength']}"
-            response += f"\n• Confirms Trend: {'Yes' if volume_data['confirms_trend'] else 'No'}"
-            
-            # Market Sentiment
-            response += "\n\nMarket Sentiment:"
-            response += f"\n• Score: {sentiment['sentiment_score']:.2f}"
-            response += f"\n• Overall: {sentiment['overall_sentiment']}"
-            for timeframe, change in sentiment['price_changes'].items():
-                response += f"\n• {timeframe.replace('_', ' ').title()} Change: {change:+.2f}%"
-            
-            # Market Conditions
-            response += "\n\nMarket Conditions:"
-            response += f"\n• Volatile: {'Yes' if market_conditions['is_volatile'] else 'No'}"
-            response += f"\n• High Activity: {'Yes' if market_conditions['is_high_activity'] else 'No'}"
-            response += f"\n• Market Aligned: {'Yes' if market_conditions['market_aligned'] else 'No'}"
-            response += f"\n• 7d Price Range: {market_conditions['price_range_7d']:.2f}%"
-            
-            # Technical Indicators
-            response += "\n\nTechnical Indicators:"
-            response += f"\n• RSI: {rsi:.2f}"
-            
+            response = f"Analysis for {symbol}:\n```"
+            response += f"\nPrice: ${signal['price']:,.2f}"
+            response += f"\nSignal: {signal['action']}"
+            response += f"\nScore: {signal['score']:.2f}"
+            response += "\n\nSignal Components:"
+            response += f"\n• Trend (0.4x):    {signal['signals']['trend']:>6.1f}"
+            response += f"\n• Momentum (0.3x): {signal['signals']['momentum']:>6.1f}"
+            response += f"\n• Volume (0.2x):   {signal['signals']['volume']:>6.1f}"
+            response += f"\n• Risk (0.1x):     {signal['signals']['risk']:>6.1f}"
             response += "```"
             return response
             
@@ -685,3 +662,84 @@ class CommandHandler:
             
         except Exception as e:
             return f"❌ Error updating stop loss: {str(e)}"
+        
+    def get_position_details(self, symbol: str = None) -> str:
+        """Get detailed position information for one or all positions"""
+        try:
+            positions = {}
+            if self.trading_bot.paper_trading:
+                positions = self.trading_bot.paper_positions
+            else:
+                positions = self.trading_bot.positions
+                
+            if symbol:
+                if symbol not in positions:
+                    return f"No active position found for {symbol}"
+                positions = {symbol: positions[symbol]}
+                
+            if not positions:
+                return "No active positions"
+                
+            response = "Position Details:\n```"
+            for sym, pos in positions.items():
+                info = pos.get_position_info()
+                
+                response += f"\n{sym} ({info['state']}):"
+                response += f"\n  Entry: ${info['entry_price']:.2f}"
+                response += f"\n  Current: ${info['current_price']:.2f}"
+                response += f"\n  Quantity: {info['quantity']:.8f}"
+                response += f"\n  Days Held: {info['days_held']}"
+                response += f"\n  P/L: ${info['profit_info']['profit_usd']:+,.2f} ({info['profit_info']['profit_percentage']:+.2f}%)"
+                response += f"\n  Max Profit: {info['metrics']['max_profit_pct']:+.2f}%"
+                response += f"\n  Max Drawdown: {info['metrics']['max_drawdown_pct']:+.2f}%"
+                
+                if info['exit_history']:
+                    response += "\n  Exit History:"
+                    for exit in info['exit_history']:
+                        response += f"\n    {exit['timestamp'].strftime('%Y-%m-%d %H:%M')}: "
+                        response += f"{exit['quantity']:.8f} @ ${exit['price']:.2f} "
+                        response += f"({exit['reason']}) P/L: {exit['profit_pct']:+.2f}%"
+                
+                response += "\n"
+                
+            response += "```"
+            return response
+            
+        except Exception as e:
+            return self._format_error(f"Error getting position details: {str(e)}")
+        
+    def get_position_metrics(self, symbol: str = None) -> str:
+        """Get position performance metrics"""
+        try:
+            positions = {}
+            if self.trading_bot.paper_trading:
+                positions = self.trading_bot.paper_positions
+            else:
+                positions = self.trading_bot.positions
+                
+            if symbol:
+                if symbol not in positions:
+                    return f"No active position found for {symbol}"
+                positions = {symbol: positions[symbol]}
+                
+            if not positions:
+                return "No active positions"
+                
+            response = "Position Metrics:\n```"
+            for sym, pos in positions.items():
+                info = pos.get_position_info()
+                metrics = info['metrics']
+                
+                response += f"\n{sym}:"
+                response += f"\n  Realized P/L: ${metrics['realized_profit']:+,.2f}"
+                response += f"\n  Current P/L %: {metrics['current_profit_pct']:+.2f}%"
+                response += f"\n  Max Profit %: {metrics['max_profit_pct']:+.2f}%"
+                response += f"\n  Max Drawdown %: {metrics['max_drawdown_pct']:+.2f}%"
+                response += f"\n  Total Fees: ${metrics['total_fees']:.2f}"
+                response += "\n"
+                
+            response += "```"
+            return response
+            
+        except Exception as e:
+            return self._format_error(f"Error getting position metrics: {str(e)}")

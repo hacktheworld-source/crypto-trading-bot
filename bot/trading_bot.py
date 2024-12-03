@@ -6,7 +6,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 import json
 from coinbase.rest import RESTClient
-from typing import Dict, Any, List, Union, Optional
+from typing import Dict, Any, List, Union, Optional, Literal, Callable
 from decimal import Decimal
 from .position import Position
 import asyncio
@@ -19,25 +19,126 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
-class TradingBotError(Exception):
-    """Base exception class for TradingBot errors"""
-    pass
+class TradingError(Exception):
+    """Base trading error with type classification"""
+    TYPES = {
+        'API': 'API call failed',
+        'DATA': 'Data processing error',
+        'SIGNAL': 'Signal calculation error',
+        'TRADE': 'Trade execution error',
+        'VALIDATION': 'Validation error'
+    }
+    
+    def __init__(self, message: str, error_type: str = None):
+        self.error_type = error_type
+        self.timestamp = datetime.now()
+        super().__init__(f"[{error_type}] {message}" if error_type else message)
 
-class APIError(TradingBotError):
-    """Raised when there's an error with API calls"""
-    pass
+class PriceManager:
+    """Centralized price data management"""
+    def __init__(self, client: RESTClient, cache_size: int, cache_ttl: int, rate_limit: float, 
+                 log_callback: Optional[Callable] = None):
+        self.client = client
+        self.log = log_callback or (lambda msg, **kwargs: None)
+        self._cache = {}
+        self._cache_lock = asyncio.Lock()
+        self._cache_size = cache_size
+        self._cache_ttl = cache_ttl
+        self._rate_limit = rate_limit
+        self._last_api_call = 0
 
-class DataError(TradingBotError):
-    """Raised when there's an error with data processing"""
-    pass
+    async def _get_cached_price(self, symbol: str, days: int = 1) -> pd.Series:
+        """Get price from cache or fetch from API"""
+        current_time = time.time()
+        cache_key = f"{symbol}_{days}"
+        
+        # Check cache
+        if cache_key in self._cache:
+            cached_data, cache_time = self._cache[cache_key]
+            if current_time - cache_time < self._cache_ttl:
+                return cached_data
+                
+        # Rate limiting
+        if current_time - self._last_api_call < self._rate_limit:
+            await asyncio.sleep(self._rate_limit - (current_time - self._last_api_call))
+            
+        try:
+            # Get candles from API
+            end = datetime.now()
+            start = end - timedelta(days=days)
+            
+            response = await self.client.get_candles(
+                product_id=f"{symbol}-USD",
+                start=int(start.timestamp()),
+                end=int(end.timestamp()),
+                granularity="ONE_DAY"
+            )
+            
+            # Convert to pandas Series
+            prices = pd.Series(
+                [float(candle.close) for candle in reversed(response.candles)],
+                index=[datetime.fromtimestamp(float(candle.start)) for candle in reversed(response.candles)]
+            )
+            
+            # Update cache
+            self._cache[cache_key] = (prices, current_time)
+            self._last_api_call = current_time
+            
+            # Clean cache if needed
+            if len(self._cache) > self._cache_size:
+                oldest_key = min(self._cache.items(), key=lambda x: x[1][1])[0]
+                del self._cache[oldest_key]
+            
+            return prices
+            
+        except Exception as e:
+            self.log(f"Failed to fetch price data: {str(e)}", level="error")
+            raise TradingError(f"Failed to fetch price data: {str(e)}", error_type='API')
 
-class SignalError(TradingBotError):
-    """Raised when there's an error calculating trading signals"""
-    pass
+    async def get_price(self, symbol: str, days: int = 1) -> pd.Series:
+        """Thread-safe price retrieval with caching"""
+        async with self._cache_lock:
+            return await self._get_cached_price(symbol, days)
 
-class TradeError(TradingBotError):
-    """Raised when there's an error executing trades"""
-    pass
+    async def close(self):
+        """Cleanup resources"""
+        async with self._cache_lock:
+            self._cache.clear()
+            self._last_api_call = 0
+
+    async def get_current_price(self, symbol: str) -> float:
+        """Get latest price for symbol"""
+        prices = await self.get_price(symbol, days=1)
+        return float(prices.iloc[-1])
+
+    async def get_historical_prices(self, symbol: str, start: datetime, end: datetime) -> pd.Series:
+        """Get historical prices for a date range"""
+        days = (end - start).days + 1
+        prices = await self.get_price(symbol, days=days)
+        return prices[(prices.index >= start) & (prices.index <= end)]
+
+class TradingConfig:
+    def __init__(self) -> None:
+        self.load_from_env()
+    
+    def load_from_env(self) -> None:
+        """Load configuration from environment variables"""
+        self.interval = int(os.getenv('TRADING_INTERVAL', '300'))
+        self.trade_amount = float(os.getenv('TRADE_AMOUNT', '100.0'))
+        self.max_position_size = float(os.getenv('MAX_POSITION_SIZE', '1000.0'))
+        self.trailing_stop = {
+            'enabled': bool(os.getenv('TRAILING_STOP_ENABLED', 'True')),
+            'percentage': float(os.getenv('TRAILING_STOP_PERCENTAGE', '5.0')),
+            'activation': float(os.getenv('TRAILING_STOP_ACTIVATION', '3.0'))
+        }
+        # ... other config items ...
+
+    def update(self, **kwargs):
+        """Update config values with validation"""
+        for key, value in kwargs.items():
+            if hasattr(self, key):
+                setattr(self, key, value)
+                logging.info(f"Updated config {key}={value}")
 
 class TradingBot:
     FEE_RATE = 0.006  # 0.6% Coinbase fee
@@ -51,10 +152,21 @@ class TradingBot:
             if 'COINBASE_API_SECRET' not in os.environ:
                 raise Exception("COINBASE_API_SECRET not found in environment variables")
             
+            # First create client
             self.client = RESTClient(
                 api_key=os.environ['COINBASE_API_KEY'].strip(),
                 api_secret=os.environ['COINBASE_API_SECRET'].strip()
             )
+            
+            # Then create PriceManager with client and logging
+            self.price_manager = PriceManager(
+                client=self.client,
+                cache_size=100,
+                cache_ttl=300,
+                rate_limit=0.1,
+                log_callback=self.log
+            )
+            
             logging.info("Coinbase client initialized successfully")
             
             self.watched_coins: set = set()
@@ -65,8 +177,6 @@ class TradingBot:
             self.trading_active: bool = False
             self.trade_amount: float = 100.0
             self.trade_history: List[Dict[str, Any]] = []
-            self.positions: Dict[str, Position] = {}  # Track active positions
-            self.position_history: List[Dict[str, Any]] = []  # Track closed positions
             self.stop_loss_percentage = 5.0  # Default 5% stop loss
             self.take_profit_percentage = 10.0  # Default 10% take profit
             self.partial_tp_percentage = 7.0  # Take partial profits at 7%
@@ -83,14 +193,25 @@ class TradingBot:
             # Paper trading attributes
             self.paper_trading = not self.trading_active  # Paper trade when real trading is off
             self.paper_balance = 1000.0  # Start with $1000 paper money
-            self.paper_positions: Dict[str, Position] = {}
-            self.paper_trade_history: List[Dict[str, Any]] = []
-            self.paper_portfolio_value = self.paper_balance
             
             self.discord_channel = None  # Will be set when bot starts
             
             # Pass fee rate to Position
             self.fee_rate = self.FEE_RATE
+            
+            # Add to existing init
+            self._price_cache = {}
+            self._cache_lock = asyncio.Lock()
+            self._cache_max_size = 100  # Maximum number of symbols to cache
+            self._cache_cleanup_threshold = 80  # Clean when we hit 80% capacity
+            
+            # Initialize managers
+            self.position_manager = PositionManager(self)
+            self.signal_generator = SignalGenerator(self)
+            self.trade_executor = TradeExecutor(self)
+            
+            # Configuration
+            self.config = TradingConfig()
             
         except Exception as e:
             logging.error(f"Failed to initialize trading bot: {str(e)}")
@@ -132,154 +253,22 @@ class TradingBot:
         return "Trading bot stopped successfully" if was_active else "Trading bot is already stopped"
         
     async def _trading_loop(self):
-        """Enhanced trading loop with proper execution and logging"""
-        await self.async_log("Trading loop started", context={
-            'mode': 'Paper' if self.paper_trading else 'Real',
-            'watched_coins': list(self.watched_coins),
-            'trading_interval': f"{self.trading_interval//60} minutes"
-        })
-        
-        last_update_time = datetime.now()
-        
-        while self.trading_active or self.paper_trading:
+        """Simplified trading loop using managers"""
+        while self.is_active:
             try:
-                current_time = datetime.now()
-                
-                # Check if it's time for periodic update
-                if (current_time - last_update_time).total_seconds() >= self.trading_interval:
-                    await self.async_log("Preparing periodic update...")
-                    await self.send_interval_update()  # This should send the update
-                    last_update_time = current_time
-                
-                # Add recovery delay for serious errors
-                recovery_delay = 60  # 1 minute
-                
-                try:
-                    current_hour = datetime.now().hour
-                    
-                    # Log iteration start with context
-                    await self.async_log(
-                        "Starting trading iteration",
-                        context={
-                            'mode': 'Paper' if self.paper_trading else 'Real',
-                            'active_coins': list(self.watched_coins),
-                            'current_hour': f"{current_hour:02d}:00",
-                            'paper_positions': len(self.paper_positions),
-                            'real_positions': len(self.positions)
-                        }
-                    )
-                    
-                    for symbol in self.watched_coins:
-                        try:
-                            await self.async_log(f"Processing {symbol}...")
-                            
-                            # Get current analysis
-                            current_price = float(self.client.get_product(f"{symbol}-USD").price)
-                            position = self.paper_positions.get(symbol) if self.paper_trading else self.positions.get(symbol)
-                            
-                            # Log current state
-                            await self.async_log(
-                                f"{symbol} Status:\n"
-                                f"Current Price: ${current_price:,.2f}\n"
-                                f"Has Position: {position is not None}\n"
-                                f"Trading Mode: {'Paper' if self.paper_trading else 'Real'}"
-                            )
-                            
-                            # Get trade signal and log it
-                            signal = self._calculate_trade_signal(symbol)
-                            await self.async_log(
-                                f"{symbol} Signal Analysis:\n"
-                                f"Action: {signal['action']}\n"
-                                f"Score: {signal['score']}\n"
-                                f"Components:\n" +
-                                '\n'.join(f"- {k}: {v}" for k, v in signal['signals'].items())
-                            )
-                            
-                            # Update position tracking if we have one
-                            if position:
-                                position.update_price(current_price)
-                                profit_info = position.calculate_profit(current_price)
-                                
-                                # Check risk management first
-                                await self._check_risk_management(symbol)
-                                
-                                await self.async_log(
-                                    f"{symbol} Position Update:\n"
-                                    f"Entry Price: ${position.entry_price:,.2f}\n"
-                                    f"Current P/L: {profit_info['profit_percentage']:+.2f}%\n"
-                                    f"Max Profit: {profit_info['highest_profit_percentage']:+.2f}%\n"
-                                    f"Max Drawdown: {profit_info['drawdown_percentage']:+.2f}%"
-                                )
-                                
-                                # Check if we should sell
-                                if self._should_trade(symbol, 'SELL'):
-                                    await self.async_log(f"SELL signal confirmed for {symbol}")
-                                    
-                                    if self.paper_trading:
-                                        await self._simulate_sell_order(symbol)
-                                        await self.send_trade_notification(
-                                            'SELL', symbol, current_price, 
-                                            position.quantity, is_paper=True,
-                                            profit_info=profit_info
-                                        )
-                                    else:
-                                        self._place_sell_order(symbol)
-                                    continue
-                        
-                            # Check if we should buy
-                            elif self._should_trade(symbol, 'BUY'):
-                                position_size = self._calculate_position_size(symbol)
-                                await self.async_log(
-                                    f"BUY signal confirmed for {symbol}\n"
-                                    f"Calculated position size: ${position_size:,.2f}"
-                                )
-                                
-                                if position_size < 5.0:
-                                    await self.async_log(f"Position size too small for {symbol}, skipping")
-                                    continue
-                                    
-                                if self.paper_trading:
-                                    await self._simulate_buy_order(symbol)
-                                    await self.send_trade_notification(
-                                        'BUY', symbol, current_price,
-                                        position_size / current_price, is_paper=True
-                                    )
-                                else:
-                                    self._place_buy_order(symbol)
-                    
-                        except Exception as e:
-                            await self.async_log(f"Error processing {symbol}: {str(e)}", level="error")
-                            continue
-                        
-                    # Log end of iteration
-                    await self.async_log(
-                        "Trading iteration completed\n"
-                        f"Paper Positions: {len(self.paper_positions)}\n"
-                        f"Real Positions: {len(self.positions)}\n"
-                        f"Next update in {self.trading_interval} seconds"
-                    )
-                    
-                    # Normal delay between iterations
-                    await asyncio.sleep(self.trading_interval)
-                    
-                except APIError as e:
-                    await self.async_log(f"API Error in trading loop: {str(e)}", level="error")
-                    await asyncio.sleep(recovery_delay)
-                    continue
-                    
-                except DataError as e:
-                    await self.async_log(f"Data Error in trading loop: {str(e)}", level="error")
-                    await asyncio.sleep(recovery_delay)
-                    continue
-                    
-                except Exception as e:
-                    await self.async_log(f"Unexpected error in trading loop: {str(e)}", level="error")
-                    await asyncio.sleep(recovery_delay * 2)  # Longer delay for unexpected errors
-                    continue
-                    
+                for symbol in self.watched_coins:
+                    signal = await self.signal_generator.generate_signal(symbol)
+                    if signal['action'] != 'HOLD':
+                        success = await self.trade_executor.execute_trade(  # Missing success check
+                            symbol=symbol,
+                            action=signal['action'],
+                            reason=f"Signal: {signal['score']:.2f}"
+                        )
+                        if not success:  # Add this
+                            await self.log(f"Trade execution failed for {symbol}", level="error")
+                await asyncio.sleep(self.config.interval)
             except Exception as e:
-                await self.async_log(f"Critical error in trading loop: {str(e)}", level="error")
-                await asyncio.sleep(recovery_delay * 3)  # Even longer delay for critical errors
+                await self.log(f"Trading loop error: {str(e)}", level="error")
     
     def _check_and_trade(self, symbol):
         try:
@@ -293,95 +282,28 @@ class TradingBot:
             self.log(f"Error checking and trading {symbol}: {str(e)}", level="error")
             raise
     
-    def calculate_rsi(self, symbol: str) -> float:
+    async def calculate_rsi(self, symbol: str) -> float:
+        """Calculate RSI using PriceManager"""
         try:
-            end = datetime.now()
-            start = end - timedelta(days=30)
-            prices = self._get_historical_prices(symbol, start, end)
-            
-            self.log(f"Calculating RSI for {symbol} with {len(prices)} data points")
-            
-            if len(prices) < self.rsi_period * 2:  # Need at least 2x RSI period for accuracy
-                raise Exception(f"Not enough data points for accurate RSI calculation")
-            
-            # Calculate price changes
+            prices = await self.price_manager.get_price(symbol, days=30)
             delta = prices.diff()
-            
-            # Log some key statistics for verification
-            self.log(f"Price range: ${prices.min():.2f} - ${prices.max():.2f}")
-            self.log(f"Average daily change: ${delta.abs().mean():.2f}")
-            
-            # Separate gains and losses
             gains = delta.where(delta > 0, 0)
             losses = -delta.where(delta < 0, 0)
             
-            # Calculate exponential moving averages
             avg_gain = gains.ewm(span=self.rsi_period, adjust=False).mean()
             avg_loss = losses.ewm(span=self.rsi_period, adjust=False).mean()
-            
-            # Calculate RS and RSI
             rs = avg_gain / avg_loss
             rsi = 100 - (100 / (1 + rs))
             
-            # Get the latest RSI value
-            current_rsi = float(rsi.iloc[-1])
-            
-            # Log intermediate values for debugging
-            self.log(f"Latest price: {prices.iloc[-1]:.2f}")
-            self.log(f"Latest gain EMA: {avg_gain.iloc[-1]:.4f}")
-            self.log(f"Latest loss EMA: {avg_loss.iloc[-1]:.4f}")
-            self.log(f"Calculated RSI: {current_rsi:.2f}")
-            
-            return current_rsi
-            
+            return float(rsi.iloc[-1])
         except Exception as e:
             self.log(f"Error calculating RSI for {symbol}: {str(e)}", level="error")
             raise
-    
-    def _get_historical_prices(self, symbol: str, start: datetime, end: datetime) -> pd.Series:
-        """Get historical prices with rate limiting protection"""
-        try:
-            # Add rate limiting protection
-            if hasattr(self, '_last_api_call'):
-                time_since_last_call = time.time() - self._last_api_call
-                if time_since_last_call < 0.1:  # Max 10 calls per second
-                    time.sleep(0.1 - time_since_last_call)
-            
-            # Convert to Unix timestamps
-            start_unix = int(start.timestamp())
-            end_unix = int(end.timestamp())
-            
-            # Get candles using correct method name
-            response = self.client.get_candles(
-                product_id=f"{symbol}-USD",
-                start=start_unix,
-                end=end_unix,
-                granularity="ONE_DAY"  # Daily candles
-            )
-            
-            # Convert response to list and check if we have data
-            candles = response.candles if hasattr(response, 'candles') else []
-            if not candles:
-                raise Exception(f"No candle data received for {symbol}")
-            
-            # Convert candles to pandas Series
-            prices = pd.Series(
-                [float(candle.close) for candle in reversed(candles)],
-                index=[datetime.fromtimestamp(float(candle.start)) for candle in reversed(candles)]
-            )  # Add closing parenthesis here
-            
-            self._last_api_call = time.time()
-            self.log(f"Fetched {len(candles)} candles for {symbol}")
-            return prices
-            
-        except Exception as e:
-            self.log(f"Error fetching historical prices: {str(e)}", level="error")
-            raise
-    
+
     def _place_buy_order(self, symbol: str) -> None:
         try:
             if not self._validate_real_trade(symbol, 'BUY', self.trade_amount):
-                raise TradeError(f"Trade validation failed for {symbol}")
+                raise TradingError(f"Trade validation failed for {symbol}")
             
             product_id = f"{symbol}-USD"
             current_price = float(self.client.get_product(product_id).price)
@@ -436,7 +358,7 @@ class TradingBot:
                 return
                 
             if not self._validate_real_trade(symbol, 'SELL', position.quantity):
-                raise TradeError(f"Trade validation failed for {symbol}")
+                raise TradingError(f"Trade validation failed for {symbol}")
             
             product_id = f"{symbol}-USD"
             current_price = float(self.client.get_product(product_id).price)
@@ -500,41 +422,6 @@ class TradingBot:
         except Exception as e:
             self.log(f"Error placing sell order for {symbol}: {str(e)}", level="error")
             raise
-            
-    def set_trade_amount(self, amount):
-        try:
-            amount = float(amount)
-            if amount <= 0:
-                return False
-            self.trade_amount = amount
-            logging.info(f"Trade amount set to ${amount}")
-            return True
-        except ValueError:
-            return False
-            
-    def set_rsi_thresholds(self, oversold, overbought):
-        try:
-            oversold = float(oversold)
-            overbought = float(overbought)
-            if 0 <= oversold <= overbought <= 100:
-                self.rsi_oversold = oversold
-                self.rsi_overbought = overbought
-                logging.info(f"RSI thresholds updated: oversold={oversold}, overbought={overbought}")
-                return True
-            return False
-        except ValueError:
-            return False
-            
-    def set_trading_interval(self, minutes):
-        try:
-            minutes = int(minutes)
-            if minutes < 1:
-                return False
-            self.trading_interval = minutes * 60
-            logging.info(f"Trading interval set to {minutes} minutes")
-            return True
-        except ValueError:
-            return False
             
     def get_trade_history(self):
         return self.trade_history
@@ -697,17 +584,6 @@ class TradingBot:
             logging.error(f"Error getting account balance: {str(e)}")
             return {'balances': {}, 'total_usd_value': 0.0}
 
-    def get_current_price(self, symbol: str) -> float:
-        try:
-            product_id = f"{symbol}-USD"
-            product = self.client.get_product(product_id)
-            price = float(product.price)
-            logging.info(f"Current price for {symbol}: ${price}")
-            return price
-        except Exception as e:
-            logging.error(f"Error getting price for {symbol}: {str(e)}")
-            raise
-
     def analyze_volume(self, symbol: str) -> Dict[str, Any]:
         """Analyzes trading volume to confirm price trends"""
         try:
@@ -757,12 +633,16 @@ class TradingBot:
             raise
 
     def _calculate_position_size(self, symbol: str) -> float:
-        """Smarter position sizing based on risk"""
         try:
-            available_funds = float(self.get_account_balance()['balances'].get('USD', {}).get('balance', 0))
+            # For paper trading, we should use paper balance instead of real balance
+            if self.paper_trading:
+                available_funds = self.paper_balance
+                portfolio_value = self.get_paper_balance()['total_value']
+            else:
+                available_funds = float(self.get_account_balance()['balances'].get('USD', {}).get('balance', 0))
+                portfolio_value = self.get_account_balance()['total_usd_value']
             
             # Never risk more than 2% of total portfolio on any single trade
-            portfolio_value = self.get_account_balance()['total_usd_value']
             max_risk_amount = portfolio_value * 0.02
             
             # Calculate position size based on stop loss
@@ -772,15 +652,25 @@ class TradingBot:
             # Position size that risks the max risk amount
             position_size = min(
                 max_risk_amount / risk_per_share * current_price,
-                available_funds,
+                available_funds * 0.95,  # Leave 5% buffer for fees
                 self.max_position_size
             )
+            
+            # Log calculation details
+            self.log(f"Position size calculation for {symbol}:", context={
+                'available_funds': available_funds,
+                'portfolio_value': portfolio_value,
+                'max_risk_amount': max_risk_amount,
+                'current_price': current_price,
+                'risk_per_share': risk_per_share,
+                'calculated_size': position_size
+            })
             
             # Ensure minimum trade size
             return max(5.0, position_size) if position_size >= 5.0 else 0
             
         except Exception as e:
-            logging.error(f"Error calculating position size: {str(e)}")
+            self.log(f"Error calculating position size: {str(e)}", level="error")
             return 0
 
     def _check_market_conditions(self, symbol: str) -> Dict[str, Any]:
@@ -808,7 +698,6 @@ class TradingBot:
                 market_aligned = (
                     (sentiment['overall_sentiment'] == btc_sentiment['overall_sentiment']) or
                     (sentiment['sentiment_score'] * btc_sentiment['sentiment_score'] > 0)
-                )
             else:
                 market_aligned = True
             
@@ -835,42 +724,171 @@ class TradingBot:
             raise
 
     def _calculate_trade_signal(self, symbol: str) -> Dict[str, Any]:
+        """Main entry point for all trading signal calculations"""
         try:
-            # Get current price
+            # Get current price and technical indicators
             current_price = float(self.client.get_product(f"{symbol}-USD").price)
+            technical_data = self._calculate_technical_indicators(symbol)
             
-            # Get technical analysis data with proper candle data
-            ma_data = self.calculate_moving_averages(symbol)
-            ma_data['symbol'] = symbol
-            ma_data['current_price'] = current_price
-            ma_data['rsi'] = self.calculate_rsi(symbol)  # Add RSI for momentum calculation
+            # Get market analysis data
+            market_data = self._analyze_market_data(symbol)
             
-            volume_data = self.analyze_volume(symbol)
-            sentiment = self.analyze_market_sentiment(symbol)
-            market_conditions = self._check_market_conditions(symbol)
+            # Calculate final signal
+            signal = self._calculate_signal_components(
+                technical_data=technical_data,
+                market_data=market_data,
+                current_price=current_price,
+                symbol=symbol
+            )
             
-            # Log raw data for debugging
-            self.log(f"Raw signal data for {symbol}:", context={
-                'ma_data': ma_data,
-                'volume_data': volume_data, 
-                'sentiment': sentiment,
-                'market_conditions': market_conditions
+            # Log comprehensive analysis
+            self.log(f"Trade signal calculated for {symbol}:", context={
+                'price': current_price,
+                'action': signal['action'],
+                'score': signal['score'],
+                'components': signal['signals']
             })
-
-            # Validate data
-            if not all(k in ma_data for k in ['trend', 'sma_50', 'sma_200']):
-                raise DataError("Missing required MA data")
-            if not all(k in volume_data for k in ['volume_ratio', 'confirms_trend']):
-                raise DataError("Missing required volume data")
-            if not all(k in sentiment for k in ['sentiment_score', 'overall_sentiment', 'momentum']):
-                raise DataError("Missing required sentiment data")
-
-            # Calculate signal components
-            return self._calculate_signal_components(ma_data, volume_data, sentiment, market_conditions)
-
+            
+            return signal
+            
         except Exception as e:
             self.log(f"Error calculating trade signal for {symbol}: {str(e)}", level="error")
             return self._get_fallback_signal(symbol, str(e))
+
+    async def _calculate_technical_indicators(self, symbol: str) -> Dict[str, Any]:
+        try:
+            prices = await self.price_manager.get_price(symbol, days=250)
+            current_price = float(prices.iloc[-1])
+            
+            # Calculate RSI
+            delta = prices.diff()
+            gains = delta.where(delta > 0, 0)
+            losses = -delta.where(delta < 0, 0)
+            avg_gain = gains.ewm(span=self.rsi_period, adjust=False).mean()
+            avg_loss = losses.ewm(span=self.rsi_period, adjust=False).mean()
+            rs = avg_gain / avg_loss
+            rsi = 100 - (100 / (1 + rs))
+            
+            # Calculate Moving Averages
+            sma_20 = prices.rolling(window=20).mean()
+            sma_50 = prices.rolling(window=50).mean()
+            sma_200 = prices.rolling(window=200).mean()
+            
+            # Calculate Bollinger Bands
+            bb_sma = prices.rolling(window=20).mean()
+            bb_std = prices.rolling(window=20).std()
+            
+            # Get current values
+            current_price = prices.iloc[-1]
+            
+            return {
+                'price': current_price,
+                'rsi': float(rsi.iloc[-1]),
+                'moving_averages': {
+                    'sma_20': float(sma_20.iloc[-1]),
+                    'sma_50': float(sma_50.iloc[-1]),
+                    'sma_200': float(sma_200.iloc[-1])
+                },
+                'bollinger_bands': {
+                    'middle': float(bb_sma.iloc[-1]),
+                    'upper': float(bb_sma.iloc[-1] + (bb_std.iloc[-1] * 2)),
+                    'lower': float(bb_sma.iloc[-1] - (bb_std.iloc[-1] * 2)),
+                    'bandwidth': float((bb_std.iloc[-1] * 4 / bb_sma.iloc[-1]) * 100)
+                },
+                'trend': self._determine_trend(
+                    current_price,
+                    sma_20.iloc[-1],
+                    sma_50.iloc[-1],
+                    sma_200.iloc[-1]
+                )
+            }
+        except Exception as e:
+            await self.log(f"Technical analysis error: {str(e)}", level="error")
+            raise
+
+    def _analyze_market_data(self, symbol: str) -> Dict[str, Any]:
+        """Analyze market conditions and sentiment"""
+        try:
+            sentiment = self.analyze_market_sentiment(symbol)
+            market_conditions = self._check_market_conditions(symbol)
+            volume_data = self.analyze_volume(symbol)
+            
+            return {
+                'sentiment': sentiment,
+                'market_conditions': market_conditions,
+                'volume': volume_data
+            }
+        except Exception as e:
+            self.log(f"Error analyzing market data: {str(e)}", level="error")
+            raise
+
+    def _calculate_signal_components(self, technical_data: Dict[str, Any], 
+                               market_data: Dict[str, Any],
+                               current_price: float,
+                               symbol: str) -> Dict[str, Any]:
+        """Calculate final signal with standardized scoring"""
+        try:
+            # Component weights
+            WEIGHTS = {
+                'trend': 0.4,
+                'momentum': 0.3,
+                'volume': 0.2,
+                'risk': 0.1
+            }
+            
+            # Signal thresholds
+            THRESHOLDS = {
+                'strong_buy': 20,
+                'buy': 15,
+                'strong_sell': -20,
+                'sell': -15
+            }
+            
+            # Calculate individual scores
+            scores = {
+                'trend': self._calculate_trend_score(technical_data),
+                'momentum': self._calculate_momentum_score(market_data['sentiment'], technical_data),
+                'volume': self._calculate_volume_score(market_data['volume'], market_data['market_conditions']),
+                'risk': self._calculate_risk_score(market_data['market_conditions'], market_data['sentiment'])
+            
+            # Calculate weighted final score
+            final_score = sum(score * WEIGHTS[component] for component, score in scores.items())
+            
+            # Determine action based on scores and thresholds
+            action = self._determine_signal_action(final_score, scores, THRESHOLDS)
+            
+            return {
+                'symbol': symbol,
+                'price': current_price,
+                'score': final_score,
+                'signals': scores,
+                'action': action,
+                'timestamp': datetime.now()
+            }
+            
+        except Exception as e:
+            self.log(f"Error calculating signal components: {str(e)}", level="error")
+            return self._get_fallback_signal(symbol, str(e))
+
+    def _determine_signal_action(self, final_score: float, 
+                           component_scores: Dict[str, float],
+                           thresholds: Dict[str, float]) -> str:
+        """Determine trading action based on scores and thresholds"""
+        if (final_score >= thresholds['strong_buy'] and 
+            component_scores['trend'] > 15 and 
+            component_scores['volume'] > 5):
+            return 'STRONG_BUY'
+        elif (final_score >= thresholds['buy'] and 
+              component_scores['trend'] > 10):
+            return 'BUY'
+        elif (final_score <= thresholds['strong_sell'] and 
+              component_scores['trend'] < -15 and 
+              component_scores['volume'] < -5):
+            return 'STRONG_SELL'
+        elif (final_score <= thresholds['sell'] and 
+              component_scores['trend'] < -10):
+            return 'SELL'
+        return 'HOLD'
 
     def _get_fallback_signal(self, symbol: str, error_type: str) -> Dict[str, Any]:
         """Get a safe fallback signal when errors occur"""
@@ -898,12 +916,23 @@ class TradingBot:
             
             # Define thresholds as class constants
             TREND_THRESHOLD = 15
-            MOMENTUM_THRESHOLD = 5  # Reduced from 10
-            VOLUME_THRESHOLD = 3    # Reduced from 5
+            MOMENTUM_THRESHOLD = 0  # Changed from 5
+            VOLUME_THRESHOLD = 0    # Changed from 3
             RISK_THRESHOLD = -10
-            SCORE_THRESHOLD = 15    # Matches BUY_THRESHOLD from signal components
+            SCORE_THRESHOLD = 15
             
             if action == 'BUY' and not has_position:
+                # Log decision factors
+                self.log(f"Trade decision factors for {symbol}:", context={
+                    'action': signal['action'],
+                    'trend_score': signal['signals']['trend'],
+                    'momentum_score': signal['signals']['momentum'],
+                    'volume_score': signal['signals']['volume'],
+                    'risk_score': signal['signals']['risk'],
+                    'total_score': signal['score'],
+                    'market_suitable': market_conditions['suitable_for_trading']
+                })
+                
                 return (
                     signal['action'] in ['BUY', 'STRONG_BUY'] and
                     signal['signals']['trend'] > TREND_THRESHOLD and
@@ -919,7 +948,6 @@ class TradingBot:
                     signal['signals']['risk'] < -15 or
                     (signal['signals']['trend'] < -10 and signal['signals']['momentum'] < -10) or
                     not market_conditions['suitable_for_trading']
-                )
             
             return False
             
@@ -1007,7 +1035,6 @@ class TradingBot:
             prices = pd.Series(
                 [float(candle.close) for candle in reversed(response.candles)],
                 index=[datetime.fromtimestamp(float(candle.start)) for candle in reversed(response.candles)]
-            )
             
             # Calculate moving averages
             sma_20 = prices.rolling(window=20).mean()
@@ -1107,68 +1134,53 @@ class TradingBot:
                 return
             
             current_price = float(self.client.get_product(f"{symbol}-USD").price)
+            
+            # Update position with current price
+            position.update_price(current_price)
             profit_info = position.calculate_profit(current_price)
-            signal = self._calculate_trade_signal(symbol)
             
-            # Dynamic risk adjustment based on signal
-            risk_multiplier = 0.8 if signal['signals']['risk'] < -10 else 1.0
-            stop_loss_price = position.entry_price * (1 - (self.stop_loss_percentage * risk_multiplier)/100)
-            
-            if current_price <= stop_loss_price:
-                await self._execute_exit(symbol, "Stop Loss", position.is_paper)
-                return
-            
-            # Validate take-profit thresholds
-            if self.take_profit_percentage <= self.partial_tp_percentage:
-                self.log(f"Warning: Full TP ({self.take_profit_percentage}%) is lower than partial TP ({self.partial_tp_percentage}%)", 
-                        level="warning")
+            # Check stop loss
+            if current_price <= position.stop_loss_price:
+                if await self._execute_trade(symbol, 'SELL', reason="Stop Loss"):
+                    await self.async_log(f"Stop loss executed for {symbol}")
                 return
             
             # Check trailing stop
             if position.should_trigger_trailing_stop(current_price):
-                self.log(f"Trailing stop triggered for {symbol} at {profit_info['profit_percentage']:.2f}%")
-                if self.paper_trading:
-                    await self._simulate_sell_order(symbol)
-                else:
-                    self._place_sell_order(symbol)
+                if await self._execute_trade(symbol, 'SELL', reason="Trailing Stop"):
+                    await self.async_log(f"Trailing stop executed for {symbol}")
                 return
-
-            # Take partial profits if enabled and not already taken
-            if (not position.partial_exit_taken and 
-                profit_info['profit_percentage'] >= self.partial_tp_percentage):
-                
+            
+            # Check take profit levels
+            if not position.partial_exit_taken and profit_info['profit_percentage'] >= self.take_profit_percentage:
+                # Record partial exit
                 original_quantity = position.quantity
-                # Modify trade amount for partial exit
-                self.trade_amount = (original_quantity * current_price * self.partial_tp_size)
+                exit_quantity = original_quantity * self.partial_tp_size
                 
-                self.log(f"Taking partial profits ({self.partial_tp_size*100}%) for {symbol} at {profit_info['profit_percentage']:.2f}%")
-                
+                # Execute partial exit
                 if self.paper_trading:
                     await self._simulate_sell_order(symbol, partial=True)
                 else:
                     self._place_sell_order(symbol, partial=True)
                 
-                # Update position after partial exit
-                position.quantity *= (1 - self.partial_tp_size)
-                position.partial_exit_taken = True
+                # Record the exit
+                position.record_exit(
+                    exit_price=current_price,
+                    exit_quantity=exit_quantity,
+                    reason="Partial Take Profit"
+                )
+                return
                 
-                # Reset trade amount
-                self.trade_amount = self.original_trade_amount
-                return
-
-            # Take profit checks
+            # Check full take profit
             if profit_info['profit_percentage'] >= self.take_profit_percentage:
-                self.log(f"Take profit triggered for {symbol} at {profit_info['profit_percentage']:.2f}%")
-                if self.paper_trading:
-                    await self._simulate_sell_order(symbol)
-                else:
-                    self._place_sell_order(symbol)
+                if await self._execute_trade(symbol, 'SELL', reason="Take Profit"):
+                    await self.async_log(f"Take profit executed for {symbol}")
                 return
-
+            
         except Exception as e:
-            self.log(f"Error in risk management: {str(e)}", level="error")
+            self.log(f"Error in risk management for {symbol}: {str(e)}", level="error")
 
-    def analyze_market_sentiment(self, symbol: str) -> Dict[str, Any]:
+    async def analyze_market_sentiment(self, symbol: str) -> Dict[str, Any]:
         """Analyze overall market sentiment using multiple indicators"""
         try:
             # Get data for different timeframes
@@ -1178,9 +1190,9 @@ class TradingBot:
             start_short = end - timedelta(days=7)    
             
             # Get price data for different timeframes with validation
-            prices_long = self._get_historical_prices(symbol, start_long, end)
+            prices_long = await self.price_manager.get_historical_prices(symbol, start_long, end)
             if len(prices_long) < 2:
-                raise DataError(f"Insufficient historical data for {symbol}")
+                raise TradingError(f"Insufficient historical data for {symbol}")
                 
             self.log(f"Got {len(prices_long)} price points for {symbol}")
             
@@ -1189,7 +1201,7 @@ class TradingBot:
             
             # Validate we have enough data points
             if len(prices_short) < 2 or len(prices_medium) < 2:
-                raise DataError(f"Insufficient data points for sentiment calculation")
+                raise TradingError(f"Insufficient data points for sentiment calculation")
                 
             # Calculate and log price changes
             price_changes = {
@@ -1208,16 +1220,11 @@ class TradingBot:
                     'medium_term': 'bullish' if price_changes['medium'] > 0 else 'bearish',
                     'long_term': 'bullish' if price_changes['long'] > 0 else 'bearish'
                 },
-                'price_changes': {
-                    'short_term': price_changes['short'],
-                    'medium_term': price_changes['medium'],
-                    'long_term': price_changes['long']
-                }
+                'price_changes': price_changes
             }
                 
         except Exception as e:
-            self.log(f"Error in sentiment analysis for {symbol}: {str(e)}", level="error")
-            # Return a neutral sentiment rather than raising
+            self.log(f"Error analyzing market sentiment for {symbol}: {str(e)}", level="error")
             return {
                 'sentiment_score': 0,
                 'overall_sentiment': 'Neutral',
@@ -1239,12 +1246,12 @@ class TradingBot:
             current_price = float(self.client.get_product(product_id).price)
             
             # Calculate fees (0.6% Coinbase fee)
-            fee = self.trade_amount * 0.006
+            fee = self.trade_amount * self.FEE_RATE
             actual_trade_amount = self.trade_amount - fee
             
-            # Check if we have enough paper balance
-            if self.paper_balance < self.trade_amount:
-                logging.warning(f"Insufficient paper balance for {symbol} buy")
+            # Check if we have enough paper balance with buffer for fees
+            if self.paper_balance < self.trade_amount * 1.01:  # Add 1% buffer
+                await self.async_log(f"Insufficient paper balance for {symbol} buy: ${self.paper_balance:.2f} < ${self.trade_amount:.2f}")
                 return
             
             quantity = actual_trade_amount / current_price
@@ -1419,7 +1426,7 @@ class TradingBot:
                     discord.Color.blue()
             
             # Add reason to title if provided
-            title = f"{'������' if action == 'BUY' else '📉'} {action} {symbol}"
+            title = f"{'' if action == 'BUY' else '📉'} {action} {symbol}"
             if reason:
                 title += f" ({reason})"
             
@@ -1465,10 +1472,10 @@ class TradingBot:
                       f"📈 Signal: {signal['action']}\n"
                       f"📊 Score: {signal['score']:.2f}\n"
                       f"📋 Signal Components\n"
-                      f"• 📈 Trend ({1.2:.1f}x):    {signal['signals']['trend']:.1f}\n"
-                      f"• 🔄 Momentum (1.0x): {signal['signals']['momentum']:.1f}\n"
-                      f"• 📊 Volume (0.8x):   {signal['signals']['volume']:.1f}\n"
-                      f"• ⚠️ Risk (0.6x):     {signal['signals']['risk']:.1f}"
+                      f"• 📈 Trend (0.4x):    {signal['signals']['trend']:.1f}\n"
+                      f"• 🔄 Momentum (0.3x): {signal['signals']['momentum']:.1f}\n"
+                      f"• 📊 Volume (0.2x):   {signal['signals']['volume']:.1f}\n"
+                      f"• ⚠️ Risk (0.1x):     {signal['signals']['risk']:.1f}"
                       f"```",
                 inline=False
             )
@@ -1627,10 +1634,19 @@ class TradingBot:
             await self.async_log(f"Error syncing positions: {str(e)}", level="error")
 
     async def post_init(self):
-        """Perform post-initialization tasks"""
-        await self.async_log("Starting bot initialization...")
-        await self.async_log("Coinbase client initialized successfully")
-        await self.sync_positions()
+        """Async initialization steps after bot creation"""
+        try:
+            # Verify API connection
+            await self.client.get_accounts()
+            self.log("API connection verified")
+            
+            # Initialize price cache
+            for symbol in self.watched_coins:
+                await self.price_manager.get_price(symbol)
+                
+        except Exception as e:
+            self.log(f"Post-initialization failed: {str(e)}", level="error")
+            raise
 
     async def async_log(self, message: str, level: str = "info", context: Dict[str, Any] = None, error: Exception = None) -> None:
         try:
@@ -1785,34 +1801,21 @@ class TradingBot:
             self.log(f"Error calculating Stochastic for {symbol}: {str(e)}", level="error")
             raise
 
-    def _calculate_bollinger_bands(self, symbol: str) -> Dict[str, float]:
-        """Calculate Bollinger Bands"""
+    def _calculate_bollinger_bands(self, symbol: str) -> Dict[str, Any]:
+        """Calculate Bollinger Bands using cached price data"""
         try:
-            # Get historical prices
-            end = datetime.now()
-            start = end - timedelta(days=30)
-            prices = self._get_historical_prices(symbol, start, end)
+            prices = self._get_cached_price_data(symbol)
+            sma = prices.rolling(window=20).mean()
+            std = prices.rolling(window=20).std()
             
-            # Calculate 20-period SMA and standard deviation
-            period = 20
-            sma = prices.rolling(window=period).mean()
-            std = prices.rolling(window=period).std()
-            
-            # Calculate bands
-            upper_band = sma + (std * 2)
-            lower_band = sma - (std * 2)
-            
-            # Calculate bandwidth and %B
-            bandwidth = (upper_band - lower_band) / sma * 100
-            percent_b = (prices - lower_band) / (upper_band - lower_band)
+            current_sma = float(sma.iloc[-1])
+            current_std = float(std.iloc[-1])
             
             return {
-                'upper': float(upper_band.iloc[-1]),
-                'middle': float(sma.iloc[-1]),
-                'lower': float(lower_band.iloc[-1]),
-                'bandwidth': float(bandwidth.iloc[-1]),
-                'percent_b': float(percent_b.iloc[-1]),
-                'is_squeeze': bandwidth.iloc[-1] < bandwidth.rolling(window=20).mean().iloc[-1]
+                'middle': current_sma,
+                'upper': current_sma + (current_std * 2)),
+                'lower': current_sma - (current_std * 2)),
+                'bandwidth': float((current_std * 4 / current_sma) * 100)
             }
         except Exception as e:
             self.log(f"Error calculating Bollinger Bands for {symbol}: {str(e)}", level="error")
@@ -1882,65 +1885,6 @@ class TradingBot:
             self.log(f"Error calculating BTC correlation for {symbol}: {str(e)}", level="error")
             return 0.0  # Default to no correlation on error
 
-    def _calculate_signal_components(self, ma_data: Dict[str, Any], 
-                               volume_data: Dict[str, Any],
-                               sentiment: Dict[str, Any], 
-                               market_conditions: Dict[str, Any]) -> Dict[str, Any]:
-        try:
-            # Define component weights and thresholds as class constants
-            TREND_WEIGHT = 0.4
-            MOMENTUM_WEIGHT = 0.3
-            VOLUME_WEIGHT = 0.2
-            RISK_WEIGHT = 0.1
-            
-            STRONG_BUY_THRESHOLD = 20
-            BUY_THRESHOLD = 15
-            STRONG_SELL_THRESHOLD = -20
-            SELL_THRESHOLD = -15
-            
-            # Calculate scores
-            trend_score = self._calculate_trend_score(ma_data)
-            momentum_score = self._calculate_momentum_score(sentiment, ma_data)
-            volume_score = self._calculate_volume_score(volume_data, market_conditions)
-            risk_score = self._calculate_risk_score(market_conditions, sentiment)
-            
-            # Calculate weighted score
-            final_score = (
-                trend_score * TREND_WEIGHT +
-                momentum_score * MOMENTUM_WEIGHT +
-                volume_score * VOLUME_WEIGHT +
-                risk_score * RISK_WEIGHT
-            )
-            
-            # Action determination with trend and volume requirements
-            action = 'HOLD'
-            if final_score >= STRONG_BUY_THRESHOLD and trend_score > 15 and volume_score > 5:
-                action = 'STRONG_BUY'
-            elif final_score >= BUY_THRESHOLD and trend_score > 10:
-                action = 'BUY'
-            elif final_score <= STRONG_SELL_THRESHOLD and trend_score < -15 and volume_score < -5:
-                action = 'STRONG_SELL'
-            elif final_score <= SELL_THRESHOLD and trend_score < -10:
-                action = 'SELL'
-            
-            return {
-                'symbol': ma_data['symbol'],
-                'price': ma_data['current_price'],
-                'score': final_score,
-                'signals': {
-                    'trend': trend_score,
-                    'momentum': momentum_score,
-                    'volume': volume_score,
-                    'risk': risk_score
-                },
-                'action': action,
-                'timestamp': datetime.now()
-            }
-            
-        except Exception as e:
-            self.log(f"Error calculating signal components: {str(e)}", level="error")
-            return self._get_fallback_signal(ma_data['symbol'], str(e))
-
     def _calculate_trend_score(self, ma_data: Dict[str, Any]) -> float:
         # Add Bollinger Band integration
         bb_data = self._calculate_bollinger_bands(ma_data['symbol'])
@@ -1989,7 +1933,7 @@ class TradingBot:
             self.log(f"Error calculating trend score: {str(e)}", level="error")
             return 0
 
-    def _calculate_volume_score(self, volume_data: Dict[str, Any], market_conditions: Dict[str, Any]) -> float:
+    def _calculate_volume_score(self, volume_data: Dict[str, Any], market_conditions: Dict[str, Any]]) -> float:
         """Calculate volume score with reduced weights"""
         try:
             base_score = 0
@@ -2022,7 +1966,7 @@ class TradingBot:
             self.log(f"Error calculating volume score: {str(e)}", level="error")
             return 0
 
-    def _calculate_momentum_score(self, sentiment: Dict[str, Any], ma_data: Dict[str, Any]) -> float:
+    def _calculate_momentum_score(self, sentiment: Dict[str, Any], ma_data: Dict[str, Any]]) -> float:
         """Calculate momentum score with standardized weights"""
         try:
             score = 0
@@ -2138,3 +2082,596 @@ class TradingBot:
         except Exception as e:
             self.log(f"Error executing exit for {symbol}: {str(e)}", level="error")
             raise  # Add this to propagate errors to calling functions
+
+    async def _execute_trade(self, symbol: str, action: str, reason: str = None) -> bool:
+        """Centralized trade execution with price caching"""
+        try:
+            # Get price data from cache if possible
+            prices = self._get_cached_price_data(symbol, days=1)
+            current_price = float(prices.iloc[-1])
+            
+            if action == 'BUY':
+                position_size = self._calculate_position_size(symbol, current_price)
+                if position_size < 5.0:
+                    self.log(f"Position size too small for {symbol}: ${position_size:.2f}")
+                    return False
+                
+                original_trade_amount = self.trade_amount
+                self.trade_amount = position_size
+                
+                try:
+                    if self.paper_trading:
+                        await self._simulate_buy_order(symbol, current_price)
+                    else:
+                        self._place_buy_order(symbol, current_price)
+                    
+                    await self.send_trade_notification(
+                        'BUY', symbol, current_price,
+                        position_size / current_price,
+                        is_paper=self.paper_trading,
+                        reason=reason
+                    )
+                    return True
+                
+                finally:
+                    self.trade_amount = original_trade_amount
+            
+            elif action == 'SELL':
+                position = self.paper_positions.get(symbol) if self.paper_trading else self.positions.get(symbol)
+                if not position:
+                    self.log(f"No position found for {symbol}, cannot sell")
+                    return False
+                
+                profit_info = position.calculate_profit(current_price)
+                
+                if self.paper_trading:
+                    await self._simulate_sell_order(symbol, current_price)
+                else:
+                    self._place_sell_order(symbol, current_price)
+                
+                await self.send_trade_notification(
+                    'SELL', symbol, current_price,
+                    position.quantity,
+                    is_paper=self.paper_trading,
+                    profit_info=profit_info,
+                    reason=reason
+                )
+                return True
+            
+            return False
+            
+        except Exception as e:
+            self.log(f"Error executing {action} trade for {symbol}: {str(e)}", level="error")
+            return False
+
+    async def _analyze_technical_indicators(self, symbol: str) -> Dict[str, Any]:
+        """Unified technical analysis using cached data"""
+        try:
+            # Use PriceManager instead of direct methods
+            prices = await self.price_manager.get_price(symbol)
+            current_price = float(prices.iloc[-1])
+            
+            # Calculate all indicators using the same price data
+            sma_20 = prices.rolling(window=20).mean().iloc[-1]
+            sma_50 = prices.rolling(window=50).mean().iloc[-1]
+            sma_200 = prices.rolling(window=200).mean().iloc[-1]
+            
+            # Calculate RSI
+            delta = prices.diff()
+            gains = delta.where(delta > 0, 0)
+            losses = -delta.where(delta < 0, 0)
+            avg_gain = gains.ewm(span=self.rsi_period, adjust=False).mean()
+            avg_loss = losses.ewm(span=self.rsi_period, adjust=False).mean()
+            rs = avg_gain / avg_loss
+            rsi = float(100 - (100 / (1 + rs)).iloc[-1])
+            
+            # Calculate Bollinger Bands
+            bb_sma = prices.rolling(window=20).mean()
+            bb_std = prices.rolling(window=20).std()
+            bb_data = {
+                'middle': float(bb_sma.iloc[-1]),
+                'upper': float(bb_sma.iloc[-1] + (bb_std.iloc[-1] * 2)),
+                'lower': float(bb_sma.iloc[-1] - (bb_std.iloc[-1] * 2)),
+                'bandwidth': float((bb_std.iloc[-1] * 4 / bb_sma.iloc[-1]) * 100)
+            }
+            
+            # Calculate Support/Resistance
+            sr_levels = self._calculate_support_resistance_levels(prices, current_price)
+            
+            return {
+                'symbol': symbol,
+                'current_price': current_price,
+                'moving_averages': {
+                    'sma_20': float(sma_20),
+                    'sma_50': float(sma_50),
+                    'sma_200': float(sma_200),
+                    'trend': self._determine_trend(current_price, sma_20, sma_50, sma_200)
+                },
+                'bollinger_bands': bb_data,
+                'support_resistance': sr_levels,
+                'rsi': rsi
+            }
+        except Exception as e:
+            self.log(f"Error in technical analysis for {symbol}: {str(e)}", level="error")
+            raise
+
+    def _calculate_support_resistance_levels(self, prices: pd.Series, current_price: float) -> Dict[str, Any]:
+        """Calculate support/resistance using provided price data"""
+        try:
+            def find_pivots(data: pd.Series, window: int = 5) -> tuple:
+                highs = []
+                lows = []
+                for i in range(window, len(data) - window):
+                    if all(data[i] > data[i-j] for j in range(1, window+1)) and \
+                       all(data[i] > data[i+j] for j in range(1, window+1)):
+                        highs.append(data[i])
+                    if all(data[i] < data[i-j] for j in range(1, window+1)) and \
+                       all(data[i] < data[i+j] for j in range(1, window+1)):
+                        lows.append(data[i])
+                return highs, lows
+
+            pivot_highs, pivot_lows = find_pivots(prices)
+            
+            supports = [p for p in pivot_lows if p < current_price]
+            resistances = [p for p in pivot_highs if p > current_price]
+            
+            nearest_support = max(supports) if supports else current_price * 0.85
+            nearest_resistance = min(resistances) if resistances else current_price * 1.15
+            
+            return {
+                'nearest_support': nearest_support,
+                'nearest_resistance': nearest_resistance,
+                'all_supports': sorted(supports, reverse=True)[:3],
+                'all_resistances': sorted(resistances)[:3],
+                'support_strength': len([p for p in pivot_lows if abs(p - nearest_support) / nearest_support < 0.02])
+            }
+        except Exception as e:
+            self.log(f"Error calculating support/resistance levels: {str(e)}", level="error")
+            raise
+
+    def _cleanup_cache(self):
+        """Remove least recently used items from cache"""
+        if len(self._price_cache) <= self._cache_max_size / 2:
+            return
+        
+        # Sort by last access time
+        sorted_cache = sorted(
+            self._price_cache.items(),
+            key=lambda x: x[1]['last_access']
+        )
+        
+        # Remove oldest items until we're at 50% capacity
+        items_to_remove = len(sorted_cache) - (self._cache_max_size // 2)
+        for i in range(items_to_remove):
+            del self._price_cache[sorted_cache[i][0]]
+
+    async def cleanup(self):
+        """Need to add cleanup method for graceful shutdown"""
+        try:
+            # Close all positions if paper trading
+            if self.paper_trading:
+                for symbol in list(self.position_manager.positions.keys()):
+                    await self.trade_executor.execute_trade(
+                        symbol=symbol,
+                        action='SELL',
+                        reason="Bot shutdown"
+                    )
+            
+            # Close price manager
+            await self.price_manager.close()
+            
+            # Close client connection
+            if hasattr(self, 'client'):
+                await self.client.close()
+                
+        except Exception as e:
+            await self.log(f"Cleanup error: {str(e)}", level="error")
+
+class PositionManager:
+    """Centralized position management"""
+    def __init__(self, trading_bot):
+        self.trading_bot = trading_bot
+        self.positions = {}
+        self.position_lock = asyncio.Lock()
+        
+    async def open_position(self, symbol: str, entry_price: float, quantity: float) -> Position:
+        async with self.position_lock:
+            position = Position(
+                self.trading_bot, 
+                symbol, 
+                entry_price, 
+                quantity,
+                datetime.now(),
+                self.trading_bot.paper_trading
+            )
+            self.positions[symbol] = position
+            return position
+
+    async def close_position(self, symbol: str, exit_price: float, reason: str) -> bool:
+        """Close a position and record its history"""
+        async with self.position_lock:
+            if symbol not in self.positions:
+                return False
+            position = self.positions[symbol]
+            profit_info = position.calculate_profit(exit_price)
+            self.history.append({
+                'symbol': symbol,
+                'entry_price': position.entry_price,
+                'exit_price': exit_price,
+                'quantity': position.quantity,
+                'profit': profit_info,
+                'reason': reason,
+                'timestamp': datetime.now()
+            })
+            del self.positions[symbol]
+            return True
+
+    async def update_positions(self) -> None:
+        """Update all position metrics and check risk management"""
+        async with self.position_lock:
+            for symbol, position in list(self.positions.items()):
+                try:
+                    # Get current price
+                    current_price = await self.trading_bot.price_manager.get_price(symbol)
+                    
+                    # Update position metrics
+                    position.update_price(current_price)
+                    
+                    # Check stop conditions
+                    if position.should_trigger_trailing_stop(current_price):
+                        await self.trading_bot.trade_executor.execute_trade(
+                            symbol=symbol,
+                            action='SELL',
+                            reason="Trailing Stop"
+                        )
+                        continue
+                        
+                    # Check take profit
+                    profit_info = position.calculate_profit(current_price)
+                    if profit_info['profit_percentage'] >= self.trading_bot.take_profit_percentage:
+                        await self.trading_bot.trade_executor.execute_trade(
+                            symbol=symbol,
+                            action='SELL',
+                            reason="Take Profit"
+                        )
+                        continue
+                        
+                    # Check stop loss
+                    if profit_info['profit_percentage'] <= -self.trading_bot.stop_loss_percentage:
+                        await self.trading_bot.trade_executor.execute_trade(
+                            symbol=symbol,
+                            action='SELL',
+                            reason="Stop Loss"
+                        )
+                        continue
+                        
+                except Exception as e:
+                    await self.trading_bot.log(f"Error updating position for {symbol}: {str(e)}", level="error")
+
+    async def check_stops(self) -> None:
+        """Check and execute stop orders"""
+        async with self.position_lock:
+            for symbol, position in list(self.positions.items()):
+                try:
+                    current_price = await self.trading_bot.price_manager.get_price(symbol)
+                    
+                    # Check stop conditions
+                    if (position.should_trigger_trailing_stop(current_price) or
+                       position.should_trigger_stop_loss(current_price)):
+                        await self.trading_bot.trade_executor.execute_trade(
+                            symbol=symbol,
+                            action='SELL',
+                            reason="Stop Triggered"
+                        )
+                        
+                except Exception as e:
+                    await self.trading_bot.log(f"Error checking stops for {symbol}: {str(e)}", level="error")
+
+class SignalGenerator:
+    """Centralized signal generation"""
+    def __init__(self, trading_bot):
+        self.trading_bot = trading_bot
+        
+    async def generate_signal(self, symbol: str) -> Dict[str, Any]:
+        """Generate trading signal with technical and market analysis"""
+        try:
+            prices = await self.trading_bot.price_manager.get_price(symbol)
+            technical_data = await self._analyze_technical(prices)
+            market_data = await self._analyze_market(symbol)
+            return await self._calculate_final_signal(technical_data, market_data)
+        except Exception as e:
+            await self.trading_bot.log(f"Signal generation error: {str(e)}", level="error")
+            return self._get_fallback_signal(symbol, str(e))
+
+    async def _analyze_technical(self, prices: pd.Series) -> Dict[str, Any]:
+        """Analyze technical indicators"""
+        try:
+            # Calculate RSI
+            delta = prices.diff()
+            gains = delta.where(delta > 0, 0)
+            losses = -delta.where(delta < 0, 0)
+            avg_gain = gains.ewm(span=14, adjust=False).mean()
+            avg_loss = losses.ewm(span=14, adjust=False).mean()
+            rs = avg_gain / avg_loss
+            rsi = 100 - (100 / (1 + rs))
+            
+            # Calculate Moving Averages
+            sma_20 = prices.rolling(window=20).mean()
+            sma_50 = prices.rolling(window=50).mean()
+            sma_200 = prices.rolling(window=200).mean()
+            
+            # Calculate Bollinger Bands
+            bb_sma = prices.rolling(window=20).mean()
+            bb_std = prices.rolling(window=20).std()
+            
+            # Get current values
+            current_price = prices.iloc[-1]
+            
+            return {
+                'price': current_price,
+                'rsi': float(rsi.iloc[-1]),
+                'moving_averages': {
+                    'sma_20': float(sma_20.iloc[-1]),
+                    'sma_50': float(sma_50.iloc[-1]),
+                    'sma_200': float(sma_200.iloc[-1])
+                },
+                'bollinger_bands': {
+                    'middle': float(bb_sma.iloc[-1]),
+                    'upper': float(bb_sma.iloc[-1] + (bb_std.iloc[-1] * 2)),
+                    'lower': float(bb_sma.iloc[-1] - (bb_std.iloc[-1] * 2)),
+                    'bandwidth': float((bb_std.iloc[-1] * 4 / bb_sma.iloc[-1]) * 100)
+                },
+                'trend': self._determine_trend(
+                    current_price,
+                    sma_20.iloc[-1],
+                    sma_50.iloc[-1],
+                    sma_200.iloc[-1])
+            }
+        except Exception as e:
+            await self.trading_bot.log(f"Technical analysis error: {str(e)}", level="error")
+            raise
+
+    async def _analyze_market(self, symbol: str) -> Dict[str, Any]:
+        """Analyze market conditions"""
+        try:
+            # Get volume data
+            volume_data = await self.trading_bot.analyze_volume(symbol)
+            
+            # Get market sentiment
+            sentiment = await self.trading_bot.analyze_market_sentiment(symbol)
+            
+            # Get market conditions
+            conditions = await self.trading_bot.check_market_conditions(symbol)
+            
+            return {
+                'volume': volume_data,
+                'sentiment': sentiment,
+                'conditions': conditions
+            }
+        except Exception as e:
+            await self.trading_bot.log(f"Market analysis error: {str(e)}", level="error")
+            raise
+
+    async def _calculate_final_signal(self, technical: Dict, market: Dict) -> Dict[str, Any]:
+        """Calculate final trading signal"""
+        try:
+            # Calculate component scores
+            trend_score = self._calculate_trend_score(technical)
+            momentum_score = self._calculate_momentum_score(market['sentiment'], technical)
+            volume_score = self._calculate_volume_score(market['volume'], market['conditions'])
+            risk_score = self._calculate_risk_score(market['conditions'], market['sentiment'])
+            
+            # Calculate weighted final score
+            weights = {
+                'trend': 0.4,
+                'momentum': 0.3,
+                'volume': 0.2,
+                'risk': 0.1
+            }
+            
+            scores = {
+                'trend': trend_score,
+                'momentum': momentum_score,
+                'volume': volume_score,
+                'risk': risk_score
+            }
+            
+            final_score = sum(score * weights[component] for component, score in scores.items())
+            
+            # Determine action
+            action = self._determine_signal_action(final_score, scores)
+            
+            return {
+                'action': action,
+                'score': final_score,
+                'signals': scores,
+                'technical': technical,
+                'market': market,
+                'timestamp': datetime.now()
+            }
+        except Exception as e:
+            await self.trading_bot.log(f"Signal calculation error: {str(e)}", level="error")
+            raise
+
+class TradeExecutor:
+    """Centralized trade execution"""
+    def __init__(self, trading_bot):
+        self.trading_bot = trading_bot
+        self.execution_lock = asyncio.Lock()
+        self.min_position_size = 5.0
+
+    async def execute_trade(
+        self, 
+        symbol: str, 
+        action: Literal['BUY', 'SELL'], 
+        reason: Optional[str] = None
+    ) -> bool:
+        async with self.execution_lock:
+            try:
+                current_price = await self.trading_bot.price_manager.get_current_price(symbol)
+                if action == 'BUY':
+                    return await self._execute_buy(symbol, current_price, reason)
+                elif action == 'SELL':
+                    return await self._execute_sell(symbol, current_price, reason)
+                return False
+            except Exception as e:
+                await self.trading_bot.log(f"Trade execution error: {str(e)}", level="error")
+                return False
+
+    async def _execute_buy(self, symbol: str, price: float, reason: str) -> bool:
+        """Execute buy order with position management"""
+        try:
+            # Calculate position size
+            position_size = self.trading_bot._calculate_position_size(symbol)
+            if position_size < self.min_position_size:
+                await self.trading_bot.log(f"Position size too small for {symbol}: ${position_size:.2f}")
+                return False
+
+            if self.trading_bot.paper_trading:
+                # Paper trading execution
+                if self.trading_bot.paper_balance < position_size:
+                    await self.trading_bot.log(f"Insufficient paper balance for {symbol}")
+                    return False
+                
+                # Calculate quantity after fees
+                fee = position_size * self.trading_bot.FEE_RATE
+                actual_position_size = position_size - fee
+                quantity = actual_position_size / price
+                
+                # Create paper position
+                position = await self.trading_bot.position_manager.open_position(
+                    symbol=symbol,
+                    entry_price=price,
+                    quantity=quantity
+                )
+                
+                # Update paper balance
+                self.trading_bot.paper_balance -= position_size
+                
+                await self.trading_bot.log(
+                    f"Paper buy executed for {symbol}",
+                    context={
+                        'price': price,
+                        'quantity': quantity,
+                        'position_size': position_size,
+                        'fees': fee
+                    }
+                )
+                return True
+                
+            else:
+                # Real trading execution
+                if not self.trading_bot._check_balance(symbol, 'BUY'):
+                    await self.trading_bot.log(f"Insufficient balance for {symbol}")
+                    return False
+                
+                # Place market buy order
+                order = await self.trading_bot.client.create_order(
+                    product_id=f"{symbol}-USD",
+                    side='BUY',
+                    order_configuration={
+                        'market_market_ioc': {
+                            'quote_size': str(position_size)
+                        }
+                    }
+                )
+                
+                # Create real position from filled order
+                position = await self.trading_bot.position_manager.open_position(
+                    symbol=symbol,
+                    entry_price=float(order.average_filled_price),
+                    quantity=float(order.filled_size)
+                )
+                
+                await self.trading_bot.log(
+                    f"Real buy executed for {symbol}",
+                    context={
+                        'price': float(order.average_filled_price),
+                        'quantity': float(order.filled_size),
+                        'position_size': position_size,
+                        'order_id': order.order_id
+                    }
+                )
+                return True
+                
+        except Exception as e:
+            await self.trading_bot.log(f"Buy execution error: {str(e)}", level="error")
+            return False
+
+    async def _execute_sell(self, symbol: str, price: float, reason: str) -> bool:
+        """Execute sell order with position management"""
+        try:
+            position = self.trading_bot.position_manager.positions.get(symbol)
+            if not position:
+                await self.trading_bot.log(f"No position found for {symbol}")
+                return False
+
+            if self.trading_bot.paper_trading:
+                # Calculate paper trade results
+                profit_info = position.calculate_profit(price)
+                
+                # Update paper balance
+                sell_value = position.quantity * price
+                fee = sell_value * self.trading_bot.FEE_RATE
+                self.trading_bot.paper_balance += (sell_value - fee)
+                
+                # Close position
+                await self.trading_bot.position_manager.close_position(
+                    symbol=symbol,
+                    exit_price=price,
+                    reason=reason
+                )
+                
+                await self.trading_bot.log(
+                    f"Paper sell executed for {symbol}",
+                    context={
+                        'price': price,
+                        'quantity': position.quantity,
+                        'profit': profit_info,
+                        'fees': fee
+                    }
+                )
+                return True
+                
+            else:
+                # Real trading execution
+                if not self.trading_bot._check_balance(symbol, 'SELL'):
+                    await self.trading_bot.log(f"Insufficient balance for {symbol}")
+                    return False
+                
+                # Place market sell order
+                order = await self.trading_bot.client.create_order(
+                    product_id=f"{symbol}-USD",
+                    side='SELL',
+                    order_configuration={
+                        'market_market_ioc': {
+                            'base_size': str(position.quantity)
+                        }
+                    }
+                )
+                
+                # Close position
+                await self.trading_bot.position_manager.close_position(
+                    symbol=symbol,
+                    exit_price=float(order.average_filled_price),
+                    reason=reason
+                )
+                
+                await self.trading_bot.log(
+                    f"Real sell executed for {symbol}",
+                    context={
+                        'price': float(order.average_filled_price),
+                        'quantity': float(order.filled_size),
+                        'order_id': order.order_id
+                    }
+                )
+                return True
+                
+        except Exception as e:
+            await self.trading_bot.log(f"Sell execution error: {str(e)}", level="error")
+            return False
+
+    @property
+    def is_active(self) -> bool:
+        """Check if either paper or real trading is active"""
+        return self.trading_bot.trading_active or self.trading_bot.paper_trading
