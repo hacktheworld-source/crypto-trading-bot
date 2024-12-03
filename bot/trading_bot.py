@@ -799,8 +799,7 @@ class TradingBot:
                     current_price,
                     sma_20.iloc[-1],
                     sma_50.iloc[-1],
-                    sma_200.iloc[-1]
-                )
+                    sma_200.iloc[-1])
             }
         except Exception as e:
             await self.log(f"Technical analysis error: {str(e)}", level="error")
@@ -948,6 +947,7 @@ class TradingBot:
                     signal['signals']['risk'] < -15 or
                     (signal['signals']['trend'] < -10 and signal['signals']['momentum'] < -10) or
                     not market_conditions['suitable_for_trading']
+                )  # Added missing parenthesis
             
             return False
             
