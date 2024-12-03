@@ -1036,6 +1036,7 @@ class TradingBot:
             prices = pd.Series(
                 [float(candle.close) for candle in reversed(response.candles)],
                 index=[datetime.fromtimestamp(float(candle.start)) for candle in reversed(response.candles)]
+            )  # Added missing closing parenthesis here
             
             # Calculate moving averages
             sma_20 = prices.rolling(window=20).mean()
