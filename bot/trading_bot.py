@@ -1036,7 +1036,6 @@ class TradingBot:
             prices = pd.Series(
                 [float(candle.close) for candle in reversed(response.candles)],
                 index=[datetime.fromtimestamp(float(candle.start)) for candle in reversed(response.candles)]
-            )  # Added missing closing parenthesis here
             
             # Calculate moving averages
             sma_20 = prices.rolling(window=20).mean()
@@ -1968,7 +1967,7 @@ class TradingBot:
             self.log(f"Error calculating volume score: {str(e)}", level="error")
             return 0
 
-    def _calculate_momentum_score(self, sentiment: Dict[str, Any], ma_data: Dict[str, Any]]) -> float:
+    def _calculate_momentum_score(self, sentiment: Dict[str, Any], ma_data: Dict[str, Any]) -> float:
         """Calculate momentum score with standardized weights"""
         try:
             score = 0
