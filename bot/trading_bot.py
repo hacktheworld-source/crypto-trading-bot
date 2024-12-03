@@ -905,6 +905,7 @@ class TradingBot:
             'timestamp': datetime.now(),
             'error': error_type
         }
+
     def _should_trade(self, symbol: str, action: str) -> bool:
         try:
             signal = self._calculate_trade_signal(symbol)
@@ -1814,8 +1815,8 @@ class TradingBot:
             
             return {
                 'middle': current_sma,
-                'upper': current_sma + (current_std * 2)),
-                'lower': current_sma - (current_std * 2)),
+                'upper': current_sma + (current_std * 2),  # Removed extra parenthesis
+                'lower': current_sma - (current_std * 2),  # Removed extra parenthesis
                 'bandwidth': float((current_std * 4 / current_sma) * 100)
             }
         except Exception as e:
