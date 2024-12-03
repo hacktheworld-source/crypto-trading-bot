@@ -904,7 +904,6 @@ class TradingBot:
             'timestamp': datetime.now(),
             'error': error_type
         }
-
     def _should_trade(self, symbol: str, action: str) -> bool:
         try:
             signal = self._calculate_trade_signal(symbol)
