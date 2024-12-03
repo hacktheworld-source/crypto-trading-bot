@@ -697,7 +697,7 @@ class TradingBot:
                 btc_sentiment = self.analyze_market_sentiment('BTC')
                 market_aligned = (
                     (sentiment['overall_sentiment'] == btc_sentiment['overall_sentiment']) or
-                    (sentiment['sentiment_score'] * btc_sentiment['sentiment_score'] > 0)
+                    (sentiment['sentiment_score'] * btc_sentiment['sentiment_score'] > 0))
             else:
                 market_aligned = True
             
@@ -849,6 +849,7 @@ class TradingBot:
                 'momentum': self._calculate_momentum_score(market_data['sentiment'], technical_data),
                 'volume': self._calculate_volume_score(market_data['volume'], market_data['market_conditions']),
                 'risk': self._calculate_risk_score(market_data['market_conditions'], market_data['sentiment'])
+            }  # Added missing closing brace
             
             # Calculate weighted final score
             final_score = sum(score * WEIGHTS[component] for component, score in scores.items())
