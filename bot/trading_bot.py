@@ -1935,7 +1935,7 @@ class TradingBot:
             self.log(f"Error calculating trend score: {str(e)}", level="error")
             return 0
 
-    def _calculate_volume_score(self, volume_data: Dict[str, Any], market_conditions: Dict[str, Any]]) -> float:
+    def _calculate_volume_score(self, volume_data: Dict[str, Any], market_conditions: Dict[str, Any]) -> float:
         """Calculate volume score with reduced weights"""
         try:
             base_score = 0
