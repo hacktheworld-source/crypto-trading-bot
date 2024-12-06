@@ -302,22 +302,8 @@ class TradingBot:
     
     async def calculate_rsi(self, symbol: str) -> float:
         try:
-            # Convert symbol to uppercase
-            symbol = symbol.upper()
-            
-            # Get historical candles using the correct method
-            end = datetime.now()
-            start = end - timedelta(days=30)
-            
-            response = self.client.get_candles(
-                product_id=f"{symbol}-USD",
-                start=int(start.timestamp()),
-                end=int(end.timestamp()),
-                granularity="ONE_DAY"
-            )
-            
-            # Convert candles to prices - note the change in accessing candles
-            prices = pd.Series([float(candle.close) for candle in reversed(response.candles)])
+            # Use PriceManager instead of direct API calls
+            prices = await self.price_manager.get_price(symbol, days=30)
             
             # Calculate RSI
             delta = prices.diff()
@@ -819,7 +805,7 @@ class TradingBot:
             avg_gain = gains.ewm(span=self.rsi_period, adjust=False).mean()
             avg_loss = losses.ewm(span=self.rsi_period, adjust=False).mean()
             rs = avg_gain / avg_loss
-            rsi = float(100 - (100 / (1 + rs)).iloc[-1]) # Don't forget the parenthesis
+            rsi = float(100 - (100 / (1 + rs)).iloc[-1])
             
             # Calculate Moving Averages
             sma_20 = prices.rolling(window=20).mean()
@@ -2227,7 +2213,7 @@ class TradingBot:
             avg_gain = gains.ewm(span=self.rsi_period, adjust=False).mean()
             avg_loss = losses.ewm(span=self.rsi_period, adjust=False).mean()
             rs = avg_gain / avg_loss
-            rsi = float(100 - (100 / (1 + rs)).iloc[-1])  # Fixed missing parenthesis
+            rsi = float(100 - (100 / (1 + rs)).iloc[-1])
             
             # Calculate Moving Averages
             sma_20 = prices.rolling(window=20).mean()
