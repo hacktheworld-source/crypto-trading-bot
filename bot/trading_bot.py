@@ -845,13 +845,14 @@ class TradingBot:
                     'middle': float(bb_sma.iloc[-1]),
                     'upper': float(bb_sma.iloc[-1] + (bb_std.iloc[-1] * 2)),
                     'lower': float(bb_sma.iloc[-1] - (bb_std.iloc[-1] * 2)),
-                    'bandwidth': float((bb_std.iloc[-1] * 4 / bb_sma.iloc[-1]) * 100))
+                    'bandwidth': float((bb_std.iloc[-1] * 4 / bb_sma.iloc[-1]) * 100)
                 },
                 'trend': self._determine_trend(
                     current_price,
                     sma_20.iloc[-1],
                     sma_50.iloc[-1],
-                    sma_200.iloc[-1])
+                    sma_200.iloc[-1]
+                )
             }
         except Exception as e:
             await self.log(f"Technical analysis error: {str(e)}", level="error")
