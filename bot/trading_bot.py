@@ -1088,7 +1088,7 @@ class TradingBot:
             prices = pd.Series(
                 [float(candle.close) for candle in reversed(response.candles)],
                 index=[datetime.fromtimestamp(float(candle.start)) for candle in reversed(response.candles)]
-            )  # Added closing parenthesis here
+            )
             
             # Calculate moving averages
             sma_20 = prices.rolling(window=20).mean()
@@ -1158,8 +1158,9 @@ class TradingBot:
                     'worst_trade': min(self.position_history, key=lambda x: x['profit_percentage']),
                     'average_hold_time': sum(
                         [(pos['exit_time'] - pos['entry_time']) for pos in self.position_history],
-                        timedelta(0) / len(self.position_history)
-                
+                        timedelta(0)) / len(self.position_history)
+                })
+            
             return stats
             
         except Exception as e:
