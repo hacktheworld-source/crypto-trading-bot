@@ -192,8 +192,10 @@ class TradingBot:
             self.load_config()
             
             # Paper trading attributes
-            self.paper_trading = not self.trading_active  # Paper trade when real trading is off
-            self.paper_balance = 1000.0  # Start with $1000 paper money
+            self.paper_trading = not self.trading_active
+            self.paper_balance = float(os.getenv('PAPER_BALANCE', '1000.0'))
+            self.paper_positions = {}  # Add this
+            self.paper_trade_history = []  # Add this
             
             self.discord_channel = None  # Will be set when bot starts
             
@@ -1748,9 +1750,16 @@ class TradingBot:
         self.logs_channel = channel
         logging.info(f"Discord logs channel set")
 
-    def log(self, message: str, level: str = "info", context: Dict[str, Any] = None) -> None:
-        """Synchronous logging to file and console"""
-        # Log the main message
+    async def log(self, message: str, level: str = "info", context: Dict[str, Any] = None) -> None:
+        """
+        Log message to both file and Discord if available.
+        
+        Args:
+            message: The message to log
+            level: Log level (info, warning, error)
+            context: Optional context dictionary
+        """
+        # Always log to file first
         if level == "error":
             logging.error(message)
         elif level == "warning":
@@ -1761,12 +1770,14 @@ class TradingBot:
         # Log context if provided
         if context:
             for key, value in context.items():
-                if level == "error":
-                    logging.error(f"{key}: {value}")
-                elif level == "warning":
-                    logging.warning(f"{key}: {value}")
-                else:
-                    logging.info(f"{key}: {value}")
+                logging.info(f"{key}: {value}")
+        
+        # Only try Discord logging if channel is set
+        if hasattr(self, 'logs_channel') and self.logs_channel:
+            try:
+                await self.async_log(message, level, context)
+            except Exception as e:
+                logging.error(f"Failed to send log to Discord: {str(e)}")
 
     def _calculate_macd(self, symbol: str) -> Dict[str, float]:
         """Calculate MACD (Moving Average Convergence Divergence)"""
