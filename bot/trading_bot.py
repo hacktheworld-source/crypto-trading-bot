@@ -1036,7 +1036,6 @@ class TradingBot:
             prices = pd.Series(
                 [float(candle.close) for candle in reversed(response.candles)],
                 index=[datetime.fromtimestamp(float(candle.start)) for candle in reversed(response.candles)]
-            )  # Added missing closing parenthesis here
             
             # Calculate moving averages
             sma_20 = prices.rolling(window=20).mean()
@@ -1638,8 +1637,8 @@ class TradingBot:
     async def post_init(self):
         """Async initialization steps after bot creation"""
         try:
-            # Verify API connection
-            await self.client.get_accounts()
+            # Verify API connection - remove await since client.get_accounts() is not async
+            self.client.get_accounts()
             self.log("API connection verified")
             
             # Initialize price cache
@@ -2568,7 +2567,7 @@ class TradeExecutor:
                     return False
                 
                 # Place market buy order
-                order = await self.trading_bot.client.create_order(
+                order = self.trading_bot.client.create_order(
                     product_id=f"{symbol}-USD",
                     side='BUY',
                     order_configuration={
@@ -2642,7 +2641,7 @@ class TradeExecutor:
                     return False
                 
                 # Place market sell order
-                order = await self.trading_bot.client.create_order(
+                order = self.trading_bot.client.create_order(
                     product_id=f"{symbol}-USD",
                     side='SELL',
                     order_configuration={
