@@ -1,19 +1,39 @@
+from typing import Optional, List, Union, Literal, Dict, Any
 from datetime import datetime
 import asyncio
 
 class CommandHandler:
-    ERROR_PREFIX = "❌ "
-    SUCCESS_PREFIX = "✅ "
+    """
+    Handles Discord command processing for the trading bot.
     
-    def _format_error(self, message: str) -> str:
-        return f"{self.ERROR_PREFIX}{message}"
+    Attributes:
+        ERROR_PREFIX (str): Prefix for error messages
+        SUCCESS_PREFIX (str): Prefix for success messages
+        trading_bot (TradingBot): Reference to the main trading bot instance
+        commands (Dict[str, callable]): Mapping of command names to handler methods
+    """
+    
+    ERROR_PREFIX: str = "❌ "
+    SUCCESS_PREFIX: str = "✅ "
+    
+    def __init__(self, trading_bot: 'TradingBot') -> None:
+        """
+        Initialize the command handler.
         
-    def _format_success(self, message: str) -> str:
-        return f"{self.SUCCESS_PREFIX}{message}"
-        
-    def __init__(self, trading_bot):
+        Args:
+            trading_bot: Instance of the trading bot to handle commands for
+        """
         self.trading_bot = trading_bot
-        self.commands = {
+        self.commands = self._initialize_commands()
+    
+    def _initialize_commands(self) -> Dict[str, callable]:
+        """
+        Initialize the command mapping dictionary.
+        
+        Returns:
+            Dict mapping command names to their handler methods
+        """
+        return {
             'add': self.add_coin,
             'remove': self.remove_coin,
             'list': self.list_coins,
@@ -35,18 +55,64 @@ class CommandHandler:
             'version': self.version,
             'stats': self.get_stats
         }
-        
+    
     async def handle_command(self, command: str, *args) -> str:
-        """Centralized command handling"""
+        """
+        Handle incoming Discord commands with proper error handling and logging.
+        
+        Args:
+            command (str): The command to execute
+            *args: Variable length argument list for the command
+        
+        Returns:
+            str: Response message for Discord
+        
+        Note:
+            Commands that fail will be logged with context for debugging
+        """
         try:
             if command not in self.commands:
+                await self.trading_bot.log(
+                    f"Unknown command attempted: {command}",
+                    level="warning"
+                )
                 return self._format_error(f"Unknown command: {command}")
             
-            result = await self.commands[command](*args) if asyncio.iscoroutinefunction(self.commands[command]) else self.commands[command](*args)
-            return result
+            handler = self.commands[command]
+            is_async = asyncio.iscoroutinefunction(handler)
             
+            try:
+                result = await handler(*args) if is_async else handler(*args)
+                return result
+                
+            except ValueError as e:
+                # Handle validation errors gracefully
+                await self.trading_bot.log(
+                    f"Validation error in command {command}: {str(e)}",
+                    level="warning"
+                )
+                return self._format_error(f"Invalid input: {str(e)}")
+                
+            except Exception as e:
+                # Log unexpected errors with full context
+                await self.trading_bot.log(
+                    f"Error executing command {command}: {str(e)}",
+                    level="error",
+                    context={
+                        'command': command,
+                        'args': args,
+                        'error_type': type(e).__name__
+                    }
+                )
+                return self._format_error(f"Command error: {str(e)}")
+                
         except Exception as e:
-            return self._format_error(f"Command error: {str(e)}")
+            # Catch-all for system-level errors
+            await self.trading_bot.log(
+                f"Critical command handling error: {str(e)}",
+                level="error"
+            )
+            return self._format_error("An unexpected error occurred")
         
     async def list_coins(self):
         coins = list(self.trading_bot.watched_coins)
@@ -54,26 +120,38 @@ class CommandHandler:
             return f"Watched coins: {', '.join(coins)}"
         return "No coins in watchlist"
         
-    async def add_coin(self, *symbols):
-        """Add multiple coins to watchlist"""
+    async def add_coin(self, *symbols: str) -> str:
+        """
+        Add one or more coins to the watchlist.
+        
+        Args:
+            *symbols: Variable number of cryptocurrency symbols to add
+            
+        Returns:
+            str: Multi-line string containing results for each symbol
+            
+        Note:
+            Symbols are automatically converted to uppercase
+            Invalid symbols will be rejected with error messages
+        """
         results = []
         for symbol in symbols:
-            if self.trading_bot.add_coin(symbol.upper()):
-                results.append(f"✅ Added {symbol.upper()}")
+            if await self.trading_bot.add_coin(symbol.upper()):
+                results.append(self._format_success(f"Added {symbol.upper()}"))
             else:
-                results.append(f"❌ Failed to add {symbol.upper()}")
+                results.append(self._format_error(f"Failed to add {symbol.upper()}"))
         return "\n".join(results)
         
-    def remove_coin(self, *symbols):
+    async def remove_coin(self, *symbols):
         """Remove multiple coins from watchlist"""
         results = []
         for symbol in symbols:
             if self.trading_bot.remove_coin(symbol):
-                self.trading_bot.log(f"Removed {symbol} from watchlist")
-                results.append(f"✅ Removed {symbol}")
+                await self.trading_bot.log(f"Removed {symbol} from watchlist")
+                results.append(self._format_success(f"Removed {symbol}"))
             else:
-                self.trading_bot.log(f"{symbol} not in watchlist", level="warning")
-                results.append(f"❌ {symbol} not in watchlist")
+                await self.trading_bot.log(f"{symbol} not in watchlist", level="warning")
+                results.append(self._format_error(f"{symbol} not in watchlist"))
         
         return "\n".join(results)
         
@@ -690,3 +768,27 @@ class CommandHandler:
             return self._format_stats_response(stats)
         except Exception as e:
             return self._format_error(str(e))
+        
+    def _format_error(self, message: str) -> str:
+        """
+        Format an error message with the error prefix.
+        
+        Args:
+            message (str): The error message to format
+        
+        Returns:
+            str: Formatted error message with prefix
+        """
+        return f"{self.ERROR_PREFIX}{message}"
+        
+    def _format_success(self, message: str) -> str:
+        """
+        Format a success message with the success prefix.
+        
+        Args:
+            message (str): The success message to format
+        
+        Returns:
+            str: Formatted success message with prefix
+        """
+        return f"{self.SUCCESS_PREFIX}{message}"

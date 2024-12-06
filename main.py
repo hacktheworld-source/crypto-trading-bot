@@ -23,31 +23,23 @@ async def on_ready():
     logging.info(f'Bot is ready! Logged in as {bot.user}')
     
     # Initialize trading bot
-    await trading_bot.post_init()  # Call the async post-init method
+    await trading_bot.post_init()
     
-    # Look for notifications and logs channels in all guilds (servers) the bot is in
-    notification_channel = None
-    logs_channel = None
+    channels_found = False
     for guild in bot.guilds:
-        if not notification_channel:
-            notification_channel = discord.utils.get(guild.text_channels, name='notifications')
-        if not logs_channel:
-            logs_channel = discord.utils.get(guild.text_channels, name='logs')
+        notification_channel = discord.utils.get(guild.text_channels, name='notifications')
+        logs_channel = discord.utils.get(guild.text_channels, name='logs')
+        
+        if notification_channel and logs_channel:
+            channels_found = True
+            trading_bot.set_discord_channel(notification_channel)
+            trading_bot.set_logs_channel(logs_channel)
+            await trading_bot.send_notification("Trading bot initialized and ready!")
+            logging.info(f"Found required channels in {guild.name}")
+            break
     
-    if notification_channel:
-        trading_bot.set_discord_channel(notification_channel)
-        await trading_bot.send_notification("Trading bot initialized and ready!")
-        print(f"Found notifications channel: #{notification_channel.name} in {notification_channel.guild.name}")
-    else:
-        print("No 'notifications' channel found. Bot will run without sending notifications.")
-        trading_bot.set_discord_channel(None)
-    
-    if logs_channel:
-        trading_bot.set_logs_channel(logs_channel)
-        print(f"Found logs channel: #{logs_channel.name} in {logs_channel.guild.name}")
-    else:
-        print("No 'logs' channel found. Bot will run without sending logs to Discord.")
-        trading_bot.set_logs_channel(None)
+    if not channels_found:
+        logging.warning("Required Discord channels not found. Please create #notifications and #logs channels.")
 
 @bot.event
 async def on_message(message):

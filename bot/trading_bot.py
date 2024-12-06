@@ -142,6 +142,7 @@ class TradingConfig:
 
 class TradingBot:
     FEE_RATE = 0.006  # 0.6% Coinbase fee
+    CONFIG_FILE = 'bot_config.json'  # Single source of truth
     
     def __init__(self):
         try:
@@ -217,7 +218,7 @@ class TradingBot:
             logging.error(f"Failed to initialize trading bot: {str(e)}")
             raise Exception(f"Bot initialization failed: {str(e)}")
         
-    def start_trading_loop(self, paper: bool = True):
+    async def start_trading_loop(self, paper: bool = True) -> str:
         """Start the trading loop in either paper or real mode"""
         try:
             if paper:
@@ -231,52 +232,64 @@ class TradingBot:
                 self.trading_active = True
                 mode = "Real"
             
-            # Create and start the trading loop task
-            loop = asyncio.get_event_loop()
-            loop.create_task(self._trading_loop())
+            # Start the trading loop directly since we're already in an async context
+            asyncio.create_task(self._trading_loop())
             
-            logging.info(f"{mode} trading loop started")
+            await self.log(f"{mode} trading loop started")
             return f"{mode} trading bot started successfully"
             
         except Exception as e:
-            logging.error(f"Failed to start trading loop: {str(e)}")
+            await self.log(f"Failed to start trading loop: {str(e)}", level="error")
             self.trading_active = False
             self.paper_trading = False
             return f"Error starting trading bot: {str(e)}"
         
-    def stop_trading_loop(self):
+    async def stop_trading_loop(self) -> str:
         """Stop the trading loop"""
-        was_active = self.trading_active
+        was_active = self.trading_active or self.paper_trading
         self.trading_active = False
         self.paper_trading = False  # Stop paper trading too
-        logging.info("Trading loop stopped")
+        await self.log("Trading loop stopped")
         return "Trading bot stopped successfully" if was_active else "Trading bot is already stopped"
         
     async def _trading_loop(self):
-        """Simplified trading loop using managers"""
-        while self.is_active:
+        """Main trading loop using position and signal managers"""
+        while self.trading_active or self.paper_trading:  # Check both modes
             try:
                 for symbol in self.watched_coins:
+                    # Generate signal using signal manager
                     signal = await self.signal_generator.generate_signal(symbol)
+                    
                     if signal['action'] != 'HOLD':
-                        success = await self.trade_executor.execute_trade(  # Missing success check
+                        # Execute trade using trade executor
+                        success = await self.trade_executor.execute_trade(
                             symbol=symbol,
                             action=signal['action'],
                             reason=f"Signal: {signal['score']:.2f}"
                         )
-                        if not success:  # Add this
+                        
+                        if not success:
                             await self.log(f"Trade execution failed for {symbol}", level="error")
+                            continue
+                        
+                    # Update position metrics
+                    if symbol in self.position_manager.positions:
+                        await self.position_manager.update_positions()
+                        
+                # Sleep for configured interval
                 await asyncio.sleep(self.config.interval)
+                
             except Exception as e:
                 await self.log(f"Trading loop error: {str(e)}", level="error")
+                await asyncio.sleep(10)  # Sleep on error to prevent rapid retries
     
-    def _check_and_trade(self, symbol):
+    async def _check_and_trade(self, symbol):
         try:
             # Remove the simple RSI-based trading logic since we now have comprehensive scoring
-            if self._should_trade(symbol, 'BUY'):
-                self._place_buy_order(symbol)
-            elif self._should_trade(symbol, 'SELL'):
-                self._place_sell_order(symbol)
+            if await self._should_trade(symbol, 'BUY'):
+                await self._execute_trade(symbol, 'BUY')
+            elif await self._should_trade(symbol, 'SELL'):
+                await self._execute_trade(symbol, 'SELL')
             
         except Exception as e:
             self.log(f"Error checking and trading {symbol}: {str(e)}", level="error")
@@ -501,7 +514,7 @@ class TradingBot:
             'trailing_stop_activation': self.trailing_stop_activation
         }
         try:
-            with open('bot_config.json', 'w') as f:
+            with open(self.CONFIG_FILE, 'w') as f:
                 json.dump(config, f)
             logging.info("Configuration saved successfully")
         except Exception as e:
@@ -510,7 +523,7 @@ class TradingBot:
     def load_config(self):
         """Load configuration from file or use defaults"""
         try:
-            with open('config.json', 'r') as f:
+            with open(self.CONFIG_FILE, 'r') as f:
                 config = json.load(f)
                 self.rsi_period = config.get('rsi_period', 14)
                 self.rsi_overbought = config.get('rsi_overbought', 70.0)
@@ -524,9 +537,10 @@ class TradingBot:
             self.log("No config file found, using defaults", level="warning")
 
     async def test_api_connection(self):
+        """Test API connection by fetching BTC price"""
         try:
-            # Test authentication by getting BTC price
-            product = await self.client.get_product('BTC-USD')
+            # Get product synchronously since client methods are not async
+            product = self.client.get_product('BTC-USD')
             price = float(product.price)
             logging.info(f"Successfully fetched BTC price: ${price}")
             return price
@@ -535,8 +549,10 @@ class TradingBot:
             raise
 
     async def get_account_balance(self) -> Dict[str, Union[Dict[str, float], float]]:
+        """Get account balances"""
         try:
-            accounts_response = await self.client.get_accounts()
+            # Get accounts synchronously
+            accounts_response = self.client.get_accounts()
             balances = {}
             total_usd_value = 0.0
             
@@ -559,6 +575,7 @@ class TradingBot:
                             logging.info(f"Found USD balance: ${usd_value}")
                         else:
                             try:
+                                # Get price synchronously
                                 product = self.client.get_product(f"{symbol}-USD")
                                 price = float(product.price)
                                 usd_value = balance * price
@@ -585,8 +602,10 @@ class TradingBot:
             return {'balances': {}, 'total_usd_value': 0.0}
 
     async def get_current_price(self, symbol: str) -> float:
+        """Get current price for a symbol"""
         try:
-            product = await self.client.get_product(f"{symbol}-USD")
+            # Get product synchronously
+            product = self.client.get_product(f"{symbol}-USD")
             return float(product.price)
         except Exception as e:
             self.log(f"Error getting price for {symbol}: {str(e)}", level="error")
@@ -1922,11 +1941,15 @@ class TradingBot:
                 score -= 5
                 
             # Add Bollinger Band influence (max ±5)
-            if bb_data['percent_b'] > 0.8:
+            price_location = (current_price - bb_data['lower']) / (bb_data['upper'] - bb_data['lower'])
+            if price_location > 0.8:
                 score -= 3  # Overbought
-            elif bb_data['percent_b'] < 0.2:
+            elif price_location < 0.2:
                 score += 3  # Oversold
-            if bb_data['is_squeeze']:
+                
+            # Add squeeze detection
+            bandwidth = bb_data['bandwidth']
+            if bandwidth < 10:  # Low bandwidth indicates potential squeeze
                 score += 2  # Potential breakout
                 
             # Support/Resistance influence (max ±5)
@@ -2254,33 +2277,53 @@ class TradingBot:
             del self._price_cache[sorted_cache[i][0]]
 
     async def cleanup(self):
-        """Need to add cleanup method for graceful shutdown"""
+        """Ensure proper cleanup of resources"""
         try:
-            # Close all positions if paper trading
-            if self.paper_trading:
-                for symbol in list(self.position_manager.positions.keys()):
-                    await self.trade_executor.execute_trade(
-                        symbol=symbol,
-                        action='SELL',
-                        reason="Bot shutdown"
-                    )
-            
+            # Stop any active trading
+            if self.trading_active or self.paper_trading:
+                await self.stop_trading_loop()
+                
             # Close price manager
-            await self.price_manager.close()
-            
+            if hasattr(self, 'price_manager'):
+                await self.price_manager.close()
+                
             # Close client connection
             if hasattr(self, 'client'):
-                await self.client.close()
+                # Note: RESTClient may not have async close
+                self.client = None
+                
+            # Clear caches
+            if hasattr(self, '_price_cache'):
+                self._price_cache.clear()
                 
         except Exception as e:
-            await self.log(f"Cleanup error: {str(e)}", level="error")
+            await self.log(f"Error during cleanup: {str(e)}", level="error")
 
     def _validate_symbol(self, symbol: str) -> bool:
-        """Validate symbol format and existence"""
+        """
+        Validate cryptocurrency symbol format and existence.
+        
+        Args:
+            symbol (str): The cryptocurrency symbol to validate
+            
+        Returns:
+            bool: True if valid, False otherwise
+        """
         try:
+            if not isinstance(symbol, str):
+                return False
+                
             symbol = symbol.upper()
-            product = self.client.get_product(f"{symbol}-USD")
-            return True
+            if not symbol.isalnum():
+                return False
+                
+            # Check if symbol exists on Coinbase
+            try:
+                self.client.get_product(f"{symbol}-USD")
+                return True
+            except Exception:
+                return False
+                
         except Exception:
             return False
 
