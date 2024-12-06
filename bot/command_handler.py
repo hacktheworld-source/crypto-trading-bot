@@ -1,6 +1,8 @@
 from typing import Optional, List, Union, Literal, Dict, Any
-from datetime import datetime
+from datetime import datetime, timedelta
 import asyncio
+import pandas as pd
+import logging
 
 class CommandHandler:
     """
@@ -272,8 +274,13 @@ class CommandHandler:
             if bot.watched_coins:
                 for coin in sorted(bot.watched_coins):
                     try:
-                        current_price = await bot.get_current_price(coin)
+                        # Use synchronous price fetch
+                        product = bot.client.get_product(f"{coin}-USD")
+                        current_price = float(product.price)
+                        
+                        # Use existing RSI calculation
                         rsi = await bot.calculate_rsi(coin)
+                        
                         status += f"\n  {coin}: ${current_price:,.2f} (RSI: {rsi:.1f})"
                     except Exception as e:
                         status += f"\n  {coin}: Error fetching data ({str(e)})"
