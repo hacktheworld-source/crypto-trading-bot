@@ -2612,7 +2612,7 @@ class SignalGenerator:
             # Get market conditions - needs to be async
             conditions = await self.trading_bot._check_market_conditions(symbol)
             
-            # Get correlation with BTC
+            # Get correlation with BTC - needs to be async
             correlation = await self._calculate_btc_correlation(symbol)
             
             return {
