@@ -216,6 +216,9 @@ class TradingBot:
             # Configuration
             self.config = TradingConfig()
             
+            # Trading state
+            self.positions: Dict[str, Position] = {}  # Add this
+            
         except Exception as e:
             logging.error(f"Failed to initialize trading bot: {str(e)}")
             raise Exception(f"Bot initialization failed: {str(e)}")
@@ -455,16 +458,40 @@ class TradingBot:
             return False
 
     def remove_coin(self, symbol: str) -> bool:
-        """Remove a coin from watchlist if not in any positions"""
-        if symbol in self.positions or symbol in self.paper_positions:
-            logging.warning(f"Cannot remove {symbol} - active position exists")
-            return False
+        """
+        Remove a coin from watchlist if not in any positions.
         
-        if symbol in self.watched_coins:
-            self.watched_coins.remove(symbol)
-            logging.info(f"Removed {symbol} from watchlist")
-            return True
-        return False
+        Args:
+            symbol: The cryptocurrency symbol to remove
+            
+        Returns:
+            bool: True if removed successfully, False otherwise
+        """
+        try:
+            symbol = symbol.upper()
+            
+            # Check paper positions
+            if hasattr(self, 'paper_positions') and symbol in self.paper_positions:
+                self.sync_log(f"Cannot remove {symbol} - active paper position exists", level="warning")
+                return False
+                
+            # Check real positions
+            if hasattr(self, 'positions') and symbol in self.positions:
+                self.sync_log(f"Cannot remove {symbol} - active position exists", level="warning")
+                return False
+            
+            # Remove from watchlist if exists
+            if symbol in self.watched_coins:
+                self.watched_coins.remove(symbol)
+                self.sync_log(f"Removed {symbol} from watchlist")
+                return True
+                
+            self.sync_log(f"{symbol} not in watchlist", level="warning")
+            return False
+            
+        except Exception as e:
+            self.sync_log(f"Error removing {symbol}: {str(e)}", level="error")
+            return False
 
     def _ensure_positions_watched(self):
         """Ensure all positions are in watchlist"""
@@ -1136,7 +1163,6 @@ class TradingBot:
                         [(pos['exit_time'] - pos['entry_time']) for pos in self.position_history],
                         timedelta(0)
                     ) / len(self.position_history)
-                })
                 
             return stats
             
@@ -2270,7 +2296,6 @@ class TradingBot:
                 'all_supports': sorted(supports, reverse=True)[:3],
                 'all_resistances': sorted(resistances)[:3],
                 'support_strength': len([p for p in pivot_lows if abs(p - nearest_support) / nearest_support < 0.02])
-            }
         except Exception as e:
             self.log(f"Error calculating support/resistance levels: {str(e)}", level="error")
             raise
