@@ -234,8 +234,9 @@ class TradingBot:
                 self.trading_active = True
                 mode = "Real"
             
-            # Start the trading loop directly since we're already in an async context
+            # Start both trading loop and heartbeat
             asyncio.create_task(self._trading_loop())
+            asyncio.create_task(self._heartbeat())
             
             await self.log(f"{mode} trading loop started")
             return f"{mode} trading bot started successfully"
@@ -287,14 +288,13 @@ class TradingBot:
     
     async def _check_and_trade(self, symbol):
         try:
-            # Remove the simple RSI-based trading logic since we now have comprehensive scoring
             if await self._should_trade(symbol, 'BUY'):
                 await self._execute_trade(symbol, 'BUY')
             elif await self._should_trade(symbol, 'SELL'):
                 await self._execute_trade(symbol, 'SELL')
             
         except Exception as e:
-            self.log(f"Error checking and trading {symbol}: {str(e)}", level="error")
+            await self.log(f"Error checking and trading {symbol}: {str(e)}", level="error")
             raise
     
     async def calculate_rsi(self, symbol: str) -> float:
@@ -536,7 +536,8 @@ class TradingBot:
                 self.take_profit_percentage = config.get('take_profit_percentage', 10.0)
                 self.max_position_size = config.get('max_position_size', 1000.0)
         except FileNotFoundError:
-            self.log("No config file found, using defaults", level="warning")
+            # Use synchronous logging here since we're in a sync method
+            logging.warning("No config file found, using defaults")
 
     async def test_api_connection(self):
         """Test API connection by fetching BTC price"""
@@ -1135,7 +1136,6 @@ class TradingBot:
                         [(pos['exit_time'] - pos['entry_time']) for pos in self.position_history],
                         timedelta(0)
                     ) / len(self.position_history)
-                })
                 
             return stats
             
@@ -1500,7 +1500,7 @@ class TradingBot:
                       f"💰 Price: ${price:,.2f}\n"
                       f"📈 Signal: {signal['action']}\n"
                       f"📊 Score: {signal['score']:.2f}\n"
-                      f"📋 Signal Components\n"
+                      f"���� Signal Components\n"
                       f"• 📈 Trend (0.4x):    {signal['signals']['trend']:.1f}\n"
                       f"• 🔄 Momentum (0.3x): {signal['signals']['momentum']:.1f}\n"
                       f"• 📊 Volume (0.2x):   {signal['signals']['volume']:.1f}\n"
@@ -1665,16 +1665,19 @@ class TradingBot:
     async def post_init(self):
         """Async initialization steps after bot creation"""
         try:
-            # Verify API connection - remove await since client.get_accounts() is not async
+            # Verify API connection
             self.client.get_accounts()
-            self.log("API connection verified")
+            await self.log("API connection verified")  # This is async but we're in a sync context
             
             # Initialize price cache
             for symbol in self.watched_coins:
                 await self.price_manager.get_price(symbol)
                 
+            # Start heartbeat
+            asyncio.create_task(self._heartbeat())
+                
         except Exception as e:
-            self.log(f"Post-initialization failed: {str(e)}", level="error")
+            await self.log(f"Post-initialization failed: {str(e)}", level="error")
             raise
 
     async def async_log(self, message: str, level: str = "info", context: Dict[str, Any] = None, error: Exception = None) -> None:
@@ -2205,7 +2208,7 @@ class TradingBot:
             avg_gain = gains.ewm(span=self.rsi_period, adjust=False).mean()
             avg_loss = losses.ewm(span=self.rsi_period, adjust=False).mean()
             rs = avg_gain / avg_loss
-            rsi = float(100 - (100 / (1 + rs)).iloc[-1])
+            rsi = float(100 - (100 / (1 + rs)).iloc[-1]
             
             # Calculate Bollinger Bands
             bb_sma = prices.rolling(window=20).mean()
@@ -2266,7 +2269,6 @@ class TradingBot:
                 'all_supports': sorted(supports, reverse=True)[:3],
                 'all_resistances': sorted(resistances)[:3],
                 'support_strength': len([p for p in pivot_lows if abs(p - nearest_support) / nearest_support < 0.02])
-            }
         except Exception as e:
             self.log(f"Error calculating support/resistance levels: {str(e)}", level="error")
             raise
@@ -2311,31 +2313,27 @@ class TradingBot:
             await self.log(f"Error during cleanup: {str(e)}", level="error")
 
     def _validate_symbol(self, symbol: str) -> bool:
-        """
-        Validate cryptocurrency symbol format and existence.
-        
-        Args:
-            symbol (str): The cryptocurrency symbol to validate
-            
-        Returns:
-            bool: True if valid, False otherwise
-        """
+        """Validate cryptocurrency symbol format and existence."""
         try:
             if not isinstance(symbol, str):
+                self.sync_log(f"Invalid symbol type: {type(symbol)}", level="warning")
                 return False
                 
             symbol = symbol.upper()
             if not symbol.isalnum():
+                self.sync_log(f"Invalid symbol format: {symbol}", level="warning")
                 return False
                 
             # Check if symbol exists on Coinbase
             try:
                 self.client.get_product(f"{symbol}-USD")
                 return True
-            except Exception:
+            except Exception as e:
+                self.sync_log(f"Symbol validation failed for {symbol}: {str(e)}", level="warning")
                 return False
                 
-        except Exception:
+        except Exception as e:
+            self.sync_log(f"Symbol validation error: {str(e)}", level="error")
             return False
 
     async def add_coin(self, symbol: str) -> bool:
@@ -2350,6 +2348,31 @@ class TradingBot:
         except Exception as e:
             logging.error(f"Failed to add {symbol}: {str(e)}")
             return False
+
+    def sync_log(self, message: str, level: str = "info") -> None:
+        """
+        Synchronous logging for non-async contexts.
+        
+        Args:
+            message: The message to log
+            level: Log level (info, warning, error)
+        """
+        if level == "error":
+            logging.error(message)
+        elif level == "warning":
+            logging.warning(message)
+        else:
+            logging.info(message)
+
+    async def _heartbeat(self):
+        """Periodic heartbeat to ensure bot is running"""
+        while True:
+            try:
+                await asyncio.sleep(60)  # Check every minute
+                await self.log("Bot heartbeat", level="info")
+            except Exception as e:
+                logging.error(f"Heartbeat error: {str(e)}")
+                await asyncio.sleep(5)  # Wait before retry
 
 class PositionManager:
     """Centralized position management"""
