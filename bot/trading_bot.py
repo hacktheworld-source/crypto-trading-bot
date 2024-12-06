@@ -855,7 +855,8 @@ class TradingBot:
                 'trend': self._calculate_trend_score(technical_data),
                 'momentum': self._calculate_momentum_score(market_data['sentiment'], technical_data),
                 'volume': self._calculate_volume_score(market_data['volume'], market_data['market_conditions']),
-                'risk': self._calculate_risk_score(market_data['market_conditions'], market_data['sentiment'])
+                'risk': self._calculate_risk_score(market_data['market_conditions'], market_data['sentiment']) 
+            }
             
             # Calculate weighted final score
             final_score = sum(score * WEIGHTS[component] for component, score in scores.items())
