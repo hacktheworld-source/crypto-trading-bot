@@ -1163,6 +1163,7 @@ class TradingBot:
                         [(pos['exit_time'] - pos['entry_time']) for pos in self.position_history],
                         timedelta(0)
                     ) / len(self.position_history)
+                }) # Added closing parenthesis here
                 
             return stats
             
@@ -2296,6 +2297,8 @@ class TradingBot:
                 'all_supports': sorted(supports, reverse=True)[:3],
                 'all_resistances': sorted(resistances)[:3],
                 'support_strength': len([p for p in pivot_lows if abs(p - nearest_support) / nearest_support < 0.02])
+            } # Added closing curly brace here
+            
         except Exception as e:
             self.log(f"Error calculating support/resistance levels: {str(e)}", level="error")
             raise
