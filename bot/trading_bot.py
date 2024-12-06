@@ -305,19 +305,19 @@ class TradingBot:
             # Convert symbol to uppercase
             symbol = symbol.upper()
             
-            # Get historical candles synchronously
+            # Get historical candles using the correct method
             end = datetime.now()
             start = end - timedelta(days=30)
             
-            candles = self.client.get_product_candles(
+            response = self.client.get_candles(
                 product_id=f"{symbol}-USD",
-                granularity='ONE_DAY',
-                start=start,
-                end=end
+                start=int(start.timestamp()),
+                end=int(end.timestamp()),
+                granularity="ONE_DAY"
             )
             
-            # Convert candles to prices
-            prices = pd.Series([float(candle.close) for candle in reversed(candles)])
+            # Convert candles to prices - note the change in accessing candles
+            prices = pd.Series([float(candle.close) for candle in reversed(response.candles)])
             
             # Calculate RSI
             delta = prices.diff()
@@ -1524,7 +1524,7 @@ class TradingBot:
                       f"💰 Price: ${price:,.2f}\n"
                       f"📈 Signal: {signal['action']}\n"
                       f"📊 Score: {signal['score']:.2f}\n"
-                      f"������ Signal Components\n"
+                      f" Signal Components\n"
                       f"• 📈 Trend (0.4x):    {signal['signals']['trend']:.1f}\n"
                       f"• 🔄 Momentum (0.3x): {signal['signals']['momentum']:.1f}\n"
                       f"• 📊 Volume (0.2x):   {signal['signals']['volume']:.1f}\n"
