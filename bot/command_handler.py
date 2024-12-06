@@ -142,7 +142,7 @@ class CommandHandler:
         try:
             bot = self.trading_bot
             real_balance = await bot.get_account_balance()
-            paper_balance = await bot.get_paper_balance()
+            paper_balance = bot.get_paper_balance()
             
             status = "Bot Status:\n```"
             
@@ -165,12 +165,12 @@ class CommandHandler:
             status += f"\n  RSI Thresholds: {bot.rsi_oversold} (oversold) / {bot.rsi_overbought} (overbought)"
             
             # Watched Coins
-            status += "\n\n Watched Coins:"
+            status += "\n\n🔍 Watched Coins:"
             if bot.watched_coins:
                 for coin in sorted(bot.watched_coins):
                     try:
-                        current_price = bot.get_current_price(coin)
-                        rsi = bot.calculate_rsi(coin)
+                        current_price = await bot.get_current_price(coin)
+                        rsi = await bot.calculate_rsi(coin)
                         status += f"\n  {coin}: ${current_price:,.2f} (RSI: {rsi:.1f})"
                     except:
                         status += f"\n  {coin}: Error fetching data"
@@ -267,14 +267,17 @@ class CommandHandler:
         
     async def get_price(self, symbol: str):
         try:
+            # Convert symbol to uppercase
+            symbol = symbol.upper()
             price = await self.trading_bot.get_current_price(symbol)
             return f"{symbol} Price: ${price:,.2f}"
         except Exception as e:
             return self._format_error(str(e))
         
-    def get_volume_analysis(self, symbol):
+    async def get_volume_analysis(self, symbol: str):
         try:
-            analysis = self.trading_bot.analyze_volume(symbol)
+            symbol = symbol.upper()
+            analysis = await self.trading_bot.analyze_volume(symbol)
             
             response = f"Volume Analysis for {symbol}:\n```"
             response += f"Current Volume: {analysis['current_volume']:,.2f}\n"
@@ -354,6 +357,7 @@ class CommandHandler:
         
     async def get_ma_analysis(self, symbol: str):
         try:
+            symbol = symbol.upper()
             analysis = await self.trading_bot.calculate_moving_averages(symbol)
             return self._format_ma_response(analysis)
         except Exception as e:

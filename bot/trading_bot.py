@@ -283,8 +283,9 @@ class TradingBot:
             raise
     
     async def calculate_rsi(self, symbol: str) -> float:
-        """Calculate RSI using PriceManager"""
         try:
+            # Convert symbol to uppercase
+            symbol = symbol.upper()
             prices = await self.price_manager.get_price(symbol, days=30)
             delta = prices.diff()
             gains = delta.where(delta > 0, 0)
@@ -522,21 +523,20 @@ class TradingBot:
         except FileNotFoundError:
             self.log("No config file found, using defaults", level="warning")
 
-    def test_api_connection(self):
+    async def test_api_connection(self):
         try:
             # Test authentication by getting BTC price
-            btc_product = self.client.get_product('BTC-USD')
-            price = float(btc_product.price)
+            product = await self.client.get_product('BTC-USD')
+            price = float(product.price)
             logging.info(f"Successfully fetched BTC price: ${price}")
             return price
-            
         except Exception as e:
             logging.error(f"API test failed: {str(e)}")
-            raise Exception(f"API test failed: {str(e)}")
+            raise
 
-    def get_account_balance(self) -> Dict[str, Union[Dict[str, float], float]]:
+    async def get_account_balance(self) -> Dict[str, Union[Dict[str, float], float]]:
         try:
-            accounts_response = self.client.get_accounts()
+            accounts_response = await self.client.get_accounts()
             balances = {}
             total_usd_value = 0.0
             
@@ -856,7 +856,6 @@ class TradingBot:
                 'momentum': self._calculate_momentum_score(market_data['sentiment'], technical_data),
                 'volume': self._calculate_volume_score(market_data['volume'], market_data['market_conditions']),
                 'risk': self._calculate_risk_score(market_data['market_conditions'], market_data['sentiment'])
-            }  # Added missing closing brace
             
             # Calculate weighted final score
             final_score = sum(score * WEIGHTS[component] for component, score in scores.items())
@@ -912,7 +911,6 @@ class TradingBot:
             'timestamp': datetime.now(),
             'error': error_type
         }
-
     def _should_trade(self, symbol: str, action: str) -> bool:
         try:
             signal = self._calculate_trade_signal(symbol)
@@ -2275,6 +2273,28 @@ class TradingBot:
                 
         except Exception as e:
             await self.log(f"Cleanup error: {str(e)}", level="error")
+
+    def _validate_symbol(self, symbol: str) -> bool:
+        """Validate symbol format and existence"""
+        try:
+            symbol = symbol.upper()
+            product = self.client.get_product(f"{symbol}-USD")
+            return True
+        except Exception:
+            return False
+
+    async def add_coin(self, symbol: str) -> bool:
+        """Add a coin to watchlist with validation"""
+        try:
+            symbol = symbol.upper()
+            if not self._validate_symbol(symbol):
+                return False
+            self.watched_coins.add(symbol)
+            logging.info(f"Added {symbol} to watchlist")
+            return True
+        except Exception as e:
+            logging.error(f"Failed to add {symbol}: {str(e)}")
+            return False
 
 class PositionManager:
     """Centralized position management"""
