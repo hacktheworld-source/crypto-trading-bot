@@ -63,11 +63,11 @@ class PriceManager:
             await asyncio.sleep(self._rate_limit - (current_time - self._last_api_call))
             
         try:
-            # Get candles from API
+            # Get candles synchronously
             end = datetime.now()
             start = end - timedelta(days=days)
             
-            response = await self.client.get_candles(
+            response = self.client.get_candles(
                 product_id=f"{symbol}-USD",
                 start=int(start.timestamp()),
                 end=int(end.timestamp()),
@@ -837,8 +837,7 @@ class TradingBot:
                     current_price,
                     sma_20.iloc[-1],
                     sma_50.iloc[-1],
-                    sma_200.iloc[-1]
-                )
+                    sma_200.iloc[-1])
             }
         except Exception as e:
             await self.log(f"Technical analysis error: {str(e)}", level="error")
@@ -2278,7 +2277,6 @@ class TradingBot:
                 'all_supports': sorted(supports, reverse=True)[:3],
                 'all_resistances': sorted(resistances)[:3],
                 'support_strength': len([p for p in pivot_lows if abs(p - nearest_support) / nearest_support < 0.02])
-            }
             
         except Exception as e:
             self.log(f"Error calculating support/resistance levels: {str(e)}", level="error")
