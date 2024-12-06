@@ -1136,6 +1136,7 @@ class TradingBot:
                         [(pos['exit_time'] - pos['entry_time']) for pos in self.position_history],
                         timedelta(0)
                     ) / len(self.position_history)
+                })
                 
             return stats
             
