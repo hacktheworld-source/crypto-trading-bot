@@ -584,14 +584,21 @@ class TradingBot:
             logging.error(f"Error getting account balance: {str(e)}")
             return {'balances': {}, 'total_usd_value': 0.0}
 
-    def analyze_volume(self, symbol: str) -> Dict[str, Any]:
+    async def get_current_price(self, symbol: str) -> float:
+        try:
+            product = await self.client.get_product(f"{symbol}-USD")
+            return float(product.price)
+        except Exception as e:
+            self.log(f"Error getting price for {symbol}: {str(e)}", level="error")
+            raise
+
+    async def analyze_volume(self, symbol: str) -> Dict[str, Any]:
         """Analyzes trading volume to confirm price trends"""
         try:
             end_time = datetime.now()
-            start_time = end_time - timedelta(days=90)  # 90 days for good volume baseline
+            start_time = end_time - timedelta(days=90)
             
-            # Get candles with volume data
-            response = self.client.get_candles(
+            response = await self.client.get_candles(
                 product_id=f"{symbol}-USD",
                 start=int(start_time.timestamp()),
                 end=int(end_time.timestamp()),

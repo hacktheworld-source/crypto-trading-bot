@@ -1,4 +1,5 @@
 from datetime import datetime
+import asyncio
 
 class CommandHandler:
     ERROR_PREFIX = "❌ "
@@ -17,7 +18,22 @@ class CommandHandler:
             'remove': self.remove_coin,
             'list': self.list_coins,
             'position': self.get_position_details,
-            'metrics': self.get_position_metrics
+            'metrics': self.get_position_metrics,
+            'testapi': self.test_api,
+            'price': self.get_price,
+            'rsi': self.get_rsi,
+            'ma': self.get_ma_analysis,
+            'volume': self.get_volume_analysis,
+            'sentiment': self.get_sentiment_analysis,
+            'paper': self.handle_paper_commands,
+            'start': self.start_real_trading,
+            'stop': self.stop_trading,
+            'status': self.get_status,
+            'balance': self.get_balance,
+            'help': self.get_help,
+            'ping': self.ping,
+            'version': self.version,
+            'stats': self.get_stats
         }
         
     async def handle_command(self, command: str, *args) -> str:
@@ -25,21 +41,27 @@ class CommandHandler:
         try:
             if command not in self.commands:
                 return self._format_error(f"Unknown command: {command}")
-            return await self.commands[command](*args)
+            
+            result = await self.commands[command](*args) if asyncio.iscoroutinefunction(self.commands[command]) else self.commands[command](*args)
+            return result
+            
         except Exception as e:
             return self._format_error(f"Command error: {str(e)}")
         
-    def add_coin(self, *symbols):
+    async def list_coins(self):
+        coins = list(self.trading_bot.watched_coins)
+        if coins:
+            return f"Watched coins: {', '.join(coins)}"
+        return "No coins in watchlist"
+        
+    async def add_coin(self, *symbols):
         """Add multiple coins to watchlist"""
         results = []
         for symbol in symbols:
-            if self.trading_bot.add_coin(symbol):
-                self.trading_bot.log(f"Added {symbol} to watchlist")
-                results.append(f"✅ Added {symbol}")
+            if self.trading_bot.add_coin(symbol.upper()):
+                results.append(f"✅ Added {symbol.upper()}")
             else:
-                self.trading_bot.log(f"Failed to add {symbol}", level="error")
-                results.append(f"❌ Failed to add {symbol}")
-        
+                results.append(f"❌ Failed to add {symbol.upper()}")
         return "\n".join(results)
         
     def remove_coin(self, *symbols):
@@ -55,18 +77,12 @@ class CommandHandler:
         
         return "\n".join(results)
         
-    def list_coins(self):
-        coins = list(self.trading_bot.watched_coins)
-        if coins:
-            return f"Watched coins: {', '.join(coins)}"
-        return "No coins in watchlist"
-        
-    def get_rsi(self, symbol):
+    async def get_rsi(self, symbol: str):
         try:
-            rsi = self.trading_bot.calculate_rsi(symbol)
+            rsi = await self.trading_bot.calculate_rsi(symbol)
             return f"Current RSI for {symbol}: {rsi:.2f}"
         except Exception as e:
-            return f"Error calculating RSI for {symbol}: {str(e)}"
+            return self._format_error(str(e))
             
     def set_trade_amount(self, amount):
         if self.trading_bot.set_trade_amount(amount):
@@ -122,71 +138,75 @@ class CommandHandler:
             self.trading_bot.trading_active = False
             return "All trading stopped"
         
-    def get_status(self):
-        bot = self.trading_bot
-        real_balance = bot.get_account_balance()
-        paper_balance = bot.get_paper_balance()
-        
-        status = "Bot Status:\n```"
-        
-        # Trading Status
-        status += "\n📊 Trading Status:"
-        status += f"\n  Trading Active: {'✅' if bot.trading_active else '❌'}"
-        status += f"\n  Paper Trading: {'✅' if bot.paper_trading else '❌'}"
-        status += f"\n  Check Interval: {bot.trading_interval//60} minutes"
-        
-        # Trading Configuration
-        status += "\n\n⚙️ Configuration:"
-        status += f"\n  Trade Amount: ${bot.trade_amount:.2f}"
-        status += f"\n  Stop Loss: {bot.stop_loss_percentage}%"
-        status += f"\n  Take Profit: {bot.take_profit_percentage}%"
-        status += f"\n  Max Position Size: ${bot.max_position_size:.2f}"
-        
-        # Technical Indicators
-        status += "\n\n📈 Technical Indicators:"
-        status += f"\n  RSI Period: {bot.rsi_period} days"
-        status += f"\n  RSI Thresholds: {bot.rsi_oversold} (oversold) / {bot.rsi_overbought} (overbought)"
-        
-        # Watched Coins
-        status += "\n\n🔍 Watched Coins:"
-        if bot.watched_coins:
-            for coin in sorted(bot.watched_coins):
-                try:
-                    current_price = bot.get_current_price(coin)
-                    rsi = bot.calculate_rsi(coin)
-                    status += f"\n  {coin}: ${current_price:,.2f} (RSI: {rsi:.1f})"
-                except:
-                    status += f"\n  {coin}: Error fetching data"
-        else:
-            status += "\n  None"
-        
-        # Real Account Balances
-        status += "\n\n💰 Real Account Balances:"
-        for symbol, data in real_balance['balances'].items():
-            status += f"\n  {symbol}: {data['balance']:.8f} (${data['usd_value']:.2f})"
-        status += f"\n  Total Real Portfolio Value: ${real_balance['total_usd_value']:.2f}"
-        
-        # Paper Trading Account
-        status += "\n\n📝 Paper Trading Account:"
-        status += f"\n  Paper Cash: ${paper_balance['cash_balance']:.2f}"
-        paper_profit = paper_balance['total_value'] - 1000.0
-        paper_profit_pct = (paper_profit / 1000.0) * 100
-        status += f"\n  Paper Portfolio Value: ${paper_balance['total_value']:.2f}"
-        status += f"\n  Paper P/L: ${paper_profit:+.2f} ({paper_profit_pct:+.2f}%)"
-        
-        # Trading History Summary
-        status += "\n\n📜 Trading History:"
-        status += f"\n  Total Real Trades: {len(bot.trade_history)}"
-        status += f"\n  Total Paper Trades: {len(bot.paper_trade_history)}"
-        status += f"\n  Active Real Positions: {len(bot.positions)}"
-        status += f"\n  Active Paper Positions: {len(bot.paper_positions)}"
-        
-        status += "```"
-        return status
-        
-    def test_api(self):
+    async def get_status(self):
         try:
-            btc_price = self.trading_bot.test_api_connection()
+            bot = self.trading_bot
+            real_balance = await bot.get_account_balance()
+            paper_balance = await bot.get_paper_balance()
+            
+            status = "Bot Status:\n```"
+            
+            # Trading Status
+            status += "\n📊 Trading Status:"
+            status += f"\n  Trading Active: {'✅' if bot.trading_active else '❌'}"
+            status += f"\n  Paper Trading: {'✅' if bot.paper_trading else '❌'}"
+            status += f"\n  Check Interval: {bot.trading_interval//60} minutes"
+            
+            # Trading Configuration
+            status += "\n\n⚙️ Configuration:"
+            status += f"\n  Trade Amount: ${bot.trade_amount:.2f}"
+            status += f"\n  Stop Loss: {bot.stop_loss_percentage}%"
+            status += f"\n  Take Profit: {bot.take_profit_percentage}%"
+            status += f"\n  Max Position Size: ${bot.max_position_size:.2f}"
+            
+            # Technical Indicators
+            status += "\n\n📈 Technical Indicators:"
+            status += f"\n  RSI Period: {bot.rsi_period} days"
+            status += f"\n  RSI Thresholds: {bot.rsi_oversold} (oversold) / {bot.rsi_overbought} (overbought)"
+            
+            # Watched Coins
+            status += "\n\n Watched Coins:"
+            if bot.watched_coins:
+                for coin in sorted(bot.watched_coins):
+                    try:
+                        current_price = bot.get_current_price(coin)
+                        rsi = bot.calculate_rsi(coin)
+                        status += f"\n  {coin}: ${current_price:,.2f} (RSI: {rsi:.1f})"
+                    except:
+                        status += f"\n  {coin}: Error fetching data"
+            else:
+                status += "\n  None"
+            
+            # Real Account Balances
+            status += "\n\n💰 Real Account Balances:"
+            for symbol, data in real_balance['balances'].items():
+                status += f"\n  {symbol}: {data['balance']:.8f} (${data['usd_value']:.2f})"
+            status += f"\n  Total Real Portfolio Value: ${real_balance['total_usd_value']:.2f}"
+            
+            # Paper Trading Account
+            status += "\n\n📝 Paper Trading Account:"
+            status += f"\n  Paper Cash: ${paper_balance['cash_balance']:.2f}"
+            paper_profit = paper_balance['total_value'] - 1000.0
+            paper_profit_pct = (paper_profit / 1000.0) * 100
+            status += f"\n  Paper Portfolio Value: ${paper_balance['total_value']:.2f}"
+            status += f"\n  Paper P/L: ${paper_profit:+.2f} ({paper_profit_pct:+.2f}%)"
+            
+            # Trading History Summary
+            status += "\n\n📜 Trading History:"
+            status += f"\n  Total Real Trades: {len(bot.trade_history)}"
+            status += f"\n  Total Paper Trades: {len(bot.paper_trade_history)}"
+            status += f"\n  Active Real Positions: {len(bot.positions)}"
+            status += f"\n  Active Paper Positions: {len(bot.paper_positions)}"
+            
+            status += "```"
+            return status
+            
+        except Exception as e:
+            return self._format_error(f"Error getting status: {str(e)}")
+        
+    async def test_api(self, *args):
+        try:
+            btc_price = await self.trading_bot.test_api_connection()
             return (
                 "✅ Coinbase API Test Results:\n"
                 "- Authentication: Success\n"
@@ -194,14 +214,7 @@ class CommandHandler:
                 f"- Current BTC price: ${btc_price:,.2f}"
             )
         except Exception as e:
-            return (
-                "❌ Coinbase API Test Failed\n\n"
-                f"Error Details: {str(e)}\n\n"
-                "Please verify:\n"
-                "1. API Key is correct\n"
-                "2. API Secret is correct\n"
-                "3. API Keys have correct permissions"
-            )
+            return self._format_error(str(e))
         
     def get_help(self):
         help_text = "Trading Bot Commands:\n```"
@@ -252,12 +265,12 @@ class CommandHandler:
         help_text += "```"
         return help_text
         
-    def get_price(self, symbol):
+    async def get_price(self, symbol: str):
         try:
-            price = self.trading_bot.get_current_price(symbol)
-            return f"Current {symbol} price: ${price:,.2f}"
+            price = await self.trading_bot.get_current_price(symbol)
+            return f"{symbol} Price: ${price:,.2f}"
         except Exception as e:
-            return f"Error getting price for {symbol}: {str(e)}"
+            return self._format_error(str(e))
         
     def get_volume_analysis(self, symbol):
         try:
@@ -339,26 +352,12 @@ class CommandHandler:
         response += "```"
         return response
         
-    def get_ma_analysis(self, symbol):
+    async def get_ma_analysis(self, symbol: str):
         try:
-            analysis = self.trading_bot.calculate_moving_averages(symbol)
-            
-            response = f"Moving Average Analysis for {symbol}:\n```"
-            response += f"Current Price: ${analysis['current_price']:.2f}\n"
-            response += f"20-day SMA: ${analysis['sma_20']:.2f}\n"
-            response += f"50-day SMA: ${analysis['sma_50']:.2f}\n"
-            response += f"12-day EMA: ${analysis['ema_12']:.2f}\n"
-            response += f"26-day EMA: ${analysis['ema_26']:.2f}\n\n"
-            response += f"Current Trend: {analysis['trend']}\n"
-            response += f"SMA Golden Cross: {'Yes' if analysis['sma_cross_bullish'] else 'No'}\n"
-            response += f"SMA Death Cross: {'Yes' if analysis['sma_cross_bearish'] else 'No'}\n"
-            response += f"EMA Bullish Cross: {'Yes' if analysis['ema_cross_bullish'] else 'No'}\n"
-            response += f"EMA Bearish Cross: {'Yes' if analysis['ema_cross_bearish'] else 'No'}"
-            response += "```"
-            return response
-            
+            analysis = await self.trading_bot.calculate_moving_averages(symbol)
+            return self._format_ma_response(analysis)
         except Exception as e:
-            return f"Error analyzing MAs for {symbol}: {str(e)}"
+            return self._format_error(str(e))
         
     def get_performance(self):
         """Show both real and paper trading performance"""
@@ -388,44 +387,21 @@ class CommandHandler:
         response += "```"
         return response
         
-    def set_risk_params(self, stop_loss: float, take_profit: float, max_position: float):
-        if self.trading_bot.set_risk_parameters(stop_loss, take_profit, max_position):
-            return (f"Risk parameters updated:\n"
-                    f"Stop Loss: {stop_loss}%\n"
-                    f"Take Profit: {take_profit}%\n"
-                    f"Max Position: ${max_position}")
-        return "Failed to update risk parameters. Please check values."
-        
-    def get_sentiment_analysis(self, symbol):
+    async def set_risk_params(self, stop_loss: float, take_profit: float, max_position: float):
         try:
-            analysis = self.trading_bot.analyze_market_sentiment(symbol)
-            
-            response = f"Market Sentiment Analysis for {symbol}:\n```"
-            response += f"Overall Sentiment: {analysis['overall_sentiment']}\n"
-            response += f"Sentiment Score: {analysis['sentiment_score']:.1f}\n\n"
-            
-            response += "Price Changes:\n"
-            response += f"  7-Day:  {analysis['price_changes']['short_term']:+.2f}%\n"
-            response += f"  30-Day: {analysis['price_changes']['medium_term']:+.2f}%\n"
-            response += f"  90-Day: {analysis['price_changes']['long_term']:+.2f}%\n\n"
-            
-            response += "Momentum:\n"
-            response += f"  Short-term:  {analysis['momentum']['short_term'].title()}\n"
-            response += f"  Medium-term: {analysis['momentum']['medium_term'].title()}\n"
-            response += f"  Long-term:   {analysis['momentum']['long_term'].title()}\n\n"
-            
-            response += f"Trend Strength: {analysis['trend_strength']:+d}\n"
-            response += f"Volume Trend: {analysis['volume_trend'].title()}\n\n"
-            
-            response += "Technical Indicators:\n"
-            response += f"  MA Trend: {analysis['technical_indicators']['ma_trend']}\n"
-            response += f"  RSI: {analysis['technical_indicators']['rsi']:.2f}\n"
-            response += f"  Volume Ratio: {analysis['technical_indicators']['volume_ratio']:.2f}x average"
-            response += "```"
-            return response
-            
+            success = await self.trading_bot.set_risk_parameters(stop_loss, take_profit, max_position)
+            if success:
+                return self._format_success(f"Risk parameters updated: SL={stop_loss}%, TP={take_profit}%, Max=${max_position}")
+            return self._format_error("Invalid risk parameters")
         except Exception as e:
-            return f"Error analyzing market sentiment for {symbol}: {str(e)}"
+            return self._format_error(str(e))
+        
+    async def get_sentiment_analysis(self, symbol: str):
+        try:
+            analysis = await self.trading_bot.analyze_market_sentiment(symbol)
+            return self._format_sentiment_response(analysis)
+        except Exception as e:
+            return self._format_error(str(e))
         
     def get_paper_balance(self):
         """Get paper trading account status"""
@@ -663,83 +639,50 @@ class CommandHandler:
         except Exception as e:
             return f"❌ Error updating stop loss: {str(e)}"
         
-    def get_position_details(self, symbol: str = None) -> str:
-        """Get detailed position information for one or all positions"""
+    async def get_position_details(self, symbol: str = None):
         try:
-            positions = {}
-            if self.trading_bot.paper_trading:
-                positions = self.trading_bot.paper_positions
-            else:
-                positions = self.trading_bot.positions
-                
-            if symbol:
-                if symbol not in positions:
-                    return f"No active position found for {symbol}"
-                positions = {symbol: positions[symbol]}
-                
-            if not positions:
-                return "No active positions"
-                
-            response = "Position Details:\n```"
-            for sym, pos in positions.items():
-                info = pos.get_position_info()
-                
-                response += f"\n{sym} ({info['state']}):"
-                response += f"\n  Entry: ${info['entry_price']:.2f}"
-                response += f"\n  Current: ${info['current_price']:.2f}"
-                response += f"\n  Quantity: {info['quantity']:.8f}"
-                response += f"\n  Days Held: {info['days_held']}"
-                response += f"\n  P/L: ${info['profit_info']['profit_usd']:+,.2f} ({info['profit_info']['profit_percentage']:+.2f}%)"
-                response += f"\n  Max Profit: {info['metrics']['max_profit_pct']:+.2f}%"
-                response += f"\n  Max Drawdown: {info['metrics']['max_drawdown_pct']:+.2f}%"
-                
-                if info['exit_history']:
-                    response += "\n  Exit History:"
-                    for exit in info['exit_history']:
-                        response += f"\n    {exit['timestamp'].strftime('%Y-%m-%d %H:%M')}: "
-                        response += f"{exit['quantity']:.8f} @ ${exit['price']:.2f} "
-                        response += f"({exit['reason']}) P/L: {exit['profit_pct']:+.2f}%"
-                
-                response += "\n"
-                
-            response += "```"
-            return response
-            
+            positions = self.trading_bot.get_position_info(symbol)
+            return self._format_position_details(positions)
         except Exception as e:
-            return self._format_error(f"Error getting position details: {str(e)}")
+            return self._format_error(str(e))
         
-    def get_position_metrics(self, symbol: str = None) -> str:
-        """Get position performance metrics"""
+    async def get_position_metrics(self, symbol: str = None):
         try:
-            positions = {}
-            if self.trading_bot.paper_trading:
-                positions = self.trading_bot.paper_positions
-            else:
-                positions = self.trading_bot.positions
-                
-            if symbol:
-                if symbol not in positions:
-                    return f"No active position found for {symbol}"
-                positions = {symbol: positions[symbol]}
-                
-            if not positions:
-                return "No active positions"
-                
-            response = "Position Metrics:\n```"
-            for sym, pos in positions.items():
-                info = pos.get_position_info()
-                metrics = info['metrics']
-                
-                response += f"\n{sym}:"
-                response += f"\n  Realized P/L: ${metrics['realized_profit']:+,.2f}"
-                response += f"\n  Current P/L %: {metrics['current_profit_pct']:+.2f}%"
-                response += f"\n  Max Profit %: {metrics['max_profit_pct']:+.2f}%"
-                response += f"\n  Max Drawdown %: {metrics['max_drawdown_pct']:+.2f}%"
-                response += f"\n  Total Fees: ${metrics['total_fees']:.2f}"
-                response += "\n"
-                
-            response += "```"
-            return response
-            
+            metrics = await self.trading_bot.get_position_metrics(symbol)
+            return self._format_metrics_response(metrics)
         except Exception as e:
-            return self._format_error(f"Error getting position metrics: {str(e)}")
+            return self._format_error(str(e))
+        
+    async def handle_paper_commands(self, subcommand: str, *args):
+        """Handle paper trading subcommands"""
+        try:
+            if subcommand == 'start':
+                balance = float(args[0]) if args else 1000.0
+                return await self.start_paper_trading(balance)
+            elif subcommand == 'balance':
+                return await self.get_paper_balance()
+            elif subcommand == 'reset':
+                return await self.reset_paper_trading()
+            elif subcommand == 'stats':
+                return await self.get_paper_stats()
+            elif subcommand == 'trades':
+                return await self.get_paper_trades()
+            elif subcommand == 'positions':
+                return await self.get_paper_positions()
+            else:
+                return self._format_error(f"Unknown paper trading command: {subcommand}")
+        except Exception as e:
+            return self._format_error(str(e))
+        
+    async def ping(self):
+        return "Pong! 🏓"
+        
+    async def version(self):
+        return f"Trading Bot v1.0.0"
+        
+    async def get_stats(self):
+        try:
+            stats = await self.trading_bot.get_trading_stats()
+            return self._format_stats_response(stats)
+        except Exception as e:
+            return self._format_error(str(e))

@@ -26,7 +26,7 @@ class Position:
         self.metrics = PositionMetrics(self)
         self.stops = PositionStops(self)
 
-    def update_metrics(self, current_price: float) -> None:
+    async def update_metrics(self, current_price: float) -> None:
         """Update position metrics"""
         try:
             # Update high/low prices
@@ -34,7 +34,7 @@ class Position:
             self.lowest_price = min(self.lowest_price, current_price)
             
             # Update metrics
-            self.metrics.update({
+            await self.metrics.update({
                 'max_profit_pct': ((self.highest_price - self.entry_price) / self.entry_price) * 100,
                 'max_drawdown_pct': ((self.lowest_price - self.entry_price) / self.entry_price) * 100,
                 'days_held': (datetime.now() - self.entry_time).days,
@@ -42,7 +42,7 @@ class Position:
             })
             
         except Exception as e:
-            self.trading_bot.log(f"Error updating position metrics: {str(e)}", level="error")
+            await self.trading_bot.log(f"Error updating position metrics: {str(e)}", level="error")
 
     def record_exit(self, exit_price: float, exit_quantity: float, reason: str) -> None:
         """Record a full or partial exit"""
