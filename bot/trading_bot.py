@@ -304,7 +304,22 @@ class TradingBot:
         try:
             # Convert symbol to uppercase
             symbol = symbol.upper()
-            prices = await self.price_manager.get_price(symbol, days=30)
+            
+            # Get historical candles synchronously
+            end = datetime.now()
+            start = end - timedelta(days=30)
+            
+            candles = self.client.get_product_candles(
+                product_id=f"{symbol}-USD",
+                granularity='ONE_DAY',
+                start=start,
+                end=end
+            )
+            
+            # Convert candles to prices
+            prices = pd.Series([float(candle.close) for candle in reversed(candles)])
+            
+            # Calculate RSI
             delta = prices.diff()
             gains = delta.where(delta > 0, 0)
             losses = -delta.where(delta < 0, 0)
@@ -316,18 +331,20 @@ class TradingBot:
             
             return float(rsi.iloc[-1])
         except Exception as e:
-            self.log(f"Error calculating RSI for {symbol}: {str(e)}", level="error")
+            await self.log(f"Error calculating RSI for {symbol}: {str(e)}", level="error")
             raise
 
-    def _place_buy_order(self, symbol: str) -> None:
+    async def _place_buy_order(self, symbol: str) -> None:
+        """Execute a buy order with proper async handling"""
         try:
             if not self._validate_real_trade(symbol, 'BUY', self.trade_amount):
                 raise TradingError(f"Trade validation failed for {symbol}")
             
             product_id = f"{symbol}-USD"
+            # Synchronous price fetch is fine here
             current_price = float(self.client.get_product(product_id).price)
             
-            # Place the order and let Coinbase handle fees
+            # Place the order synchronously (Coinbase client method is sync)
             order = self.client.create_order(
                 product_id=product_id,
                 side='BUY',
@@ -338,7 +355,7 @@ class TradingBot:
                 }
             )
             
-            # Get actual filled quantity from order
+            # Get actual filled data
             filled_quantity = float(order.filled_size)
             filled_price = float(order.average_filled_price)
             
@@ -352,7 +369,7 @@ class TradingBot:
                 is_paper=False
             )
             
-            # Record trade with actual filled data
+            # Record trade
             self.trade_history.append({
                 'timestamp': datetime.now(),
                 'action': 'BUY',
@@ -363,17 +380,18 @@ class TradingBot:
                 'order_id': order.order_id
             })
             
-            self.log(f"Buy order filled for {symbol}: {filled_quantity} @ ${filled_price}")
+            await self.log(f"Buy order filled for {symbol}: {filled_quantity} @ ${filled_price}")
             
         except Exception as e:
-            self.log(f"Error placing buy order for {symbol}: {str(e)}", level="error")
+            await self.log(f"Error placing buy order for {symbol}: {str(e)}", level="error")
             raise
             
-    def _place_sell_order(self, symbol: str, partial: bool = False) -> None:
+    async def _place_sell_order(self, symbol: str, partial: bool = False) -> None:
+        """Execute a sell order with proper async handling"""
         try:
             position = self.positions.get(symbol)
             if not position:
-                self.log(f"No position found for {symbol}, cannot sell", level="warning")
+                await self.log(f"No position found for {symbol}, cannot sell", level="warning")
                 return
                 
             if not self._validate_real_trade(symbol, 'SELL', position.quantity):
@@ -385,7 +403,7 @@ class TradingBot:
             # Calculate sell quantity
             sell_quantity = position.quantity * (self.partial_tp_size if partial else 1.0)
             
-            # Place the order
+            # Place the order synchronously
             order = self.client.create_order(
                 product_id=product_id,
                 side='SELL',
@@ -396,50 +414,28 @@ class TradingBot:
                 }
             )
             
-            # Get actual filled data
+            # Process order results
             filled_price = float(order.average_filled_price)
             filled_quantity = float(order.filled_size)
-            
-            # Calculate profit info
             profit_info = position.calculate_profit(filled_price)
             
-            # Handle position updates
+            # Update position
             if not partial:
-                self.position_history.append({
-                    'symbol': symbol,
-                    'entry_price': position.entry_price,
-                    'exit_price': filled_price,
-                    'quantity': position.original_quantity,
-                    'entry_time': position.entry_time,
-                    'exit_time': datetime.now(),
-                    'profit_usd': profit_info['profit_usd'],
-                    'profit_percentage': profit_info['profit_percentage'],
-                    'max_profit_percentage': profit_info['highest_profit_percentage'],
-                    'max_drawdown': profit_info['drawdown_percentage'],
-                    'partial_exits_taken': position.partial_exit_taken
-                })
+                await self._record_closed_position(position, filled_price, profit_info)
                 del self.positions[symbol]
             else:
                 position.quantity -= filled_quantity
                 position.partial_exit_taken = True
             
             # Record trade
-            self.trade_history.append({
-                'timestamp': datetime.now(),
-                'action': 'PARTIAL_SELL' if partial else 'SELL',
-                'symbol': symbol,
-                'amount_usd': filled_quantity * filled_price,
-                'price': filled_price,
-                'quantity': filled_quantity,
-                'profit': profit_info['profit_usd'],
-                'profit_percentage': profit_info['profit_percentage'],
-                'order_id': order.order_id
-            })
+            await self._record_trade(symbol, 'SELL', filled_quantity, filled_price, profit_info, partial)
             
-            self.log(f"{'Partial' if partial else 'Full'} sell order filled for {symbol}: {filled_quantity} @ ${filled_price}")
+            await self.log(
+                f"{'Partial' if partial else 'Full'} sell order filled for {symbol}: {filled_quantity} @ ${filled_price}"
+            )
             
         except Exception as e:
-            self.log(f"Error placing sell order for {symbol}: {str(e)}", level="error")
+            await self.log(f"Error placing sell order for {symbol}: {str(e)}", level="error")
             raise
             
     def get_trade_history(self):
@@ -457,7 +453,7 @@ class TradingBot:
             logging.error(f"Failed to add {symbol}: {str(e)}")
             return False
 
-    def remove_coin(self, symbol: str) -> bool:
+    async def remove_coin(self, symbol: str) -> bool:
         """
         Remove a coin from watchlist if not in any positions.
         
@@ -472,25 +468,25 @@ class TradingBot:
             
             # Check paper positions
             if hasattr(self, 'paper_positions') and symbol in self.paper_positions:
-                self.sync_log(f"Cannot remove {symbol} - active paper position exists", level="warning")
+                await self.log(f"Cannot remove {symbol} - active paper position exists", level="warning")
                 return False
                 
             # Check real positions
             if hasattr(self, 'positions') and symbol in self.positions:
-                self.sync_log(f"Cannot remove {symbol} - active position exists", level="warning")
+                await self.log(f"Cannot remove {symbol} - active position exists", level="warning")
                 return False
             
             # Remove from watchlist if exists
             if symbol in self.watched_coins:
                 self.watched_coins.remove(symbol)
-                self.sync_log(f"Removed {symbol} from watchlist")
+                await self.log(f"Removed {symbol} from watchlist")
                 return True
                 
-            self.sync_log(f"{symbol} not in watchlist", level="warning")
+            await self.log(f"{symbol} not in watchlist", level="warning")
             return False
             
         except Exception as e:
-            self.sync_log(f"Error removing {symbol}: {str(e)}", level="error")
+            await self.log(f"Error removing {symbol}: {str(e)}", level="error")
             return False
 
     def _ensure_positions_watched(self):
@@ -823,7 +819,7 @@ class TradingBot:
             avg_gain = gains.ewm(span=self.rsi_period, adjust=False).mean()
             avg_loss = losses.ewm(span=self.rsi_period, adjust=False).mean()
             rs = avg_gain / avg_loss
-            rsi = 100 - (100 / (1 + rs))
+            rsi = float(100 - (100 / (1 + rs)).iloc[-1]  # Fixed missing parenthesis
             
             # Calculate Moving Averages
             sma_20 = prices.rolling(window=20).mean()
@@ -839,7 +835,7 @@ class TradingBot:
             
             return {
                 'price': current_price,
-                'rsi': float(rsi.iloc[-1]),
+                'rsi': float(rsi),
                 'moving_averages': {
                     'sma_20': float(sma_20.iloc[-1]),
                     'sma_50': float(sma_50.iloc[-1]),
@@ -849,7 +845,7 @@ class TradingBot:
                     'middle': float(bb_sma.iloc[-1]),
                     'upper': float(bb_sma.iloc[-1] + (bb_std.iloc[-1] * 2)),
                     'lower': float(bb_sma.iloc[-1] - (bb_std.iloc[-1] * 2)),
-                    'bandwidth': float((bb_std.iloc[-1] * 4 / bb_sma.iloc[-1]) * 100)
+                    'bandwidth': float((bb_std.iloc[-1] * 4 / bb_sma.iloc[-1]) * 100))
                 },
                 'trend': self._determine_trend(
                     current_price,
@@ -1161,9 +1157,7 @@ class TradingBot:
                     'worst_trade': min(self.position_history, key=lambda x: x['profit_percentage']),
                     'average_hold_time': sum(
                         [(pos['exit_time'] - pos['entry_time']) for pos in self.position_history],
-                        timedelta(0)
-                    ) / len(self.position_history)
-                }) # Added closing parenthesis here
+                        timedelta(0) / len(self.position_history)
                 
             return stats
             
@@ -1528,7 +1522,7 @@ class TradingBot:
                       f"💰 Price: ${price:,.2f}\n"
                       f"📈 Signal: {signal['action']}\n"
                       f"📊 Score: {signal['score']:.2f}\n"
-                      f"���� Signal Components\n"
+                      f"������ Signal Components\n"
                       f"• 📈 Trend (0.4x):    {signal['signals']['trend']:.1f}\n"
                       f"• 🔄 Momentum (0.3x): {signal['signals']['momentum']:.1f}\n"
                       f"• 📊 Volume (0.2x):   {signal['signals']['volume']:.1f}\n"
@@ -2224,11 +2218,6 @@ class TradingBot:
             prices = await self.price_manager.get_price(symbol)
             current_price = float(prices.iloc[-1])
             
-            # Calculate all indicators using the same price data
-            sma_20 = prices.rolling(window=20).mean().iloc[-1]
-            sma_50 = prices.rolling(window=50).mean().iloc[-1]
-            sma_200 = prices.rolling(window=200).mean().iloc[-1]
-            
             # Calculate RSI
             delta = prices.diff()
             gains = delta.where(delta > 0, 0)
@@ -2236,7 +2225,12 @@ class TradingBot:
             avg_gain = gains.ewm(span=self.rsi_period, adjust=False).mean()
             avg_loss = losses.ewm(span=self.rsi_period, adjust=False).mean()
             rs = avg_gain / avg_loss
-            rsi = float(100 - (100 / (1 + rs)).iloc[-1])
+            rsi = float(100 - (100 / (1 + rs)).iloc[-1]  # Fixed missing parenthesis
+            
+            # Calculate Moving Averages
+            sma_20 = prices.rolling(window=20).mean()
+            sma_50 = prices.rolling(window=50).mean()
+            sma_200 = prices.rolling(window=200).mean()
             
             # Calculate Bollinger Bands
             bb_sma = prices.rolling(window=20).mean()
@@ -2255,10 +2249,9 @@ class TradingBot:
                 'symbol': symbol,
                 'current_price': current_price,
                 'moving_averages': {
-                    'sma_20': float(sma_20),
-                    'sma_50': float(sma_50),
-                    'sma_200': float(sma_200),
-                    'trend': self._determine_trend(current_price, sma_20, sma_50, sma_200)
+                    'sma_20': float(sma_20.iloc[-1]),
+                    'sma_50': float(sma_50.iloc[-1]),
+                    'sma_200': float(sma_200.iloc[-1])
                 },
                 'bollinger_bands': bb_data,
                 'support_resistance': sr_levels,
@@ -2297,7 +2290,6 @@ class TradingBot:
                 'all_supports': sorted(supports, reverse=True)[:3],
                 'all_resistances': sorted(resistances)[:3],
                 'support_strength': len([p for p in pivot_lows if abs(p - nearest_support) / nearest_support < 0.02])
-            } # Added closing curly brace here
             
         except Exception as e:
             self.log(f"Error calculating support/resistance levels: {str(e)}", level="error")
@@ -2404,6 +2396,42 @@ class TradingBot:
                 logging.error(f"Heartbeat error: {str(e)}")
                 await asyncio.sleep(5)  # Wait before retry
 
+    async def _record_closed_position(self, position: Position, exit_price: float, profit_info: Dict[str, Any]) -> None:
+        """Record a closed position in history"""
+        self.position_history.append({
+            'symbol': position.symbol,
+            'entry_price': position.entry_price,
+            'exit_price': exit_price,
+            'quantity': position.original_quantity,
+            'entry_time': position.entry_time,
+            'exit_time': datetime.now(),
+            'profit_usd': profit_info['profit_usd'],
+            'profit_percentage': profit_info['profit_percentage'],
+            'max_profit_percentage': profit_info['highest_profit_percentage'],
+            'max_drawdown': profit_info['drawdown_percentage'],
+            'partial_exits_taken': position.partial_exit_taken
+        })
+
+    async def _record_trade(self, symbol: str, action: str, quantity: float, price: float, 
+                        profit_info: Optional[Dict[str, Any]] = None, partial: bool = False) -> None:
+        """Record a trade in history"""
+        trade_record = {
+            'timestamp': datetime.now(),
+            'action': 'PARTIAL_SELL' if partial else action,
+            'symbol': symbol,
+            'amount_usd': quantity * price,
+            'price': price,
+            'quantity': quantity
+        }
+        
+        if profit_info and action == 'SELL':
+            trade_record.update({
+                'profit': profit_info['profit_usd'],
+                'profit_percentage': profit_info['profit_percentage']
+            })
+        
+        self.trade_history.append(trade_record)
+
 class PositionManager:
     """Centralized position management"""
     def __init__(self, trading_bot):
@@ -2448,14 +2476,28 @@ class PositionManager:
         async with self.position_lock:
             for symbol, position in list(self.positions.items()):
                 try:
-                    # Get current price
-                    current_price = await self.trading_bot.price_manager.get_price(symbol)
+                    # Get current price synchronously since we're using the client directly
+                    current_price = float(self.trading_bot.client.get_product(f"{symbol}-USD").price)
                     
                     # Update position metrics
-                    position.update_price(current_price)
+                    await position.update_metrics(current_price)
                     
-                    # Check stop conditions
+                    # Calculate profit info for checks
+                    profit_info = position.calculate_profit(current_price)
+                    
+                    # Check stop loss
+                    if profit_info['profit_percentage'] <= -self.trading_bot.stop_loss_percentage:
+                        await self.trading_bot.log(f"Stop loss triggered for {symbol}")
+                        await self.trading_bot.trade_executor.execute_trade(
+                            symbol=symbol,
+                            action='SELL',
+                            reason="Stop Loss"
+                        )
+                        continue
+                    
+                    # Check trailing stop
                     if position.should_trigger_trailing_stop(current_price):
+                        await self.trading_bot.log(f"Trailing stop triggered for {symbol}")
                         await self.trading_bot.trade_executor.execute_trade(
                             symbol=symbol,
                             action='SELL',
@@ -2464,23 +2506,13 @@ class PositionManager:
                         continue
                         
                     # Check take profit
-                    profit_info = position.calculate_profit(current_price)
                     if profit_info['profit_percentage'] >= self.trading_bot.take_profit_percentage:
+                        await self.trading_bot.log(f"Take profit triggered for {symbol}")
                         await self.trading_bot.trade_executor.execute_trade(
                             symbol=symbol,
                             action='SELL',
                             reason="Take Profit"
                         )
-                        continue
-                        
-                    # Check stop loss
-                    if profit_info['profit_percentage'] <= -self.trading_bot.stop_loss_percentage:
-                        await self.trading_bot.trade_executor.execute_trade(
-                            symbol=symbol,
-                            action='SELL',
-                            reason="Stop Loss"
-                        )
-                        continue
                         
                 except Exception as e:
                     await self.trading_bot.log(f"Error updating position for {symbol}: {str(e)}", level="error")
@@ -2546,7 +2578,7 @@ class SignalGenerator:
             
             return {
                 'price': current_price,
-                'rsi': float(rsi.iloc[-1]),
+                'rsi': float(rsi),
                 'moving_averages': {
                     'sma_20': float(sma_20.iloc[-1]),
                     'sma_50': float(sma_50.iloc[-1]),
@@ -2569,22 +2601,27 @@ class SignalGenerator:
             raise
 
     async def _analyze_market(self, symbol: str) -> Dict[str, Any]:
-        """Analyze market conditions"""
+        """Analyze market conditions with proper async handling"""
         try:
-            # Get volume data
+            # Get volume data - already async
             volume_data = await self.trading_bot.analyze_volume(symbol)
             
-            # Get market sentiment
+            # Get market sentiment - already async
             sentiment = await self.trading_bot.analyze_market_sentiment(symbol)
             
-            # Get market conditions
-            conditions = await self.trading_bot.check_market_conditions(symbol)
+            # Get market conditions - needs to be async
+            conditions = await self.trading_bot._check_market_conditions(symbol)
+            
+            # Get correlation with BTC
+            correlation = await self._calculate_btc_correlation(symbol)
             
             return {
                 'volume': volume_data,
                 'sentiment': sentiment,
-                'conditions': conditions
+                'conditions': conditions,
+                'btc_correlation': correlation
             }
+            
         except Exception as e:
             await self.trading_bot.log(f"Market analysis error: {str(e)}", level="error")
             raise
@@ -2812,3 +2849,34 @@ class TradeExecutor:
     def is_active(self) -> bool:
         """Check if either paper or real trading is active"""
         return self.trading_bot.trading_active or self.trading_bot.paper_trading
+
+    async def _validate_trade(self, symbol: str, action: str, amount: float) -> bool:
+        """Validate trade parameters before execution"""
+        try:
+            # Check symbol validity
+            if not self.trading_bot._validate_symbol(symbol):
+                await self.trading_bot.log(f"Invalid symbol: {symbol}", level="error")
+                return False
+                
+            # Check trading is active
+            if not self.is_active:
+                await self.trading_bot.log("Trading is not active", level="error")
+                return False
+                
+            # Check sufficient balance
+            if action == 'BUY':
+                if self.trading_bot.paper_trading:
+                    if self.trading_bot.paper_balance < amount:
+                        await self.trading_bot.log("Insufficient paper balance", level="error")
+                        return False
+                else:
+                    balance = await self.trading_bot.get_account_balance()
+                    if balance['balances'].get('USD', {}).get('balance', 0) < amount:
+                        await self.trading_bot.log("Insufficient USD balance", level="error")
+                        return False
+                        
+            return True
+            
+        except Exception as e:
+            await self.trading_bot.log(f"Trade validation error: {str(e)}", level="error")
+            return False

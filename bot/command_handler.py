@@ -278,7 +278,7 @@ class CommandHandler:
                         product = bot.client.get_product(f"{coin}-USD")
                         current_price = float(product.price)
                         
-                        # Use existing RSI calculation
+                        # Calculate RSI using existing method
                         rsi = await bot.calculate_rsi(coin)
                         
                         status += f"\n  {coin}: ${current_price:,.2f} (RSI: {rsi:.1f})"
