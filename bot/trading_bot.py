@@ -117,6 +117,14 @@ class PriceManager:
         prices = await self.get_price(symbol, days=days)
         return prices[(prices.index >= start) & (prices.index <= end)]
 
+    def _get_cached_price_data(self, symbol: str, days: int = 30) -> pd.Series:
+        """Get cached price data for calculations"""
+        try:
+            return self.price_manager.get_cached_price_data(symbol, days=days)
+        except Exception as e:
+            self.log(f"Error getting cached price data: {str(e)}", level="error")
+            raise
+
 class TradingConfig:
     def __init__(self) -> None:
         self.load_from_env()
@@ -1053,59 +1061,23 @@ class TradingBot:
     def calculate_moving_averages(self, symbol: str) -> Dict[str, Any]:
         """Calculate moving averages with comprehensive data"""
         try:
-            # Get enough historical data for calculations
-            end = datetime.now()
-            start = end - timedelta(days=250)  # Need enough data for 200MA
-            
-            # Get candles with OHLCV data
-            response = self.client.get_candles(
-                product_id=f"{symbol}-USD",
-                start=int(start.timestamp()),
-                end=int(end.timestamp()),
-                granularity="ONE_DAY"
-            )
-            
-            # Convert candles to pandas Series
-            prices = pd.Series(
-                [float(candle.close) for candle in reversed(response.candles)],
-                index=[datetime.fromtimestamp(float(candle.start)) for candle in reversed(response.candles)])
+            # Get price data using price manager
+            prices = self.price_manager.get_cached_price_data(symbol, days=250)
+            current_price = float(prices.iloc[-1])
             
             # Calculate moving averages
-            sma_20 = prices.rolling(window=20).mean()
-            sma_50 = prices.rolling(window=50).mean()
-            sma_200 = prices.rolling(window=200).mean()
-            ema_12 = prices.ewm(span=12, adjust=False).mean()
-            ema_26 = prices.ewm(span=26, adjust=False).mean()
-            
-            # Get latest values
-            current_price = prices.iloc[-1]
-            
-            # Store recent candles for trend analysis
-            recent_candles = [
-                {
-                    'open': float(candle.open),
-                    'high': float(candle.high),
-                    'low': float(candle.low),
-                    'close': float(candle.close),
-                    'volume': float(candle.volume)
-                }
-                for candle in response.candles[-10:]  # Keep last 10 candles
-            ]
+            sma_20 = prices.rolling(window=20).mean().iloc[-1]
+            sma_50 = prices.rolling(window=50).mean().iloc[-1]
+            sma_200 = prices.rolling(window=200).mean().iloc[-1]
             
             return {
+                'symbol': symbol,
                 'current_price': current_price,
-                'sma_20': sma_20.iloc[-1],
-                'sma_50': sma_50.iloc[-1],
-                'sma_200': sma_200.iloc[-1],
-                'ema_12': ema_12.iloc[-1],
-                'ema_26': ema_26.iloc[-1],
-                'candles': recent_candles,
-                'trend': self._determine_trend(current_price, 
-                                             sma_20.iloc[-1],
-                                             sma_50.iloc[-1],
-                                             sma_200.iloc[-1])
+                'sma_20': float(sma_20),
+                'sma_50': float(sma_50),
+                'sma_200': float(sma_200),
+                'trend': self._determine_trend(current_price, sma_20, sma_50, sma_200)
             }
-            
         except Exception as e:
             self.log(f"Error calculating MAs for {symbol}: {str(e)}", level="error")
             raise
@@ -1863,7 +1835,7 @@ class TradingBot:
                 'bandwidth': float((current_std * 4 / current_sma) * 100)
             }
         except Exception as e:
-            self.log(f"Error calculating Bollinger Bands for {symbol}: {str(e)}", level="error")
+            self.log(f"Error calculating Bollinger Bands: {str(e)}", level="error")
             raise
 
     def _find_support_resistance(self, symbol: str) -> Dict[str, float]:
@@ -2413,6 +2385,49 @@ class TradingBot:
             })
         
         self.trade_history.append(trade_record)
+
+    def _get_historical_prices(self, symbol: str, start: datetime, end: datetime) -> pd.Series:
+        """Get historical price data for analysis"""
+        try:
+            days = (end - start).days + 1
+            return self.price_manager.get_cached_price_data(symbol, days=days)
+        except Exception as e:
+            self.log(f"Error getting historical prices: {str(e)}", level="error")
+            raise
+
+    async def check_market_conditions(self, symbol: str) -> Dict[str, Any]:
+        """Check comprehensive market conditions"""
+        try:
+            # Get price data
+            end = datetime.now()
+            start = end - timedelta(days=7)
+            prices = self._get_historical_prices(symbol, start, end)
+            
+            # Calculate volatility
+            price_range = ((prices.max() - prices.min()) / prices.min()) * 100
+            is_volatile = price_range > 10
+            
+            # Check trading hours
+            current_hour = datetime.now().hour
+            is_high_activity = 13 <= current_hour <= 21  # 9 AM - 5 PM EST
+            
+            # Get market alignment
+            btc_correlation = await self._calculate_btc_correlation(symbol) if symbol != 'BTC' else 1.0
+            
+            return {
+                'is_volatile': is_volatile,
+                'price_range_7d': price_range,
+                'is_high_activity': is_high_activity,
+                'market_aligned': btc_correlation > 0.5,
+                'suitable_for_trading': (
+                    not is_volatile and
+                    is_high_activity and
+                    btc_correlation > 0.5
+                )
+            }
+        except Exception as e:
+            self.log(f"Error checking market conditions: {str(e)}", level="error")
+            raise
 
 class PositionManager:
     """Centralized position management"""
