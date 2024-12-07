@@ -160,9 +160,17 @@ class CommandHandler:
         return "\n".join(results)
         
     async def get_rsi(self, symbol: str):
+        """Get RSI value for a symbol using the proven method from status"""
         try:
+            symbol = symbol.upper()
+            # Use the same method that works in status
+            product = self.trading_bot.client.get_product(f"{symbol}-USD")
+            current_price = float(product.price)
             rsi = await self.trading_bot.calculate_rsi(symbol)
-            return f"Current RSI for {symbol}: {rsi:.2f}"
+            
+            return f"Analysis for {symbol}:\n```" \
+                   f"Current Price: ${current_price:,.2f}\n" \
+                   f"RSI: {rsi:.2f}```"
         except Exception as e:
             return self._format_error(str(e))
             
@@ -387,22 +395,32 @@ class CommandHandler:
             return self._format_error(str(e))
         
     async def get_volume_analysis(self, symbol: str):
+        """Get volume analysis using synchronous client methods"""
         try:
             symbol = symbol.upper()
-            analysis = await self.trading_bot.analyze_volume(symbol)
+            end = datetime.now()
+            start = end - timedelta(days=90)
             
-            response = f"Volume Analysis for {symbol}:\n```"
-            response += f"Current Volume: {analysis['current_volume']:,.2f}\n"
-            response += f"Average Volume: {analysis['average_volume']:,.2f}\n"
-            response += f"Volume Ratio: {analysis['volume_ratio']:.2f}x average\n"
-            response += f"Price Change: {analysis['price_change']:+.2f}%\n"
-            response += f"Trend Strength: {analysis['trend_strength'].title()}\n"
-            response += f"Confirms Trend: {'Yes' if analysis['confirms_trend'] else 'No'}"
-            response += "```"
-            return response
+            # Use synchronous client method
+            response = self.trading_bot.client.get_candles(
+                product_id=f"{symbol}-USD",
+                start=int(start.timestamp()),
+                end=int(end.timestamp()),
+                granularity="ONE_DAY"
+            )
             
+            # Process the data
+            volumes = [float(candle.volume) for candle in response.candles]
+            current_volume = volumes[0]
+            avg_volume = sum(volumes) / len(volumes)
+            volume_ratio = current_volume / avg_volume
+            
+            return f"Volume Analysis for {symbol}:\n```" \
+                   f"Current Volume: {current_volume:,.2f}\n" \
+                   f"Average Volume: {avg_volume:,.2f}\n" \
+                   f"Volume Ratio: {volume_ratio:.2f}x average```"
         except Exception as e:
-            return f"Error analyzing volume for {symbol}: {str(e)}"
+            return self._format_error(str(e))
         
     def get_positions(self):
         """Show both real and paper positions"""
@@ -513,9 +531,18 @@ class CommandHandler:
             return self._format_error(str(e))
         
     async def get_sentiment_analysis(self, symbol: str):
+        """Get sentiment analysis with proper formatting"""
         try:
+            symbol = symbol.upper()
             analysis = await self.trading_bot.analyze_market_sentiment(symbol)
-            return self._format_sentiment_response(analysis)
+            
+            return f"Sentiment Analysis for {symbol}:\n```" \
+                   f"Overall: {analysis['overall_sentiment']}\n" \
+                   f"Score: {analysis['sentiment_score']:+.2f}\n\n" \
+                   f"Momentum:\n" \
+                   f"• Short-term:  {analysis['momentum']['short_term']}\n" \
+                   f"• Medium-term: {analysis['momentum']['medium_term']}\n" \
+                   f"• Long-term:   {analysis['momentum']['long_term']}```"
         except Exception as e:
             return self._format_error(str(e))
         
