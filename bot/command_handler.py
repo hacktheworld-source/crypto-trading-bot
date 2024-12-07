@@ -920,7 +920,7 @@ class CommandHandler:
                    f"  • Current Price: ${current_price:,.2f}\n" \
                    f"  • Position: {position_status} ({price_position:.1f}%)\n" \
                    f"  • Bandwidth: {bb_data['bandwidth']:.1f}%"
-```        except Exception as e:
+        except Exception as e:
             return self._format_error(str(e))
         
     async def get_market_conditions(self, symbol: str):
