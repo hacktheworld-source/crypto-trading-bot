@@ -221,8 +221,7 @@ class TradingBot:
             
         except Exception as e:
             logging.error(f"Failed to initialize trading bot: {str(e)}")
-            raise Exception(f"Bot initialization failed: {str(e)}")
-        
+            raise Exception(f"Bot initialization failed: {str(e)}")        
     async def start_trading_loop(self, paper: bool = True) -> str:
         """Start the trading loop in either paper or real mode"""
         try:
