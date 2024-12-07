@@ -57,7 +57,9 @@ class CommandHandler:
             'help': self.get_help,
             'ping': self.ping,
             'version': self.version,
-            'stats': self.get_stats
+            'stats': self.get_stats,
+            'bb': self.get_bb_analysis,
+            'conditions': self.get_market_conditions
         }
     
     async def handle_command(self, command: str, *args) -> str:
@@ -160,17 +162,23 @@ class CommandHandler:
         return "\n".join(results)
         
     async def get_rsi(self, symbol: str):
-        """Get RSI value for a symbol using the proven method from status"""
+        """Get RSI value for a symbol with interpretation"""
         try:
             symbol = symbol.upper()
-            # Use the same method that works in status
             product = self.trading_bot.client.get_product(f"{symbol}-USD")
             current_price = float(product.price)
             rsi = await self.trading_bot.calculate_rsi(symbol)
             
+            # Add RSI interpretation
+            rsi_status = "Overbought" if rsi > 70 else \
+                        "Oversold" if rsi < 30 else \
+                        "Neutral"
+            
             return f"Analysis for {symbol}:\n```" \
-                   f"Current Price: ${current_price:,.2f}\n" \
-                   f"RSI: {rsi:.2f}```"
+                   f"📊 Technical Analysis:\n" \
+                   f"  • Price: ${current_price:,.2f}\n" \
+                   f"  • RSI: {rsi:.2f} ({rsi_status})\n" \
+                   f"  • Threshold: {self.trading_bot.rsi_oversold} / {self.trading_bot.rsi_overbought}```"
         except Exception as e:
             return self._format_error(str(e))
             
@@ -358,10 +366,12 @@ class CommandHandler:
         
         help_text += "\n\nAnalysis Commands:"
         help_text += "\n!price BTC     - Get current price"
-        help_text += "\n!rsi BTC       - Get current RSI"
+        help_text += "\n!rsi BTC       - Get RSI with interpretation"
         help_text += "\n!ma BTC        - Get Moving Average analysis"
+        help_text += "\n!bb BTC        - Get Bollinger Bands analysis"
         help_text += "\n!volume BTC    - Get volume analysis"
         help_text += "\n!sentiment BTC - Get market sentiment analysis"
+        help_text += "\n!conditions BTC - Get market conditions analysis"
         
         help_text += "\n\nCoin Management:"
         help_text += "\n!addcoin BTC   - Add a coin to watchlist"
@@ -395,13 +405,12 @@ class CommandHandler:
             return self._format_error(str(e))
         
     async def get_volume_analysis(self, symbol: str):
-        """Get volume analysis using synchronous client methods"""
+        """Get volume analysis with trend interpretation"""
         try:
             symbol = symbol.upper()
             end = datetime.now()
             start = end - timedelta(days=90)
             
-            # Use synchronous client method
             response = self.trading_bot.client.get_candles(
                 product_id=f"{symbol}-USD",
                 start=int(start.timestamp()),
@@ -409,16 +418,23 @@ class CommandHandler:
                 granularity="ONE_DAY"
             )
             
-            # Process the data
             volumes = [float(candle.volume) for candle in response.candles]
             current_volume = volumes[0]
             avg_volume = sum(volumes) / len(volumes)
             volume_ratio = current_volume / avg_volume
             
-            return f"Volume Analysis for {symbol}:\n```" \
-                   f"Current Volume: {current_volume:,.2f}\n" \
-                   f"Average Volume: {avg_volume:,.2f}\n" \
-                   f"Volume Ratio: {volume_ratio:.2f}x average```"
+            # Add volume trend interpretation
+            trend = "High" if volume_ratio > 1.5 else \
+                   "Above Average" if volume_ratio > 1.0 else \
+                   "Below Average" if volume_ratio > 0.5 else \
+                   "Low"
+            
+            return f"Volume Analysis for {symbol}:\n" \
+                   f"```📈 24h Volume Metrics:\n" \
+                   f"  • Current: {current_volume:,.2f} {symbol}\n" \
+                   f"  • Average: {avg_volume:,.2f} {symbol}\n" \
+                   f"  • Ratio: {volume_ratio:.2f}x average\n" \
+                   f"  • Volume Trend: {trend}```"
         except Exception as e:
             return self._format_error(str(e))
         
@@ -486,10 +502,30 @@ class CommandHandler:
         return response
         
     async def get_ma_analysis(self, symbol: str):
+        """Get comprehensive moving average analysis"""
         try:
             symbol = symbol.upper()
-            analysis = await self.trading_bot.calculate_moving_averages(symbol)
-            return self._format_ma_response(analysis)
+            product = self.trading_bot.client.get_product(f"{symbol}-USD")
+            current_price = float(product.price)
+            
+            # Get MA data
+            ma_data = await self.trading_bot.calculate_moving_averages(symbol)
+            
+            # Determine trend strength
+            trend = ma_data['trend']
+            trend_emoji = "🟢" if "Uptrend" in trend else "🔴" if "Downtrend" in trend else "⚪"
+            
+            return f"Moving Average Analysis for {symbol}:\n```" \
+                   f"📊 Price Analysis:\n" \
+                   f"  • Current Price: ${current_price:,.2f}\n" \
+                   f"  • SMA 20: ${ma_data['sma_20']:,.2f}\n" \
+                   f"  • SMA 50: ${ma_data['sma_50']:,.2f}\n" \
+                   f"  • SMA 200: ${ma_data['sma_200']:,.2f}\n\n" \
+                   f"📈 Trend Analysis:\n" \
+                   f"  • Status: {trend_emoji} {trend}\n" \
+                   f"  • Above 20 MA: {'Yes ✅' if current_price > ma_data['sma_20'] else 'No ❌'}\n" \
+                   f"  • Above 50 MA: {'Yes ✅' if current_price > ma_data['sma_50'] else 'No ❌'}\n" \
+                   f"  • Above 200 MA: {'Yes ✅' if current_price > ma_data['sma_200'] else 'No ❌'}```"
         except Exception as e:
             return self._format_error(str(e))
         
@@ -531,18 +567,30 @@ class CommandHandler:
             return self._format_error(str(e))
         
     async def get_sentiment_analysis(self, symbol: str):
-        """Get sentiment analysis with proper formatting"""
+        """Get sentiment analysis with detailed interpretation"""
         try:
             symbol = symbol.upper()
             analysis = await self.trading_bot.analyze_market_sentiment(symbol)
             
+            # Add sentiment strength interpretation
+            strength = "Strong" if abs(analysis['sentiment_score']) > 7 else \
+                      "Moderate" if abs(analysis['sentiment_score']) > 3 else \
+                      "Weak"
+            
+            # Add directional emojis
+            up_arrow, down_arrow = "↗️", "↘️"
+            short_arrow = up_arrow if analysis['momentum']['short_term'] == 'bullish' else down_arrow
+            mid_arrow = up_arrow if analysis['momentum']['medium_term'] == 'bullish' else down_arrow
+            long_arrow = up_arrow if analysis['momentum']['long_term'] == 'bullish' else down_arrow
+            
             return f"Sentiment Analysis for {symbol}:\n```" \
-                   f"Overall: {analysis['overall_sentiment']}\n" \
-                   f"Score: {analysis['sentiment_score']:+.2f}\n\n" \
-                   f"Momentum:\n" \
-                   f"• Short-term:  {analysis['momentum']['short_term']}\n" \
-                   f"• Medium-term: {analysis['momentum']['medium_term']}\n" \
-                   f"• Long-term:   {analysis['momentum']['long_term']}```"
+                   f"📊 Market Sentiment:\n" \
+                   f"  • Overall: {analysis['overall_sentiment']}\n" \
+                   f"  • Score: {analysis['sentiment_score']:+.2f} ({strength} {analysis['overall_sentiment']})\n\n" \
+                   f"📈 Momentum Analysis:\n" \
+                   f"  • Short-term:  {analysis['momentum']['short_term'].title()} {short_arrow}\n" \
+                   f"  • Medium-term: {analysis['momentum']['medium_term'].title()} {mid_arrow}\n" \
+                   f"  • Long-term:   {analysis['momentum']['long_term'].title()} {long_arrow}```"
         except Exception as e:
             return self._format_error(str(e))
         
@@ -853,3 +901,56 @@ class CommandHandler:
             str: Formatted success message with prefix
         """
         return f"{self.SUCCESS_PREFIX}{message}"
+        
+    async def get_bb_analysis(self, symbol: str):
+        """Get Bollinger Bands analysis"""
+        try:
+            symbol = symbol.upper()
+            product = self.trading_bot.client.get_product(f"{symbol}-USD")
+            current_price = float(product.price)
+            
+            bb_data = self.trading_bot.calculate_bollinger_bands(symbol)
+            
+            # Calculate price position
+            price_position = (current_price - bb_data['lower']) / (bb_data['upper'] - bb_data['lower']) * 100
+            position_status = "Overbought ⚠️" if price_position > 80 else \
+                             "Oversold 🔥" if price_position < 20 else \
+                             "Neutral ⚖️"
+            
+            # Detect squeeze
+            squeeze_status = "🔴 Squeeze Detected!" if bb_data['bandwidth'] < 10 else \
+                            "⚪ Normal Range"
+            
+            return f"Bollinger Bands Analysis for {symbol}:\n```" \
+                   f"📊 Band Levels:\n" \
+                   f"  • Upper Band: ${bb_data['upper']:,.2f}\n" \
+                   f"  • Middle Band: ${bb_data['middle']:,.2f}\n" \
+                   f"  • Lower Band: ${bb_data['lower']:,.2f}\n\n" \
+                   f"📈 Position Analysis:\n" \
+                   f"  • Current Price: ${current_price:,.2f}\n" \
+                   f"  • Position: {position_status} ({price_position:.1f}%)\n" \
+                   f"  • Bandwidth: {bb_data['bandwidth']:.1f}%\n" \
+                   f"  • Volatility: {squeeze_status}```"
+        except Exception as e:
+            return self._format_error(str(e))
+        
+    async def get_market_conditions(self, symbol: str):
+        """Get comprehensive market conditions analysis"""
+        try:
+            symbol = symbol.upper()
+            conditions = await self.trading_bot.check_market_conditions(symbol)
+            
+            # Get BTC correlation if not BTC
+            correlation = await self.trading_bot._calculate_btc_correlation(symbol) if symbol != 'BTC' else 1.0
+            
+            return f"Market Conditions Analysis for {symbol}:\n```" \
+                   f"📊 Trading Conditions:\n" \
+                   f"  • Volatility: {'High ⚠️' if conditions['is_volatile'] else 'Normal ✅'}\n" \
+                   f"  • Price Range (7d): {conditions['price_range_7d']:.1f}%\n" \
+                   f"  • Market Hours: {'Active 🟢' if conditions['is_high_activity'] else 'Quiet 🔴'}\n\n" \
+                   f"📈 Market Alignment:\n" \
+                   f"  • BTC Correlation: {correlation:.2f}\n" \
+                   f"  • Market Aligned: {'Yes ✅' if conditions['market_aligned'] else 'No ⚠️'}\n" \
+                   f"  • Suitable for Trading: {'Yes ✅' if conditions['suitable_for_trading'] else 'No ❌'}```"
+        except Exception as e:
+            return self._format_error(str(e))
