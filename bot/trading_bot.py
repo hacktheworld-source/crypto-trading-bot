@@ -120,7 +120,9 @@ class PriceManager:
     def _get_cached_price_data(self, symbol: str, days: int = 30) -> pd.Series:
         """Get cached price data for calculations"""
         try:
-            return self.price_manager.get_cached_price_data(symbol, days=days)
+            # Convert to async call since we're using the async price manager
+            loop = asyncio.get_event_loop()
+            return loop.run_until_complete(self.get_price(symbol, days=days))
         except Exception as e:
             self.log(f"Error getting cached price data: {str(e)}", level="error")
             raise
@@ -1821,7 +1823,7 @@ class TradingBot:
     def calculate_bollinger_bands(self, symbol: str) -> Dict[str, Any]:
         """Calculate Bollinger Bands using cached price data"""
         try:
-            prices = self._get_cached_price_data(symbol)
+            prices = self.price_manager.get_cached_price_data(symbol, days=20)
             sma = prices.rolling(window=20).mean()
             std = prices.rolling(window=20).std()
             
@@ -2244,7 +2246,6 @@ class TradingBot:
                 'all_supports': sorted(supports, reverse=True)[:3],
                 'all_resistances': sorted(resistances)[:3],
                 'support_strength': len([p for p in pivot_lows if abs(p - nearest_support) / nearest_support < 0.02])
-            }
         except Exception as e:
             self.log(f"Error calculating support/resistance levels: {str(e)}", level="error")
             raise
@@ -2401,7 +2402,7 @@ class TradingBot:
             # Get price data
             end = datetime.now()
             start = end - timedelta(days=7)
-            prices = self._get_historical_prices(symbol, start, end)
+            prices = self.price_manager.get_cached_price_data(symbol, days=7)
             
             # Calculate volatility
             price_range = ((prices.max() - prices.min()) / prices.min()) * 100
