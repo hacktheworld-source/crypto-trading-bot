@@ -1569,3 +1569,77 @@ class TradingBot:
         except Exception as e:
             await self.log(f"Error calculating correlation: {str(e)}", level="error")
             return 0.0
+
+    async def post_init(self) -> None:
+        """
+        Perform post-initialization tasks after Discord connection is established.
+        This includes loading saved configuration and initializing trading components.
+        """
+        try:
+            logging.info("Starting post-initialization...")
+            
+            # Load saved configuration
+            self.load_config()
+            
+            # Initialize watched coins set if empty
+            if not hasattr(self, 'watched_coins'):
+                self.watched_coins = set()
+            
+            # Add default coins to watch
+            default_coins = {'BTC', 'ETH'}
+            for coin in default_coins:
+                if await self.add_coin(coin):
+                    logging.info(f"Added default coin {coin} to watchlist")
+            
+            # Ensure all positions are in watchlist
+            self._ensure_positions_watched()
+            
+            # Test API connection
+            try:
+                await self.test_api_connection()
+                logging.info("API connection test successful")
+            except Exception as e:
+                logging.error(f"API connection test failed: {str(e)}")
+            
+            # Initialize price cache for watched coins
+            for symbol in self.watched_coins:
+                try:
+                    await self.price_manager.get_cached_price_data(symbol)
+                    logging.info(f"Initialized price cache for {symbol}")
+                except Exception as e:
+                    logging.error(f"Failed to initialize price cache for {symbol}: {str(e)}")
+            
+            # Start heartbeat task
+            asyncio.create_task(self._heartbeat())
+            
+            logging.info("Post-initialization completed successfully")
+            
+        except Exception as e:
+            error_msg = f"Post-initialization failed: {str(e)}"
+            logging.error(error_msg)
+            if hasattr(self, 'logs_channel'):
+                await self.send_notification(error_msg)
+            raise
+
+    async def _heartbeat(self) -> None:
+        """
+        Periodic heartbeat to check system health and maintain connections.
+        """
+        while True:
+            try:
+                # Check API connection
+                await self.test_api_connection()
+                
+                # Update price caches
+                for symbol in self.watched_coins:
+                    await self.price_manager.get_cached_price_data(symbol)
+                
+                # Log heartbeat
+                logging.debug("Heartbeat check completed successfully")
+                
+                # Wait for next interval
+                await asyncio.sleep(300)  # 5 minutes
+                
+            except Exception as e:
+                logging.error(f"Heartbeat check failed: {str(e)}")
+                await asyncio.sleep(60)  # Shorter retry interval on failure
