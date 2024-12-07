@@ -127,6 +127,28 @@ class PriceManager:
             self.log(f"Error getting cached price data: {str(e)}", level="error")
             raise
 
+    def get_cached_price_data(self, symbol: str, days: int = 30) -> pd.Series:
+        """
+        Get cached price data synchronously.
+        
+        Args:
+            symbol: The cryptocurrency symbol
+            days: Number of days of historical data
+            
+        Returns:
+            pd.Series: Price data series
+            
+        Raises:
+            TradingError: If data cannot be fetched
+        """
+        try:
+            # Convert async get_price to sync using event loop
+            loop = asyncio.get_event_loop()
+            return loop.run_until_complete(self.get_price(symbol, days=days))
+        except Exception as e:
+            self.log(f"Error getting cached price data: {str(e)}", level="error")
+            raise TradingError(f"Failed to get cached price data: {str(e)}", error_type='DATA')
+
 class TradingConfig:
     def __init__(self) -> None:
         self.load_from_env()
@@ -1113,7 +1135,6 @@ class TradingBot:
                     'average_hold_time': sum(
                         [(pos['exit_time'] - pos['entry_time']) for pos in self.position_history],
                         timedelta(0)) / len(self.position_history)
-                })
             
             return stats
             
@@ -2181,7 +2202,7 @@ class TradingBot:
             avg_gain = gains.ewm(span=self.rsi_period, adjust=False).mean()
             avg_loss = losses.ewm(span=self.rsi_period, adjust=False).mean()
             rs = avg_gain / avg_loss
-            rsi = float(100 - (100 / (1 + rs)).iloc[-1])
+            rsi = float(100 - (100 / (1 + rs)).iloc[-1]) # don't forget this parenthesis
             
             # Calculate Moving Averages
             sma_20 = prices.rolling(window=20).mean()
@@ -2246,7 +2267,6 @@ class TradingBot:
                 'all_supports': sorted(supports, reverse=True)[:3],
                 'all_resistances': sorted(resistances)[:3],
                 'support_strength': len([p for p in pivot_lows if abs(p - nearest_support) / nearest_support < 0.02])
-            }
         except Exception as e:
             self.log(f"Error calculating support/resistance levels: {str(e)}", level="error")
             raise
@@ -2401,8 +2421,6 @@ class TradingBot:
         """Check comprehensive market conditions"""
         try:
             # Get price data
-            end = datetime.now()
-            start = end - timedelta(days=7)
             prices = self.price_manager.get_cached_price_data(symbol, days=7)
             
             # Calculate volatility
