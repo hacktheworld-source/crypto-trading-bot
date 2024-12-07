@@ -180,6 +180,21 @@ class TradingBot:
             self.paper_trade_history = []
             self.paper_balance = 1000.0  # Default paper balance
             
+            # Technical analysis parameters
+            self.rsi_period = 14
+            self.rsi_overbought = 70
+            self.rsi_oversold = 30
+            self.trading_interval = 300  # 5 minutes
+            self.trade_amount = 100.0
+            self.stop_loss_percentage = 5.0
+            self.take_profit_percentage = 10.0
+            self.max_position_size = 1000.0
+            self.partial_tp_percentage = 5.0
+            self.partial_tp_size = 0.5
+            self.trailing_stop_percentage = 2.0
+            self.trailing_stop_enabled = True
+            self.trailing_stop_activation = 3.0
+            
             # 2. Define the log method before using it
             self._log_message_sync = lambda msg, level="info", **kwargs: logging.log(
                 getattr(logging, level.upper()), msg
@@ -1471,3 +1486,86 @@ class TradingBot:
             logging.warning(message)
         else:
             logging.info(message)
+
+    def _determine_trend(self, current_price: float, sma_20: float, sma_50: float, sma_200: float) -> str:
+        """
+        Determine market trend based on moving averages.
+        
+        Args:
+            current_price: Current asset price
+            sma_20: 20-period simple moving average
+            sma_50: 50-period simple moving average
+            sma_200: 200-period simple moving average
+            
+        Returns:
+            str: 'bullish', 'bearish', or 'neutral'
+        """
+        try:
+            # Short-term trend (current price vs SMAs)
+            short_term = (
+                'bullish' if current_price > sma_20 else
+                'bearish' if current_price < sma_20 else
+                'neutral'
+            )
+            
+            # Medium-term trend (SMA20 vs SMA50)
+            medium_term = (
+                'bullish' if sma_20 > sma_50 else
+                'bearish' if sma_20 < sma_50 else
+                'neutral'
+            )
+            
+            # Long-term trend (SMA50 vs SMA200)
+            long_term = (
+                'bullish' if sma_50 > sma_200 else
+                'bearish' if sma_50 < sma_200 else
+                'neutral'
+            )
+            
+            # Weight the trends (short term most important)
+            if short_term == medium_term == long_term:
+                return short_term
+            elif short_term == medium_term:
+                return short_term
+            elif medium_term == long_term:
+                return medium_term
+            else:
+                return 'neutral'  # When trends conflict
+                
+        except Exception as e:
+            self.log(f"Error determining trend: {str(e)}", level="error")
+            return 'neutral'
+
+    async def _calculate_btc_correlation(self, symbol: str) -> float:
+        """
+        Calculate correlation between symbol and BTC prices.
+        
+        Args:
+            symbol: The cryptocurrency symbol to compare with BTC
+            
+        Returns:
+            float: Correlation coefficient (-1 to 1)
+        """
+        try:
+            if symbol == 'BTC':
+                return 1.0
+                
+            # Get price data for both assets
+            btc_prices = await self.price_manager.get_cached_price_data('BTC', days=30)
+            symbol_prices = await self.price_manager.get_cached_price_data(symbol, days=30)
+            
+            # Align the timestamps
+            common_dates = btc_prices.index.intersection(symbol_prices.index)
+            if len(common_dates) < 2:
+                return 0.0
+                
+            btc_returns = btc_prices[common_dates].pct_change().dropna()
+            symbol_returns = symbol_prices[common_dates].pct_change().dropna()
+            
+            # Calculate correlation
+            correlation = btc_returns.corr(symbol_returns)
+            return float(correlation)
+            
+        except Exception as e:
+            await self.log(f"Error calculating correlation: {str(e)}", level="error")
+            return 0.0
