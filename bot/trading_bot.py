@@ -711,7 +711,7 @@ class TradingBot:
             self.log(f"Error calculating position size: {str(e)}", level="error")
             return 0
 
-    def _check_market_conditions(self, symbol: str) -> Dict[str, Any]:
+    def check_market_conditions(self, symbol: str) -> Dict[str, Any]:
         """Analyze current market conditions for trading"""
         try:
             # Get sentiment analysis
@@ -739,8 +739,7 @@ class TradingBot:
             else:
                 market_aligned = True
             
-            # Create conditions dict before using it
-            conditions = {
+            return {
                 'sentiment': sentiment['overall_sentiment'],
                 'sentiment_score': sentiment['sentiment_score'],
                 'is_volatile': is_volatile,
@@ -753,9 +752,6 @@ class TradingBot:
                     market_aligned
                 )
             }
-            
-            self.log(f"Market conditions for {symbol}: {conditions}")
-            return conditions
             
         except Exception as e:
             self.log(f"Error checking market conditions: {str(e)}", level="error")
@@ -1056,6 +1052,7 @@ class TradingBot:
             return {}
 
     def calculate_moving_averages(self, symbol: str) -> Dict[str, Any]:
+        """Calculate moving averages with comprehensive data"""
         try:
             # Get enough historical data for calculations
             end = datetime.now()
@@ -1073,7 +1070,6 @@ class TradingBot:
             prices = pd.Series(
                 [float(candle.close) for candle in reversed(response.candles)],
                 index=[datetime.fromtimestamp(float(candle.start)) for candle in reversed(response.candles)]
-            )
             
             # Calculate moving averages
             sma_20 = prices.rolling(window=20).mean()
@@ -1851,7 +1847,7 @@ class TradingBot:
             self.log(f"Error calculating Stochastic for {symbol}: {str(e)}", level="error")
             raise
 
-    def _calculate_bollinger_bands(self, symbol: str) -> Dict[str, Any]:
+    def calculate_bollinger_bands(self, symbol: str) -> Dict[str, Any]:
         """Calculate Bollinger Bands using cached price data"""
         try:
             prices = self._get_cached_price_data(symbol)
@@ -1863,8 +1859,8 @@ class TradingBot:
             
             return {
                 'middle': current_sma,
-                'upper': current_sma + (current_std * 2),  # Removed extra parenthesis
-                'lower': current_sma - (current_std * 2),  # Removed extra parenthesis
+                'upper': current_sma + (current_std * 2),
+                'lower': current_sma - (current_std * 2),
                 'bandwidth': float((current_std * 4 / current_sma) * 100)
             }
         except Exception as e:
@@ -2277,8 +2273,6 @@ class TradingBot:
                 'all_supports': sorted(supports, reverse=True)[:3],
                 'all_resistances': sorted(resistances)[:3],
                 'support_strength': len([p for p in pivot_lows if abs(p - nearest_support) / nearest_support < 0.02])
-            }
-
         except Exception as e:
             self.log(f"Error calculating support/resistance levels: {str(e)}", level="error")
             raise

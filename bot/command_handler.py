@@ -906,20 +906,14 @@ class CommandHandler:
         """Get Bollinger Bands analysis"""
         try:
             symbol = symbol.upper()
-            product = self.trading_bot.client.get_product(f"{symbol}-USD")
-            current_price = float(product.price)
-            
             bb_data = self.trading_bot.calculate_bollinger_bands(symbol)
+            current_price = float(self.trading_bot.client.get_product(f"{symbol}-USD").price)
             
             # Calculate price position
-            price_position = (current_price - bb_data['lower']) / (bb_data['upper'] - bb_data['lower']) * 100
+            price_position = (currentprice - bb_data['lower']) / (bb_data['upper'] - bb_data['lower']) * 100
             position_status = "Overbought ⚠️" if price_position > 80 else \
                              "Oversold 🔥" if price_position < 20 else \
                              "Neutral ⚖️"
-            
-            # Detect squeeze
-            squeeze_status = "🔴 Squeeze Detected!" if bb_data['bandwidth'] < 10 else \
-                            "⚪ Normal Range"
             
             return f"Bollinger Bands Analysis for {symbol}:\n```" \
                    f"📊 Band Levels:\n" \
@@ -927,11 +921,10 @@ class CommandHandler:
                    f"  • Middle Band: ${bb_data['middle']:,.2f}\n" \
                    f"  • Lower Band: ${bb_data['lower']:,.2f}\n\n" \
                    f"📈 Position Analysis:\n" \
-                   f"  • Current Price: ${current_price:,.2f}\n" \
+                   f"  • Current Price: ${currentprice:,.2f}\n" \
                    f"  • Position: {position_status} ({price_position:.1f}%)\n" \
-                   f"  • Bandwidth: {bb_data['bandwidth']:.1f}%\n" \
-                   f"  • Volatility: {squeeze_status}```"
-        except Exception as e:
+                   f"  • Bandwidth: {bb_data['bandwidth']:.1f}%"
+```        except Exception as e:
             return self._format_error(str(e))
         
     async def get_market_conditions(self, symbol: str):
