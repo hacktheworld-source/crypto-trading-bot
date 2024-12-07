@@ -502,30 +502,26 @@ class CommandHandler:
         return response
         
     async def get_ma_analysis(self, symbol: str):
-        """Get comprehensive moving average analysis"""
+        """Get moving average analysis"""
         try:
             symbol = symbol.upper()
-            product = self.trading_bot.client.get_product(f"{symbol}-USD")
-            current_price = float(product.price)
-            
-            # Get MA data
             ma_data = await self.trading_bot.calculate_moving_averages(symbol)
             
-            # Determine trend strength
-            trend = ma_data['trend']
-            trend_emoji = "🟢" if "Uptrend" in trend else "🔴" if "Downtrend" in trend else "⚪"
+            # Determine trend emoji
+            trend_emoji = "🟢" if ma_data['trend'] == 'bullish' else \
+                         "🔴" if ma_data['trend'] == 'bearish' else "⚪"
             
             return f"Moving Average Analysis for {symbol}:\n```" \
-                   f"📊 Price Analysis:\n" \
-                   f"  • Current Price: ${current_price:,.2f}\n" \
+                   f"📊 Price Levels:\n" \
+                   f"  • Current: ${ma_data['current_price']:,.2f}\n" \
                    f"  • SMA 20: ${ma_data['sma_20']:,.2f}\n" \
                    f"  • SMA 50: ${ma_data['sma_50']:,.2f}\n" \
                    f"  • SMA 200: ${ma_data['sma_200']:,.2f}\n\n" \
                    f"📈 Trend Analysis:\n" \
-                   f"  • Status: {trend_emoji} {trend}\n" \
-                   f"  • Above 20 MA: {'Yes ✅' if current_price > ma_data['sma_20'] else 'No ❌'}\n" \
-                   f"  • Above 50 MA: {'Yes ✅' if current_price > ma_data['sma_50'] else 'No ❌'}\n" \
-                   f"  • Above 200 MA: {'Yes ✅' if current_price > ma_data['sma_200'] else 'No ❌'}```"
+                   f"  • Status: {trend_emoji} {ma_data['trend'].title()}\n" \
+                   f"  • Above 20 MA: {'Yes ✅' if ma_data['current_price'] > ma_data['sma_20'] else 'No ❌'}\n" \
+                   f"  • Above 50 MA: {'Yes ✅' if ma_data['current_price'] > ma_data['sma_50'] else 'No ❌'}\n" \
+                   f"  • Above 200 MA: {'Yes ✅' if ma_data['current_price'] > ma_data['sma_200'] else 'No ❌'}```"
         except Exception as e:
             return self._format_error(str(e))
         
@@ -906,11 +902,11 @@ class CommandHandler:
         """Get Bollinger Bands analysis"""
         try:
             symbol = symbol.upper()
-            bb_data = self.trading_bot.calculate_bollinger_bands(symbol)
-            current_price = float(self.trading_bot.client.get_product(f"{symbol}-USD").price)
+            bb_data = await self.trading_bot.calculate_bollinger_bands(symbol)
+            current_price = await self.trading_bot.price_manager.get_current_price(symbol)
             
             # Calculate price position
-            price_position = (currentprice - bb_data['lower']) / (bb_data['upper'] - bb_data['lower']) * 100
+            price_position = (current_price - bb_data['lower']) / (bb_data['upper'] - bb_data['lower']) * 100
             position_status = "Overbought ⚠️" if price_position > 80 else \
                              "Oversold 🔥" if price_position < 20 else \
                              "Neutral ⚖️"
@@ -921,10 +917,10 @@ class CommandHandler:
                    f"  • Middle Band: ${bb_data['middle']:,.2f}\n" \
                    f"  • Lower Band: ${bb_data['lower']:,.2f}\n\n" \
                    f"📈 Position Analysis:\n" \
-                   f"  • Current Price: ${currentprice:,.2f}\n" \
+                   f"  • Current Price: ${current_price:,.2f}\n" \
                    f"  • Position: {position_status} ({price_position:.1f}%)\n" \
                    f"  • Bandwidth: {bb_data['bandwidth']:.1f}%"
-        except Exception as e:
+```        except Exception as e:
             return self._format_error(str(e))
         
     async def get_market_conditions(self, symbol: str):
