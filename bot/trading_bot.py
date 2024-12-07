@@ -730,51 +730,37 @@ class TradingBot:
             self.log(f"Error calculating position size: {str(e)}", level="error")
             return 0
 
-    def check_market_conditions(self, symbol: str) -> Dict[str, Any]:
-        """Analyze current market conditions for trading"""
+    async def check_market_conditions(self, symbol: str) -> Dict[str, Any]:
+        """Check comprehensive market conditions"""
         try:
-            # Get sentiment analysis
-            sentiment = self.analyze_market_sentiment(symbol)
+            # Get price data
+            prices = await self.price_manager.get_cached_price_data(symbol, days=7)
             
-            # Get volatility (using price range as simple measure)
-            prices = self._get_historical_prices(symbol, 
-                                              start=datetime.now() - timedelta(days=7),
-                                              end=datetime.now())
-            price_range = (prices.max() - prices.min()) / prices.min() * 100
+            # Calculate volatility
+            price_range = ((prices.max() - prices.min()) / prices.min()) * 100
+            is_volatile = price_range > 10
             
-            # Check if market is too volatile
-            is_volatile = price_range > 10  # Consider >10% range as volatile
-            
-            # Check trading hours (some hours historically have more volatility)
+            # Check trading hours
             current_hour = datetime.now().hour
             is_high_activity = 13 <= current_hour <= 21  # 9 AM - 5 PM EST
             
-            # Get overall market trend (using BTC as proxy)
-            if symbol != 'BTC':
-                btc_sentiment = self.analyze_market_sentiment('BTC')
-                market_aligned = (
-                    (sentiment['overall_sentiment'] == btc_sentiment['overall_sentiment']) or
-                    (sentiment['sentiment_score'] * btc_sentiment['sentiment_score'] > 0))
-            else:
-                market_aligned = True
+            # Get market alignment
+            btc_correlation = await self._calculate_btc_correlation(symbol) if symbol != 'BTC' else 1.0
             
             return {
-                'sentiment': sentiment['overall_sentiment'],
-                'sentiment_score': sentiment['sentiment_score'],
                 'is_volatile': is_volatile,
                 'price_range_7d': price_range,
                 'is_high_activity': is_high_activity,
-                'market_aligned': market_aligned,
+                'market_aligned': btc_correlation > 0.5,
                 'suitable_for_trading': (
                     not is_volatile and
-                    (is_high_activity or abs(sentiment['sentiment_score']) > 50) and
-                    market_aligned
+                    is_high_activity and
+                    btc_correlation > 0.5
                 )
             }
-            
         except Exception as e:
-            self.log(f"Error checking market conditions: {str(e)}", level="error")
-            raise
+            await self.log(f"Error checking market conditions: {str(e)}", level="error")
+            raise TradingError(f"Failed to check market conditions: {str(e)}", error_type='DATA')
 
     def _calculate_trade_signal(self, symbol: str) -> Dict[str, Any]:
         """Main entry point for all trading signal calculations"""
@@ -1314,7 +1300,7 @@ class TradingBot:
             
         except Exception as e:
             logging.error(f"Error simulating buy order for {symbol}: {str(e)}")
-            raise
+            raise TradingError(f"Error simulating buy order for {symbol}: {str(e)}")
 
     async def _simulate_sell_order(self, symbol: str, partial: bool = False) -> None:
         """Simulate a sell order with paper trading"""
@@ -1470,4 +1456,36 @@ class TradingBot:
             
             # Add profit info for sells
             if profit_info and action == 'SELL':
-                embed.add
+                embed.add_field(
+                    name="Profit Information",
+                    value=f"```\n"
+                          f"Profit: ${profit_info['profit_usd']:,.2f}\n"
+                          f"Profit Percentage: {profit_info['profit_percentage']:.2f}%\n"
+                          f"```",
+                    inline=False
+                )
+            
+            await self.discord_channel.send(embed=embed)
+            
+        except Exception as e:
+            logging.error(f"Error sending trade notification: {str(e)}")
+
+    async def calculate_bollinger_bands(self, symbol: str) -> Dict[str, Any]:
+        """Calculate Bollinger Bands using cached price data"""
+        try:
+            prices = await self.price_manager.get_cached_price_data(symbol, days=20)
+            sma = prices.rolling(window=20).mean()
+            std = prices.rolling(window=20).std()
+            
+            current_sma = float(sma.iloc[-1])
+            current_std = float(std.iloc[-1])
+            
+            return {
+                'middle': current_sma,
+                'upper': current_sma + (current_std * 2),
+                'lower': current_sma - (current_std * 2),
+                'bandwidth': float((current_std * 4 / current_sma) * 100)
+            }
+        except Exception as e:
+            await self.log(f"Error calculating Bollinger Bands: {str(e)}", level="error")
+            raise TradingError(f"Failed to calculate Bollinger Bands: {str(e)}", error_type='DATA')
