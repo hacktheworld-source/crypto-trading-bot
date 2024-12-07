@@ -168,80 +168,53 @@ class TradingBot:
         try:
             logging.info("Starting bot initialization...")
             
+            # 1. First define basic attributes
+            self.discord_channel = None
+            self.logs_channel = None
+            self.paper_trading = True
+            self.is_trading = False
+            self.positions = {}
+            self.paper_positions = {}
+            self.watched_symbols = set()
+            self.trade_history = []
+            self.paper_trade_history = []
+            self.paper_balance = 1000.0  # Default paper balance
+            
+            # 2. Define the log method before using it
+            self._log_message_sync = lambda msg, level="info", **kwargs: logging.log(
+                getattr(logging, level.upper()), msg
+            )
+            
+            # 3. Check environment variables
             if 'COINBASE_API_KEY' not in os.environ:
                 raise Exception("COINBASE_API_KEY not found in environment variables")
             if 'COINBASE_API_SECRET' not in os.environ:
                 raise Exception("COINBASE_API_SECRET not found in environment variables")
             
-            # First create client
+            # 4. Create REST client
             self.client = RESTClient(
                 api_key=os.environ['COINBASE_API_KEY'].strip(),
                 api_secret=os.environ['COINBASE_API_SECRET'].strip()
             )
             
-            # Then create PriceManager with client and logging
+            # 5. Initialize PriceManager with synchronous logging
             self.price_manager = PriceManager(
                 client=self.client,
                 cache_size=100,
                 cache_ttl=300,
                 rate_limit=0.1,
-                log_callback=self.log
+                log_callback=self._log_message_sync  # Use sync logging during init
             )
             
-            logging.info("Coinbase client initialized successfully")
+            # 6. Now define the async log method for future use
+            self.log = self._log_message
             
-            self.watched_coins: set = set()
-            self.trading_interval: int = 300
-            self.rsi_period: int = 14
-            self.rsi_overbought: float = 70.0
-            self.rsi_oversold: float = 30.0
-            self.trading_active: bool = False
-            self.trade_amount: float = 100.0
-            self.trade_history: List[Dict[str, Any]] = []
-            self.stop_loss_percentage = 5.0  # Default 5% stop loss
-            self.take_profit_percentage = 10.0  # Default 10% take profit
-            self.partial_tp_percentage = 7.0  # Take partial profits at 7%
-            self.partial_tp_size = 0.5  # Sell 50% at first take profit
-            self.max_position_size = 1000.0  # Maximum USD in any single position
-            
-            # Add configurable trailing stop
-            self.trailing_stop_percentage = 5.0  # Default 5%
-            self.trailing_stop_enabled = True
-            self.trailing_stop_activation = 3.0  # Only activate after 3% profit
-            
-            self.load_config()
-            
-            # Paper trading attributes
-            self.paper_trading = not self.trading_active
-            self.paper_balance = float(os.getenv('PAPER_BALANCE', '1000.0'))
-            self.paper_positions = {}  # Add this
-            self.paper_trade_history = []  # Add this
-            
-            self.discord_channel = None  # Will be set when bot starts
-            
-            # Pass fee rate to Position
-            self.fee_rate = self.FEE_RATE
-            
-            # Add to existing init
-            self._price_cache = {}
-            self._cache_lock = asyncio.Lock()
-            self._cache_max_size = 100  # Maximum number of symbols to cache
-            self._cache_cleanup_threshold = 80  # Clean when we hit 80% capacity
-            
-            # Initialize managers
-            self.position_manager = PositionManager(self)
-            self.signal_generator = SignalGenerator(self)
-            self.trade_executor = TradeExecutor(self)
-            
-            # Configuration
-            self.config = TradingConfig()
-            
-            # Trading state
-            self.positions: Dict[str, Position] = {}  # Add this
+            logging.info("Bot initialization completed successfully")
             
         except Exception as e:
-            logging.error(f"Failed to initialize trading bot: {str(e)}")
-            raise Exception(f"Bot initialization failed: {str(e)}")        
+            logging.error(f"Bot initialization failed: {str(e)}")
+            raise Exception(f"Bot initialization failed: {str(e)}")
+
     async def start_trading_loop(self, paper: bool = True) -> str:
         """Start the trading loop in either paper or real mode"""
         try:
@@ -1489,3 +1462,12 @@ class TradingBot:
         except Exception as e:
             await self.log(f"Error calculating Bollinger Bands: {str(e)}", level="error")
             raise TradingError(f"Failed to calculate Bollinger Bands: {str(e)}", error_type='DATA')
+
+    async def _log_message(self, message: str, level: str = "info", **kwargs):
+        """Internal logging method"""
+        if level == "error":
+            logging.error(message)
+        elif level == "warning":
+            logging.warning(message)
+        else:
+            logging.info(message)
