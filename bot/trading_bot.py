@@ -806,7 +806,7 @@ class TradingBot:
             avg_gain = gains.ewm(span=self.rsi_period, adjust=False).mean()
             avg_loss = losses.ewm(span=self.rsi_period, adjust=False).mean()
             rs = avg_gain / avg_loss
-            rsi = float(100 - (100 / (1 + rs)).iloc[-1] # remember to include this closing parenthesis
+            rsi = float(100 - (100 / (1 + rs)).iloc[-1])
             
             # Calculate Moving Averages
             sma_20 = prices.rolling(window=20).mean()
