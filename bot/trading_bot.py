@@ -1615,3 +1615,108 @@ class TradingBot:
             except Exception as e:
                 logging.error(f"Heartbeat check failed: {str(e)}")
                 await asyncio.sleep(60)  # Shorter retry interval on failure
+
+    async def calculate_bollinger_bands(self, symbol: str, period: int = 20, std_dev: float = 2.0) -> Dict[str, float]:
+        """Calculate Bollinger Bands for a symbol."""
+        try:
+            # Get historical prices
+            prices = await self.price_manager.get_cached_price_data(symbol, days=30)
+            if len(prices) < period:
+                raise TradingError("Insufficient price data for BB calculation", "DATA")
+            
+            # Calculate middle band (SMA)
+            middle_band = prices.rolling(window=period).mean()
+            
+            # Calculate standard deviation
+            std = prices.rolling(window=period).std()
+            
+            # Calculate upper and lower bands
+            upper_band = middle_band + (std * std_dev)
+            lower_band = middle_band - (std * std_dev)
+            
+            # Calculate bandwidth
+            bandwidth = ((upper_band - lower_band) / middle_band) * 100
+            
+            return {
+                'upper': float(upper_band.iloc[-1]),
+                'middle': float(middle_band.iloc[-1]),
+                'lower': float(lower_band.iloc[-1]),
+                'bandwidth': float(bandwidth.iloc[-1])
+            }
+        except Exception as e:
+            logging.error(f"BB calculation error for {symbol}: {str(e)}")
+            raise TradingError(f"Failed to calculate Bollinger Bands: {str(e)}", "DATA")
+
+    async def _determine_trend(self, symbol: str, ma_type: str = 'EMA') -> Dict[str, Any]:
+        """Determine trend using moving averages."""
+        try:
+            prices = await self.price_manager.get_cached_price_data(symbol, days=30)
+            
+            # Calculate multiple MAs
+            ma_periods = {'short': 9, 'medium': 21, 'long': 50}
+            mas = {}
+            
+            for period_name, period in ma_periods.items():
+                if ma_type == 'EMA':
+                    ma = prices.ewm(span=period, adjust=False).mean()
+                else:  # SMA
+                    ma = prices.rolling(window=period).mean()
+                mas[period_name] = float(ma.iloc[-1])
+            
+            current_price = float(prices.iloc[-1])
+            
+            # Determine trend strength and direction
+            trend = {
+                'direction': 'bullish' if current_price > mas['medium'] else 'bearish',
+                'strength': 'strong' if all(current_price > ma for ma in mas.values()) or 
+                                      all(current_price < ma for ma in mas.values()) else 'moderate',
+                'mas': mas,
+                'current_price': current_price
+            }
+            
+            return trend
+            
+        except Exception as e:
+            logging.error(f"Trend determination error for {symbol}: {str(e)}")
+            raise TradingError(f"Failed to determine trend: {str(e)}", "DATA")
+
+    @property
+    def trading_active(self) -> bool:
+        """Check if real trading is active."""
+        return getattr(self, '_trading_active', False)
+
+    @property
+    def paper_trading_active(self) -> bool:
+        """Check if paper trading is active."""
+        return getattr(self, '_paper_trading_active', False)
+
+    async def get_status(self) -> str:
+        """Get current trading bot status."""
+        try:
+            watched = len(self.watched_coins)
+            real_positions = len(getattr(self, 'positions', {}))
+            paper_positions = len(getattr(self, 'paper_positions', {}))
+            
+            status = f"Trading Bot Status:\n```" \
+                    f"🤖 Mode:\n" \
+                    f"  • Real Trading: {'Active ✅' if self.trading_active else 'Inactive ❌'}\n" \
+                    f"  • Paper Trading: {'Active ✅' if self.paper_trading_active else 'Inactive ❌'}\n\n" \
+                    f"📊 Positions:\n" \
+                    f"  • Real: {real_positions}\n" \
+                    f"  • Paper: {paper_positions}\n" \
+                    f"  • Watching: {watched} coins\n\n" \
+                    f"💰 Balance:\n"
+            
+            if self.paper_trading_active:
+                paper_balance = await self.get_paper_balance()
+                status += f"  • Paper: ${paper_balance['total_usd_value']:.2f}\n"
+                
+            if self.trading_active:
+                real_balance = await self.get_account_balance()
+                status += f"  • Real: ${real_balance['total_usd_value']:.2f}\n"
+                
+            return status + "```"
+            
+        except Exception as e:
+            logging.error(f"Error getting status: {str(e)}")
+            raise TradingError(f"Failed to get status: {str(e)}", "DATA")
