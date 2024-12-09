@@ -1729,7 +1729,7 @@ class TradingBot:
             real_positions = len(getattr(self, 'positions', {}))
             paper_positions = len(getattr(self, 'paper_positions', {}))
             
-            status = f"Trading Bot Status:\n```" \
+            status = f"Bot Status:\n```" \
                     f"🤖 Mode:\n" \
                     f"  • Real Trading: {'Active ✅' if self.trading_active else 'Inactive ❌'}\n" \
                     f"  • Paper Trading: {'Active ✅' if self.paper_trading_active else 'Inactive ❌'}\n\n" \
@@ -1741,7 +1741,7 @@ class TradingBot:
             
             if self.paper_trading_active:
                 paper_balance = await self.get_paper_balance()
-                status += f"  • Paper: ${paper_balance['total_usd_value']:.2f}\n"
+                status += f"  • Paper: ${paper_balance['total_value']:.2f}\n"
                 
             if self.trading_active:
                 real_balance = await self.get_account_balance()
@@ -1750,5 +1750,38 @@ class TradingBot:
             return status + "```"
             
         except Exception as e:
-            logging.error(f"Error getting status: {str(e)}")
+            await self.log(f"Error getting status: {str(e)}", level="error")
             raise TradingError(f"Failed to get status: {str(e)}", "DATA")
+
+    async def get_ma_analysis(self, symbol: str) -> str:
+        """Get moving average analysis for a symbol."""
+        try:
+            symbol = symbol.upper()
+            prices = await self.price_manager.get_cached_price_data(symbol, days=30)
+            current_price = float(prices.iloc[-1])
+            
+            # Calculate SMAs
+            sma_20 = float(prices.rolling(window=20).mean().iloc[-1])
+            sma_50 = float(prices.rolling(window=50).mean().iloc[-1])
+            sma_200 = float(prices.rolling(window=200).mean().iloc[-1])
+            
+            # Get trend
+            trend = await self._determine_trend(current_price, sma_20, sma_50, sma_200)
+            
+            # Format trend string
+            trend_str = trend[0].upper() + trend[1:]  # Capitalize first letter
+            
+            return f"Moving Average Analysis for {symbol}:\n```" \
+                   f"📊 Price Levels:\n" \
+                   f"  • Current: ${current_price:,.2f}\n" \
+                   f"  • SMA 20: ${sma_20:,.2f}\n" \
+                   f"  • SMA 50: ${sma_50:,.2f}\n" \
+                   f"  • SMA 200: ${sma_200:,.2f}\n\n" \
+                   f"📈 Trend Analysis:\n" \
+                   f"  • Status: {trend_str}\n" \
+                   f"  • Above 20 MA: {'Yes ✅' if current_price > sma_20 else 'No ❌'}\n" \
+                   f"  • Above 50 MA: {'Yes ✅' if current_price > sma_50 else 'No ❌'}\n" \
+                   f"  • Above 200 MA: {'Yes ✅' if current_price > sma_200 else 'No ❌'}```"
+        except Exception as e:
+            await self.log(f"Error getting MA analysis: {str(e)}", level="error")
+            raise TradingError(f"Failed to get MA analysis: {str(e)}", "DATA")

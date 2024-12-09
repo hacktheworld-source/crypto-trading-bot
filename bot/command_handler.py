@@ -859,10 +859,12 @@ class CommandHandler:
         except Exception as e:
             return self._format_error(str(e))
         
-    async def get_market_conditions(self, symbol: str):
-        """Get comprehensive market conditions analysis"""
+    async def get_market_conditions(self, *args) -> str:
+        """Get market conditions analysis for a symbol."""
         try:
-            symbol = symbol.upper()
+            if not args:
+                return self._format_error("Please specify a symbol: !conditions <symbol>")
+            symbol = args[0].upper()
             conditions = await self.trading_bot.check_market_conditions(symbol)
             
             # Get BTC correlation if not BTC
