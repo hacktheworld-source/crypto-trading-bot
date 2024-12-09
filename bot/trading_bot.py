@@ -1157,7 +1157,6 @@ class TradingBot:
                     signal['signals']['risk'] < -15 or
                     (signal['signals']['trend'] < -10 and signal['signals']['momentum'] < -10) or
                     not market_conditions['suitable_for_trading']
-                )  # Added missing parenthesis
             
             return False
             
@@ -1636,29 +1635,57 @@ class TradingBot:
             logging.error(f"Error sending log message: {str(e)}")
             # Don't reset channel here to keep trying
 
-    async def _log_message(self, message: str, level: str = "info", **kwargs) -> None:
+    async def _log_message(self, message: str, level: str = "info", context: Dict = None) -> None:
         """
-        Internal logging method that handles both file and Discord logging.
+        Log a message with optional context data.
         
         Args:
-            message: Message to log
-            level: Log level
-            **kwargs: Additional context for logging
+            message: The main log message
+            level: Log level (info, warning, error)
+            context: Optional dictionary of context data to display
         """
-        # First log to file
-        if level == "error":
-            logging.error(message)
-        elif level == "warning":
-            logging.warning(message)
+        try:
+            # Log to file
+            log_func = getattr(logging, level.lower())
+            log_func(message)
+            
+            # Format context data if present
+            if context:
+                formatted_context = "\n".join([
+                    f"  • {key}: {self._format_context_value(value)}"
+                    for key, value in context.items()
+                ])
+                message = f"{message}\n{formatted_context}"
+            
+            # Send to Discord if channel is set
+            if hasattr(self, 'logs_channel'):
+                prefix = {
+                    "info": "ℹ️",
+                    "warning": "⚠️",
+                    "error": "❌"
+                }.get(level.lower(), "ℹ️")
+                
+                await self.logs_channel.send(f"{prefix} {message}")
+                
+        except Exception as e:
+            logging.error(f"Error in logging: {str(e)}")
+
+    def _format_context_value(self, value: Any) -> str:
+        """Format context values for display"""
+        if isinstance(value, dict):
+            return "\n    " + "\n    ".join([
+                f"- {k}: {self._format_context_value(v)}"
+                for k, v in value.items()
+            ])
+        elif isinstance(value, (list, tuple)):
+            return "\n    " + "\n    ".join([
+                f"- {self._format_context_value(item)}"
+                for item in value
+            ])
+        elif isinstance(value, float):
+            return f"{value:.2f}"
         else:
-            logging.info(message)
-        
-        # Then try to send to Discord if we have a logs channel
-        if self.logs_channel:
-            try:
-                await self.send_log(message, level)
-            except Exception as e:
-                logging.error(f"Failed to send log to Discord: {str(e)}")
+            return str(value)
 
     async def _heartbeat(self) -> None:
         """
@@ -1893,12 +1920,28 @@ class TradingBot:
             # Combine scores with detailed logging
             total_score = (rsi_score * 0.3) + (bb_score * 0.3) + (sentiment_score * 0.4)
             
-            # Log individual components
-            await self.log(f"Signal components for {symbol}:", context={
-                'rsi': {'value': rsi, 'score': rsi_score, 'weight': 0.3},
-                'bollinger': {'score': bb_score, 'weight': 0.3},
-                'sentiment': {'score': sentiment_score, 'weight': 0.4}
-            })
+            # Create comprehensive signal data
+            signal_data = {
+                'indicators': {
+                    'rsi': {'value': rsi, 'score': rsi_score, 'weight': 0.3},
+                    'bollinger': {
+                        'score': bb_score, 
+                        'weight': 0.3,
+                        'bands': bb_data
+                    },
+                    'sentiment': {
+                        'score': sentiment_score, 
+                        'weight': 0.4,
+                        'analysis': sentiment
+                    }
+                },
+                'market_conditions': conditions,
+                'current_price': current_price,
+                'total_score': total_score
+            }
+            
+            # Log detailed analysis
+            await self.log(f"Signal analysis for {symbol}:", context=signal_data)
             
             # Determine action
             action = 'HOLD'
@@ -1908,13 +1951,15 @@ class TradingBot:
                 action = 'SELL'
             
             # Log final decision
-            await self.log(f"Trading decision for {symbol}:", context={
+            decision_data = {
                 'action': action,
                 'total_score': total_score,
-                'threshold': {'buy': 20, 'sell': -20},
+                'thresholds': {'buy': 20, 'sell': -20},
                 'market_suitable': conditions['suitable_for_trading']
-            })
+            }
+            await self.log(f"Trading decision for {symbol}:", context=decision_data)
             
+            # Return complete signal
             return {
                 'action': action,
                 'score': total_score,
@@ -1923,12 +1968,18 @@ class TradingBot:
                     'bb': bb_score,
                     'sentiment': sentiment_score,
                     'conditions': conditions
-                }
+                },
+                'analysis': signal_data
             }
             
         except Exception as e:
             await self.log(f"Error calculating trade signal: {str(e)}", level="error")
-            return {'action': 'HOLD', 'score': 0, 'signals': {}}
+            return {
+                'action': 'HOLD',
+                'score': 0,
+                'signals': {},
+                'analysis': {}
+            }
 
     async def _simulate_trade(self, symbol: str, action: str, reason: str) -> bool:
         """Execute a simulated trade for paper trading."""
