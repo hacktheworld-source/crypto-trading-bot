@@ -224,6 +224,11 @@ class TradingBot:
             # 6. Now define the async log method for future use
             self.log = self._log_message
             
+            # Add signal generator
+            self.signal_generator = {
+                'generate_signal': self._calculate_trade_signal
+            }
+            
             logging.info("Bot initialization completed successfully")
             
         except Exception as e:
@@ -344,28 +349,28 @@ class TradingBot:
 
     async def _trading_loop(self):
         """Main trading loop using position and signal managers"""
-        while self.trading_active or self.paper_trading_active:  # Fixed flag check
+        while self.trading_active or self.paper_trading_active:
             try:
                 for symbol in self.watched_coins:
-                    # Generate signal using signal manager
-                    signal = await self.signal_generator.generate_signal(symbol)
+                    # Generate signal
+                    signal = await self._calculate_trade_signal(symbol)
                     
                     if signal['action'] != 'HOLD':
-                        # Execute trade using trade executor
-                        success = await self.trade_executor.execute_trade(
-                            symbol=symbol,
-                            action=signal['action'],
-                            reason=f"Signal: {signal['score']:.2f}"
-                        )
+                        # Execute trade
+                        if self.paper_trading_active:
+                            success = await self._simulate_trade(symbol, signal['action'], f"Signal: {signal['score']:.2f}")
+                        else:
+                            success = await self._execute_trade(symbol, signal['action'], f"Signal: {signal['score']:.2f}")
                         
                         if not success:
                             await self.log(f"Trade execution failed for {symbol}", level="error")
                             continue
-                        
+                    
                     # Update position metrics
-                    if symbol in self.position_manager.positions:
-                        await self.position_manager.update_positions()
-                        
+                    position = self.paper_positions.get(symbol) if self.paper_trading_active else self.positions.get(symbol)
+                    if position:
+                        await position.update_metrics(float(self.client.get_product(f"{symbol}-USD").price))
+                
                 # Sleep for configured interval
                 await asyncio.sleep(self.trading_interval)
                 
@@ -1327,7 +1332,7 @@ class TradingBot:
             if len(prices_long) < 2:
                 raise TradingError(f"Insufficient historical data for {symbol}")
                 
-            self.log(f"Got {len(prices_long)} price points for {symbol}")
+            await self.log(f"Got {len(prices_long)} price points for {symbol}")
             
             prices_medium = prices_long[prices_long.index >= start_medium]
             prices_short = prices_long[prices_long.index >= start_short]
@@ -1343,7 +1348,7 @@ class TradingBot:
                 'short': ((prices_short.iloc[-1] - prices_short.iloc[0]) / prices_short.iloc[0]) * 100
             }
             
-            self.log(f"Price changes for {symbol}:", context=price_changes)
+            await self.log(f"Price changes for {symbol}:", context=price_changes)
             
             return {
                 'sentiment_score': price_changes['short'],
@@ -1357,7 +1362,7 @@ class TradingBot:
             }
                 
         except Exception as e:
-            self.log(f"Error analyzing market sentiment for {symbol}: {str(e)}", level="error")
+            await self.log(f"Error analyzing market sentiment for {symbol}: {str(e)}", level="error")
             return {
                 'sentiment_score': 0,
                 'overall_sentiment': 'Neutral',
@@ -1794,3 +1799,84 @@ class TradingBot:
         except Exception as e:
             await self.log(f"Error getting MA analysis: {str(e)}", level="error")
             raise TradingError(f"Failed to get MA analysis: {str(e)}", "DATA")
+
+    async def _calculate_trade_signal(self, symbol: str) -> Dict[str, Any]:
+        """Calculate trading signal based on multiple indicators."""
+        try:
+            # Get current price and technical indicators
+            current_price = await self.price_manager.get_current_price(symbol)
+            prices = await self.price_manager.get_cached_price_data(symbol, days=30)
+            
+            # Calculate indicators
+            rsi = await self.calculate_rsi(symbol)
+            bb_data = await self.calculate_bollinger_bands(symbol)
+            sentiment = await self.analyze_market_sentiment(symbol)
+            conditions = await self.check_market_conditions(symbol)
+            
+            # Calculate scores
+            rsi_score = 50 - rsi  # Higher when oversold, lower when overbought
+            bb_score = ((current_price - bb_data['lower']) / (bb_data['upper'] - bb_data['lower']) - 0.5) * -100
+            sentiment_score = sentiment['sentiment_score']
+            
+            # Combine scores
+            total_score = (rsi_score * 0.3) + (bb_score * 0.3) + (sentiment_score * 0.4)
+            
+            # Determine action
+            action = 'HOLD'
+            if total_score > 20 and conditions['suitable_for_trading']:
+                action = 'BUY'
+            elif total_score < -20:
+                action = 'SELL'
+            
+            return {
+                'action': action,
+                'score': total_score,
+                'signals': {
+                    'rsi': rsi_score,
+                    'bb': bb_score,
+                    'sentiment': sentiment_score,
+                    'conditions': conditions
+                }
+            }
+            
+        except Exception as e:
+            await self.log(f"Error calculating trade signal: {str(e)}", level="error")
+            return {'action': 'HOLD', 'score': 0, 'signals': {}}
+
+    async def _simulate_trade(self, symbol: str, action: str, reason: str) -> bool:
+        """Execute a simulated trade for paper trading."""
+        try:
+            if action == 'BUY':
+                position_size = await self._calculate_position_size(symbol)
+                if position_size > 0:
+                    await self._simulate_buy_order(symbol, position_size)
+                    await self.log(f"Paper buy executed for {symbol}: ${position_size:.2f}", level="info")
+                    return True
+            elif action == 'SELL':
+                if symbol in self.paper_positions:
+                    await self._simulate_sell_order(symbol)
+                    await self.log(f"Paper sell executed for {symbol}", level="info")
+                    return True
+            return False
+        except Exception as e:
+            await self.log(f"Error simulating trade: {str(e)}", level="error")
+            return False
+
+    async def _execute_trade(self, symbol: str, action: str, reason: str) -> bool:
+        """Execute a real trade."""
+        try:
+            if action == 'BUY':
+                position_size = await self._calculate_position_size(symbol)
+                if position_size > 0:
+                    await self._place_buy_order(symbol, position_size)
+                    await self.log(f"Buy order executed for {symbol}: ${position_size:.2f}", level="info")
+                    return True
+            elif action == 'SELL':
+                if symbol in self.positions:
+                    await self._place_sell_order(symbol)
+                    await self.log(f"Sell order executed for {symbol}", level="info")
+                    return True
+            return False
+        except Exception as e:
+            await self.log(f"Error executing trade: {str(e)}", level="error")
+            return False
