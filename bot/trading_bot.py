@@ -171,11 +171,11 @@ class TradingBot:
             # 1. First define basic attributes
             self.discord_channel = None
             self.logs_channel = None
-            self.paper_trading = True
-            self.is_trading = False
+            self._paper_trading_active = False
+            self._trading_active = False
             self.positions = {}
             self.paper_positions = {}
-            self.watched_symbols = set()
+            self.watched_coins = set()
             self.trade_history = []
             self.paper_trade_history = []
             self.paper_balance = 1000.0  # Default paper balance
@@ -281,44 +281,70 @@ class TradingBot:
                 await self.send_notification(error_msg)
             raise
 
-    async def start_trading_loop(self, paper: bool = True) -> str:
-        """Start the trading loop in either paper or real mode"""
+    async def start_trading(self, mode: str = None) -> str:
+        """
+        Start trading in either paper or real mode.
+        
+        Args:
+            mode: Either 'paper' or 'real'. If None, returns usage instructions.
+            
+        Returns:
+            str: Status message about trading start
+        """
         try:
-            if paper:
-                if self.trading_active:
-                    return "Real trading is already active"
-                self.paper_trading = True
-                mode = "Paper"
-            else:
-                if self.paper_trading:
-                    return "Paper trading is already active"
-                self.trading_active = True
-                mode = "Real"
+            if not mode:
+                return "Please specify trading mode: !start paper or !start real"
             
-            # Start both trading loop and heartbeat
+            mode = mode.lower()
+            if mode not in ['paper', 'real']:
+                return "Invalid mode. Use: !start paper or !start real"
+            
+            # Check if any trading is already active
+            if self.trading_active or self.paper_trading_active:
+                current_mode = "paper" if self.paper_trading_active else "real"
+                return f"{current_mode.capitalize()} trading is already active. Stop it first with !stop"
+            
+            # Start requested mode
+            if mode == 'paper':
+                self._paper_trading_active = True
+                self.paper_balance = 1000.0  # Reset to default
+                await self.log("Paper trading started")
+            else:  # real
+                self._trading_active = True
+                await self.log("Real trading started")
+            
+            # Start trading loop
             asyncio.create_task(self._trading_loop())
-            asyncio.create_task(self._heartbeat())
             
-            await self.log(f"{mode} trading loop started")
-            return f"{mode} trading bot started successfully"
+            return f"{mode.capitalize()} trading started successfully"
             
         except Exception as e:
-            await self.log(f"Failed to start trading loop: {str(e)}", level="error")
-            self.trading_active = False
-            self.paper_trading = False
-            return f"Error starting trading bot: {str(e)}"
-        
-    async def stop_trading_loop(self) -> str:
-        """Stop the trading loop"""
-        was_active = self.trading_active or self.paper_trading
-        self.trading_active = False
-        self.paper_trading = False  # Stop paper trading too
-        await self.log("Trading loop stopped")
-        return "Trading bot stopped successfully" if was_active else "Trading bot is already stopped"
-        
+            await self.log(f"Error starting {mode} trading: {str(e)}", level="error")
+            self._paper_trading_active = False
+            self._trading_active = False
+            return f"Failed to start {mode} trading: {str(e)}"
+
+    async def stop_trading(self) -> str:
+        """Stop any active trading."""
+        try:
+            was_active = self.trading_active or self.paper_trading_active
+            mode = "paper" if self.paper_trading_active else "real" if self.trading_active else None
+            
+            self._trading_active = False
+            self._paper_trading_active = False
+            
+            if was_active:
+                await self.log(f"{mode.capitalize()} trading stopped")
+                return f"{mode.capitalize()} trading stopped successfully"
+            return "No active trading to stop"
+            
+        except Exception as e:
+            await self.log(f"Error stopping trading: {str(e)}", level="error")
+            return f"Error stopping trading: {str(e)}"
+
     async def _trading_loop(self):
         """Main trading loop using position and signal managers"""
-        while self.trading_active or self.paper_trading:  # Check both modes
+        while self.trading_active or self.paper_trading_active:  # Fixed flag check
             try:
                 for symbol in self.watched_coins:
                     # Generate signal using signal manager
@@ -341,7 +367,7 @@ class TradingBot:
                         await self.position_manager.update_positions()
                         
                 # Sleep for configured interval
-                await asyncio.sleep(self.config.interval)
+                await asyncio.sleep(self.trading_interval)
                 
             except Exception as e:
                 await self.log(f"Trading loop error: {str(e)}", level="error")
@@ -790,15 +816,18 @@ class TradingBot:
             logging.error(f"Error analyzing volume for {symbol}: {str(e)}")
             raise
 
-    def _calculate_position_size(self, symbol: str) -> float:
+    async def _calculate_position_size(self, symbol: str) -> float:
+        """Calculate position size based on risk parameters and available funds."""
         try:
             # For paper trading, we should use paper balance instead of real balance
-            if self.paper_trading:
+            if self.paper_trading_active:
                 available_funds = self.paper_balance
-                portfolio_value = self.get_paper_balance()['total_value']
+                paper_balance = await self.get_paper_balance()
+                portfolio_value = paper_balance['total_value']
             else:
-                available_funds = float(self.get_account_balance()['balances'].get('USD', {}).get('balance', 0))
-                portfolio_value = self.get_account_balance()['total_usd_value']
+                account_balance = await self.get_account_balance()
+                available_funds = float(account_balance['balances'].get('USD', {}).get('balance', 0))
+                portfolio_value = account_balance['total_usd_value']
             
             # Never risk more than 2% of total portfolio on any single trade
             max_risk_amount = portfolio_value * 0.02
@@ -815,7 +844,7 @@ class TradingBot:
             )
             
             # Log calculation details
-            self.log(f"Position size calculation for {symbol}:", context={
+            await self.log(f"Position size calculation for {symbol}:", context={
                 'available_funds': available_funds,
                 'portfolio_value': portfolio_value,
                 'max_risk_amount': max_risk_amount,
@@ -828,7 +857,7 @@ class TradingBot:
             return max(5.0, position_size) if position_size >= 5.0 else 0
             
         except Exception as e:
-            self.log(f"Error calculating position size: {str(e)}", level="error")
+            await self.log(f"Error calculating position size: {str(e)}", level="error")
             return 0
 
     async def check_market_conditions(self, symbol: str) -> Dict[str, Any]:
@@ -1051,7 +1080,7 @@ class TradingBot:
             market_conditions = self._check_market_conditions(symbol)
             
             # Add position check
-            has_position = symbol in (self.positions if not self.paper_trading else self.paper_positions)
+            has_position = symbol in (self.positions if not self.paper_trading_active else self.paper_positions)
             
             # Define thresholds as class constants
             TREND_THRESHOLD = 15
@@ -1262,7 +1291,7 @@ class TradingBot:
                 exit_quantity = original_quantity * self.partial_tp_size
                 
                 # Execute partial exit
-                if self.paper_trading:
+                if self.paper_trading_active:
                     await self._simulate_sell_order(symbol, partial=True)
                 else:
                     self._place_sell_order(symbol, partial=True)
@@ -1647,38 +1676,41 @@ class TradingBot:
             logging.error(f"BB calculation error for {symbol}: {str(e)}")
             raise TradingError(f"Failed to calculate Bollinger Bands: {str(e)}", "DATA")
 
-    async def _determine_trend(self, symbol: str, ma_type: str = 'EMA') -> Dict[str, Any]:
-        """Determine trend using moving averages."""
+    async def _determine_trend(self, current_price: float, sma_20: float, sma_50: float, sma_200: float) -> str:
+        """
+        Determine market trend based on moving averages.
+        
+        Args:
+            current_price: Current asset price
+            sma_20: 20-period simple moving average
+            sma_50: 50-period simple moving average
+            sma_200: 200-period simple moving average
+        
+        Returns:
+            str: 'bullish', 'bearish', or 'neutral'
+        """
         try:
-            prices = await self.price_manager.get_cached_price_data(symbol, days=30)
+            # Short-term trend
+            short_term = 'bullish' if current_price > sma_20 else 'bearish'
             
-            # Calculate multiple MAs
-            ma_periods = {'short': 9, 'medium': 21, 'long': 50}
-            mas = {}
+            # Medium-term trend
+            medium_term = 'bullish' if sma_20 > sma_50 else 'bearish'
             
-            for period_name, period in ma_periods.items():
-                if ma_type == 'EMA':
-                    ma = prices.ewm(span=period, adjust=False).mean()
-                else:  # SMA
-                    ma = prices.rolling(window=period).mean()
-                mas[period_name] = float(ma.iloc[-1])
+            # Long-term trend
+            long_term = 'bullish' if sma_50 > sma_200 else 'bearish'
             
-            current_price = float(prices.iloc[-1])
-            
-            # Determine trend strength and direction
-            trend = {
-                'direction': 'bullish' if current_price > mas['medium'] else 'bearish',
-                'strength': 'strong' if all(current_price > ma for ma in mas.values()) or 
-                                      all(current_price < ma for ma in mas.values()) else 'moderate',
-                'mas': mas,
-                'current_price': current_price
-            }
-            
-            return trend
+            # Weight the trends
+            if short_term == medium_term == long_term:
+                return short_term
+            elif short_term == medium_term:
+                return short_term
+            elif medium_term == long_term:
+                return medium_term
+            return 'neutral'
             
         except Exception as e:
-            logging.error(f"Trend determination error for {symbol}: {str(e)}")
-            raise TradingError(f"Failed to determine trend: {str(e)}", "DATA")
+            await self.log(f"Error determining trend: {str(e)}", level="error")
+            return 'neutral'
 
     @property
     def trading_active(self) -> bool:

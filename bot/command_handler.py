@@ -50,7 +50,7 @@ class CommandHandler:
             'volume': self.get_volume_analysis,
             'sentiment': self.get_sentiment_analysis,
             'paper': self.handle_paper_commands,
-            'start': self.start_real_trading,
+            'start': self.start_trading,
             'stop': self.stop_trading,
             'status': self.get_status,
             'balance': self.get_balance,
@@ -59,66 +59,18 @@ class CommandHandler:
             'version': self.version,
             'stats': self.get_stats,
             'bb': self.get_bb_analysis,
-            'conditions': self.get_market_conditions
+            'conditions': self.get_market_conditions,
+            'commands': self.get_help
         }
     
     async def handle_command(self, command: str, *args) -> str:
-        """
-        Handle incoming Discord commands with proper error handling and logging.
-        
-        Args:
-            command (str): The command to execute
-            *args: Variable length argument list for the command
-        
-        Returns:
-            str: Response message for Discord
-        
-        Note:
-            Commands that fail will be logged with context for debugging
-        """
+        """Handle a command with arguments."""
         try:
-            if command not in self.commands:
-                await self.trading_bot.log(
-                    f"Unknown command attempted: {command}",
-                    level="warning"
-                )
-                return self._format_error(f"Unknown command: {command}")
-            
-            handler = self.commands[command]
-            is_async = asyncio.iscoroutinefunction(handler)
-            
-            try:
-                result = await handler(*args) if is_async else handler(*args)
-                return result
-                
-            except ValueError as e:
-                # Handle validation errors gracefully
-                await self.trading_bot.log(
-                    f"Validation error in command {command}: {str(e)}",
-                    level="warning"
-                )
-                return self._format_error(f"Invalid input: {str(e)}")
-                
-            except Exception as e:
-                # Log unexpected errors with full context
-                await self.trading_bot.log(
-                    f"Error executing command {command}: {str(e)}",
-                    level="error",
-                    context={
-                        'command': command,
-                        'args': args,
-                        'error_type': type(e).__name__
-                    }
-                )
-                return self._format_error(f"Command error: {str(e)}")
-                
+            if command in self.commands:
+                return await self.commands[command](*args)
+            return self._format_error(f"Unknown command: {command}")
         except Exception as e:
-            # Catch-all for system-level errors
-            await self.trading_bot.log(
-                f"Critical command handling error: {str(e)}",
-                level="error"
-            )
-            return self._format_error("An unexpected error occurred")
+            return self._format_error(str(e))
         
     async def list_coins(self):
         coins = list(self.trading_bot.watched_coins)
@@ -152,13 +104,10 @@ class CommandHandler:
         """Remove multiple coins from watchlist"""
         results = []
         for symbol in symbols:
-            if self.trading_bot.remove_coin(symbol):
-                await self.trading_bot.log(f"Removed {symbol} from watchlist")
+            if await self.trading_bot.remove_coin(symbol):
                 results.append(self._format_success(f"Removed {symbol}"))
             else:
-                await self.trading_bot.log(f"{symbol} not in watchlist", level="warning")
                 results.append(self._format_error(f"{symbol} not in watchlist"))
-        
         return "\n".join(results)
         
     async def get_rsi(self, symbol: str):
@@ -208,33 +157,14 @@ class CommandHandler:
         response += "```"
         return response
         
-    def start_real_trading(self):
-        """Start real money trading"""
-        if self.trading_bot.paper_trading:
-            return "❌ Cannot start real trading while paper trading is active. Stop paper trading first with '!stop paper'"
+    async def start_trading(self, *args) -> str:
+        """Start trading with specified mode"""
+        mode = args[0] if args else None
+        return await self.trading_bot.start_trading(mode)
         
-        return self.trading_bot.start_trading_loop(paper=False)
-        
-    def start_paper_trading(self, initial_balance: float = 1000.0):
-        """Start paper trading"""
-        if self.trading_bot.trading_active:
-            return "❌ Cannot start paper trading while real trading is active. Stop real trading first with '!stop real'"
-        
-        self.trading_bot.reset_paper_trading(initial_balance)
-        return self.trading_bot.start_trading_loop(paper=True)
-        
-    def stop_trading(self, mode: str = 'all'):
-        """Stop trading (paper, real, or all)"""
-        if mode == 'paper':
-            self.trading_bot.paper_trading = False
-            return "Paper trading stopped"
-        elif mode == 'real':
-            self.trading_bot.trading_active = False
-            return "Real trading stopped"
-        else:  # all
-            self.trading_bot.paper_trading = False
-            self.trading_bot.trading_active = False
-            return "All trading stopped"
+    async def stop_trading(self) -> str:
+        """Stop any active trading"""
+        return await self.trading_bot.stop_trading()
         
     async def get_status(self):
         """
@@ -845,11 +775,17 @@ class CommandHandler:
         try:
             if subcommand == 'start':
                 balance = float(args[0]) if args else 1000.0
-                return await self.start_paper_trading(balance)
+                # Reset paper trading first
+                self.trading_bot.reset_paper_trading(balance)
+                # Then start paper trading
+                return await self.trading_bot.start_trading('paper')
             elif subcommand == 'balance':
                 return await self.get_paper_balance()
             elif subcommand == 'reset':
-                return await self.reset_paper_trading()
+                if not self.trading_bot.paper_trading_active:
+                    return self._format_error("Paper trading is not active")
+                self.trading_bot.reset_paper_trading()
+                return self._format_success("Paper trading reset")
             elif subcommand == 'stats':
                 return await self.get_paper_stats()
             elif subcommand == 'trades':
