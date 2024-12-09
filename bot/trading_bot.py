@@ -351,24 +351,47 @@ class TradingBot:
         while self.trading_active or self.paper_trading_active:
             try:
                 for symbol in self.watched_coins:
-                    # Generate signal
-                    signal = await self._calculate_trade_signal(symbol)
-                    
-                    if signal['action'] != 'HOLD':
-                        # Execute trade
-                        if self.paper_trading_active:
-                            success = await self._simulate_trade(symbol, signal['action'], f"Signal: {signal['score']:.2f}")
-                        else:
-                            success = await self._execute_trade(symbol, signal['action'], f"Signal: {signal['score']:.2f}")
+                    try:
+                        await self.log(f"Analyzing {symbol}...", level="info")
                         
-                        if not success:
-                            await self.log(f"Trade execution failed for {symbol}", level="error")
-                            continue
-                    
-                    # Update position metrics
-                    position = self.paper_positions.get(symbol) if self.paper_trading_active else self.positions.get(symbol)
-                    if position:
-                        await position.update_metrics(float(self.client.get_product(f"{symbol}-USD").price))
+                        # Generate signal with detailed logging
+                        signal = await self._calculate_trade_signal(symbol)
+                        await self.log(f"Signal for {symbol}:", context={
+                            'action': signal['action'],
+                            'score': signal['score'],
+                            'signals': signal['signals']
+                        })
+                        
+                        if signal['action'] != 'HOLD':
+                            # Execute trade with better error handling
+                            if self.paper_trading_active:
+                                try:
+                                    success = await self._simulate_trade(symbol, signal['action'], f"Signal: {signal['score']:.2f}")
+                                    if success:
+                                        await self.log(f"Paper trade executed for {symbol}: {signal['action']}", level="info")
+                                    else:
+                                        await self.log(f"Paper trade skipped for {symbol}: conditions not met", level="info")
+                                except Exception as trade_error:
+                                    await self.log(f"Paper trade failed for {symbol}: {str(trade_error)}", level="error")
+                                    continue
+                            else:
+                                # Similar handling for real trades...
+                                pass
+                        else:
+                            await self.log(f"No action needed for {symbol} (Score: {signal['score']:.2f})", level="info")
+                        
+                        # Update position metrics with error handling
+                        position = self.paper_positions.get(symbol) if self.paper_trading_active else self.positions.get(symbol)
+                        if position:
+                            try:
+                                current_price = float(self.client.get_product(f"{symbol}-USD").price)
+                                await position.update_metrics(current_price)
+                            except Exception as e:
+                                await self.log(f"Error updating metrics for {symbol}: {str(e)}", level="error")
+                
+                    except Exception as coin_error:
+                        await self.log(f"Error processing {symbol}: {str(coin_error)}", level="error")
+                        continue
                 
                 # Sleep for configured interval
                 await asyncio.sleep(self.trading_interval)
