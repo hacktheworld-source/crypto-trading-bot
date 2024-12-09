@@ -1645,7 +1645,7 @@ class TradingBot:
             context: Optional dictionary of context data to display
         """
         try:
-            # Log to file
+            # Log to file first
             log_func = getattr(logging, level.lower())
             log_func(message)
             
@@ -1657,16 +1657,21 @@ class TradingBot:
                 ])
                 message = f"{message}\n{formatted_context}"
             
-            # Send to Discord if channel is set
-            if hasattr(self, 'logs_channel'):
-                prefix = {
-                    "info": "ℹ️",
-                    "warning": "⚠️",
-                    "error": "❌"
-                }.get(level.lower(), "ℹ️")
-                
-                await self.logs_channel.send(f"{prefix} {message}")
-                
+            # Only try to send to Discord if channel is set AND ready
+            if hasattr(self, 'logs_channel') and self.logs_channel is not None:
+                try:
+                    prefix = {
+                        "info": "ℹ️",
+                        "warning": "⚠️",
+                        "error": "❌"
+                    }.get(level.lower(), "ℹ️")
+                    
+                    await self.logs_channel.send(f"{prefix} {message}")
+                except Exception as discord_error:
+                    # Don't raise error for Discord send failures during initialization
+                    if not message.startswith(("Added default coin", "already in watchlist")):
+                        logging.error(f"Discord logging error: {str(discord_error)}")
+                    
         except Exception as e:
             logging.error(f"Error in logging: {str(e)}")
 
