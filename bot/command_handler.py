@@ -194,7 +194,7 @@ class CommandHandler:
             # Trading Status
             status += "\n📊 Trading Status:"
             status += f"\n  Trading Active: {'✅' if bot.trading_active else '❌'}"
-            status += f"\n  Paper Trading: {'✅' if bot.paper_trading else '❌'}"
+            status += f"\n  Paper Trading: {'✅' if bot.paper_trading_active else '❌'}"
             status += f"\n  Check Interval: {bot.trading_interval//60} minutes"
             
             # Paper Trading Status

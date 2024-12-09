@@ -1757,7 +1757,13 @@ class TradingBot:
         """Get moving average analysis for a symbol."""
         try:
             symbol = symbol.upper()
-            prices = await self.price_manager.get_cached_price_data(symbol, days=30)
+            # Get enough data for 200-day MA
+            prices = await self.price_manager.get_cached_price_data(symbol, days=250)
+            
+            # Ensure we have enough data
+            if len(prices) < 200:
+                return f"Insufficient historical data for {symbol} (need 200 days, got {len(prices)} days)"
+            
             current_price = float(prices.iloc[-1])
             
             # Calculate SMAs
@@ -1771,6 +1777,9 @@ class TradingBot:
             # Format trend string
             trend_str = trend[0].upper() + trend[1:]  # Capitalize first letter
             
+            # Add trend emoji
+            trend_emoji = "🟢" if trend == 'bullish' else "🔴" if trend == 'bearish' else "⚪"
+            
             return f"Moving Average Analysis for {symbol}:\n```" \
                    f"📊 Price Levels:\n" \
                    f"  • Current: ${current_price:,.2f}\n" \
@@ -1778,7 +1787,7 @@ class TradingBot:
                    f"  • SMA 50: ${sma_50:,.2f}\n" \
                    f"  • SMA 200: ${sma_200:,.2f}\n\n" \
                    f"📈 Trend Analysis:\n" \
-                   f"  • Status: {trend_str}\n" \
+                   f"  • Status: {trend_emoji} {trend_str}\n" \
                    f"  • Above 20 MA: {'Yes ✅' if current_price > sma_20 else 'No ❌'}\n" \
                    f"  • Above 50 MA: {'Yes ✅' if current_price > sma_50 else 'No ❌'}\n" \
                    f"  • Above 200 MA: {'Yes ✅' if current_price > sma_200 else 'No ❌'}```"
