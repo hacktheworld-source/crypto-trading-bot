@@ -432,26 +432,9 @@ class CommandHandler:
         return response
         
     async def get_ma_analysis(self, symbol: str):
-        """Get moving average analysis"""
+        """Get moving average analysis for a symbol."""
         try:
-            symbol = symbol.upper()
-            ma_data = await self.trading_bot.calculate_moving_averages(symbol)
-            
-            # Determine trend emoji
-            trend_emoji = "🟢" if ma_data['trend'] == 'bullish' else \
-                         "🔴" if ma_data['trend'] == 'bearish' else "⚪"
-            
-            return f"Moving Average Analysis for {symbol}:\n```" \
-                   f"📊 Price Levels:\n" \
-                   f"  • Current: ${ma_data['current_price']:,.2f}\n" \
-                   f"  • SMA 20: ${ma_data['sma_20']:,.2f}\n" \
-                   f"  • SMA 50: ${ma_data['sma_50']:,.2f}\n" \
-                   f"  • SMA 200: ${ma_data['sma_200']:,.2f}\n\n" \
-                   f"📈 Trend Analysis:\n" \
-                   f"  • Status: {trend_emoji} {ma_data['trend'].title()}\n" \
-                   f"  • Above 20 MA: {'Yes ✅' if ma_data['current_price'] > ma_data['sma_20'] else 'No ❌'}\n" \
-                   f"  • Above 50 MA: {'Yes ✅' if ma_data['current_price'] > ma_data['sma_50'] else 'No ❌'}\n" \
-                   f"  • Above 200 MA: {'Yes ✅' if ma_data['current_price'] > ma_data['sma_200'] else 'No ❌'}```"
+            return await self.trading_bot.get_ma_analysis(symbol)
         except Exception as e:
             return self._format_error(str(e))
         
