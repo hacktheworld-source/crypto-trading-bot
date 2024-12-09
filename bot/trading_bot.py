@@ -1432,12 +1432,40 @@ class TradingBot:
         self.paper_trade_history.clear()
         logging.info(f"Paper trading reset with ${initial_balance} balance")
 
-    def set_discord_channel(self, channel):
-        """Set the Discord channel for notifications"""
-        self.discord_channel = channel
-        logging.info(f"Discord notifications channel set")
+    def set_discord_channel(self, channel) -> None:
+        """
+        Set the Discord channel for notifications.
+        
+        Args:
+            channel: Discord channel for trading notifications
+        """
+        try:
+            self.discord_channel = channel
+            logging.info("Discord notifications channel set")
+        except Exception as e:
+            logging.error(f"Error setting Discord channel: {str(e)}")
 
-    async def send_notification(self, message: str, is_update: bool = False):
+    def set_logs_channel(self, channel) -> None:
+        """
+        Set the Discord channel for logging messages.
+        
+        Args:
+            channel: Discord channel for log messages
+        """
+        try:
+            self.logs_channel = channel
+            logging.info("Discord logs channel set")
+        except Exception as e:
+            logging.error(f"Error setting logs channel: {str(e)}")
+
+    async def send_notification(self, message: str, is_update: bool = False) -> None:
+        """
+        Send a notification to the Discord channel.
+        
+        Args:
+            message: The message to send
+            is_update: Whether this is a status update (affects formatting)
+        """
         max_retries = 3
         retry_delay = 5  # seconds
         
@@ -1468,220 +1496,51 @@ class TradingBot:
                 self.discord_channel = None  # Reset channel if we can't send messages
                 break
 
-    async def send_trade_notification(self, action: str, symbol: str, price: float, 
-                                    quantity: float, is_paper: bool = False, 
-                                    profit_info: Dict[str, float] = None,
-                                    reason: str = None):
-        """Enhanced trade notification with market context"""
+    async def send_log(self, message: str, level: str = "info") -> None:
+        """
+        Send a log message to the logs channel.
+        
+        Args:
+            message: The message to log
+            level: Log level (info, warning, error)
+        """
         try:
-            color = discord.Color.green() if action == 'BUY' else \
-                    discord.Color.red() if action == 'SELL' else \
-                    discord.Color.blue()
+            if not self.logs_channel:
+                return
             
-            # Add reason to title if provided
-            title = f"{'' if action == 'BUY' else '📉'} {action} {symbol}"
-            if reason:
-                title += f" ({reason})"
+            # Add emoji based on level
+            prefix = "🔴" if level == "error" else "⚠️" if level == "warning" else "ℹ️"
+            formatted_message = f"{prefix} {message}"
             
-            if is_paper:
-                title = "📝 PAPER " + title
-            
-            embed = discord.Embed(
-                title=title,
-                timestamp=datetime.now(),
-                color=color
-            )
-            
-            # Add trade details
-            embed.add_field(
-                name="Trade Details",
-                value=f"```\n"
-                      f"Price: ${price:,.2f}\n"
-                      f"Quantity: {quantity:.8f}\n"
-                      f"Total: ${(price * quantity):,.2f}\n"
-                      f"Type: {'Paper' if is_paper else 'Real'}"
-                      f"```",
-                inline=False
-            )
-            
-            # Add profit info for sells
-            if profit_info and action == 'SELL':
-                embed.add_field(
-                    name="Profit Information",
-                    value=f"```\n"
-                          f"Profit: ${profit_info['profit_usd']:,.2f}\n"
-                          f"Profit Percentage: {profit_info['profit_percentage']:.2f}%\n"
-                          f"```",
-                    inline=False
-                )
-            
-            await self.discord_channel.send(embed=embed)
+            await self.logs_channel.send(formatted_message)
             
         except Exception as e:
-            logging.error(f"Error sending trade notification: {str(e)}")
+            logging.error(f"Error sending log message: {str(e)}")
+            # Don't reset channel here to keep trying
 
-    async def calculate_bollinger_bands(self, symbol: str) -> Dict[str, Any]:
-        """Calculate Bollinger Bands using cached price data"""
-        try:
-            prices = await self.price_manager.get_cached_price_data(symbol, days=20)
-            sma = prices.rolling(window=20).mean()
-            std = prices.rolling(window=20).std()
-            
-            current_sma = float(sma.iloc[-1])
-            current_std = float(std.iloc[-1])
-            
-            return {
-                'middle': current_sma,
-                'upper': current_sma + (current_std * 2),
-                'lower': current_sma - (current_std * 2),
-                'bandwidth': float((current_std * 4 / current_sma) * 100)
-            }
-        except Exception as e:
-            await self.log(f"Error calculating Bollinger Bands: {str(e)}", level="error")
-            raise TradingError(f"Failed to calculate Bollinger Bands: {str(e)}", error_type='DATA')
-
-    async def _log_message(self, message: str, level: str = "info", **kwargs):
-        """Internal logging method"""
+    async def _log_message(self, message: str, level: str = "info", **kwargs) -> None:
+        """
+        Internal logging method that handles both file and Discord logging.
+        
+        Args:
+            message: Message to log
+            level: Log level
+            **kwargs: Additional context for logging
+        """
+        # First log to file
         if level == "error":
             logging.error(message)
         elif level == "warning":
             logging.warning(message)
         else:
             logging.info(message)
-
-    def _determine_trend(self, current_price: float, sma_20: float, sma_50: float, sma_200: float) -> str:
-        """
-        Determine market trend based on moving averages.
         
-        Args:
-            current_price: Current asset price
-            sma_20: 20-period simple moving average
-            sma_50: 50-period simple moving average
-            sma_200: 200-period simple moving average
-            
-        Returns:
-            str: 'bullish', 'bearish', or 'neutral'
-        """
-        try:
-            # Short-term trend (current price vs SMAs)
-            short_term = (
-                'bullish' if current_price > sma_20 else
-                'bearish' if current_price < sma_20 else
-                'neutral'
-            )
-            
-            # Medium-term trend (SMA20 vs SMA50)
-            medium_term = (
-                'bullish' if sma_20 > sma_50 else
-                'bearish' if sma_20 < sma_50 else
-                'neutral'
-            )
-            
-            # Long-term trend (SMA50 vs SMA200)
-            long_term = (
-                'bullish' if sma_50 > sma_200 else
-                'bearish' if sma_50 < sma_200 else
-                'neutral'
-            )
-            
-            # Weight the trends (short term most important)
-            if short_term == medium_term == long_term:
-                return short_term
-            elif short_term == medium_term:
-                return short_term
-            elif medium_term == long_term:
-                return medium_term
-            else:
-                return 'neutral'  # When trends conflict
-                
-        except Exception as e:
-            self.log(f"Error determining trend: {str(e)}", level="error")
-            return 'neutral'
-
-    async def _calculate_btc_correlation(self, symbol: str) -> float:
-        """
-        Calculate correlation between symbol and BTC prices.
-        
-        Args:
-            symbol: The cryptocurrency symbol to compare with BTC
-            
-        Returns:
-            float: Correlation coefficient (-1 to 1)
-        """
-        try:
-            if symbol == 'BTC':
-                return 1.0
-                
-            # Get price data for both assets
-            btc_prices = await self.price_manager.get_cached_price_data('BTC', days=30)
-            symbol_prices = await self.price_manager.get_cached_price_data(symbol, days=30)
-            
-            # Align the timestamps
-            common_dates = btc_prices.index.intersection(symbol_prices.index)
-            if len(common_dates) < 2:
-                return 0.0
-                
-            btc_returns = btc_prices[common_dates].pct_change().dropna()
-            symbol_returns = symbol_prices[common_dates].pct_change().dropna()
-            
-            # Calculate correlation
-            correlation = btc_returns.corr(symbol_returns)
-            return float(correlation)
-            
-        except Exception as e:
-            await self.log(f"Error calculating correlation: {str(e)}", level="error")
-            return 0.0
-
-    async def post_init(self) -> None:
-        """
-        Perform post-initialization tasks after Discord connection is established.
-        This includes loading saved configuration and initializing trading components.
-        """
-        try:
-            logging.info("Starting post-initialization...")
-            
-            # Load saved configuration
-            self.load_config()
-            
-            # Initialize watched coins set if empty
-            if not hasattr(self, 'watched_coins'):
-                self.watched_coins = set()
-            
-            # Add default coins to watch
-            default_coins = {'BTC', 'ETH'}
-            for coin in default_coins:
-                if await self.add_coin(coin):
-                    logging.info(f"Added default coin {coin} to watchlist")
-            
-            # Ensure all positions are in watchlist
-            self._ensure_positions_watched()
-            
-            # Test API connection
+        # Then try to send to Discord if we have a logs channel
+        if self.logs_channel:
             try:
-                await self.test_api_connection()
-                logging.info("API connection test successful")
+                await self.send_log(message, level)
             except Exception as e:
-                logging.error(f"API connection test failed: {str(e)}")
-            
-            # Initialize price cache for watched coins
-            for symbol in self.watched_coins:
-                try:
-                    await self.price_manager.get_cached_price_data(symbol)
-                    logging.info(f"Initialized price cache for {symbol}")
-                except Exception as e:
-                    logging.error(f"Failed to initialize price cache for {symbol}: {str(e)}")
-            
-            # Start heartbeat task
-            asyncio.create_task(self._heartbeat())
-            
-            logging.info("Post-initialization completed successfully")
-            
-        except Exception as e:
-            error_msg = f"Post-initialization failed: {str(e)}"
-            logging.error(error_msg)
-            if hasattr(self, 'logs_channel'):
-                await self.send_notification(error_msg)
-            raise
+                logging.error(f"Failed to send log to Discord: {str(e)}")
 
     async def _heartbeat(self) -> None:
         """
