@@ -78,6 +78,7 @@ class PriceManager:
             prices = pd.Series(
                 [float(candle.close) for candle in reversed(response.candles)],
                 index=[datetime.fromtimestamp(float(candle.start)) for candle in reversed(response.candles)]
+            )  # Added missing closing parenthesis here
             
             # Update cache
             self._cache[cache_key] = (prices, current_time)
