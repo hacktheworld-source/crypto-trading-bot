@@ -78,7 +78,6 @@ class PriceManager:
             prices = pd.Series(
                 [float(candle.close) for candle in reversed(response.candles)],
                 index=[datetime.fromtimestamp(float(candle.start)) for candle in reversed(response.candles)]
-            )  # Added missing closing parenthesis here
             
             # Update cache
             self._cache[cache_key] = (prices, current_time)
@@ -1275,9 +1274,6 @@ class TradingBot:
                 return
             
             current_price = float(self.client.get_product(f"{symbol}-USD").price)
-            
-            # Update position with current price
-            position.update_price(current_price)
             profit_info = position.calculate_profit(current_price)
             
             # Check stop loss
@@ -1769,6 +1765,13 @@ class TradingBot:
             if self.trading_active:
                 status += f"  • Real: ${real_balance['total_usd_value']:.2f}\n"
                 
+            # Add position sizing info
+            status += "\n📊 Position Sizing:\n"
+            status += f"  • Strategy: Dynamic (1-10% of portfolio)\n"
+            status += f"  • Min Size: 1% of available funds\n"
+            status += f"  • Max Size: 10% of available funds\n"
+            status += f"  • Scaling: Based on signal strength\n"
+            
             status += "```"
             return status
             

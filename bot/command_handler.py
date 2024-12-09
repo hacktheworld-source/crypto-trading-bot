@@ -166,25 +166,12 @@ class CommandHandler:
         """Stop any active trading"""
         return await self.trading_bot.stop_trading()
         
-    async def get_status(self, *args) -> str:
-        """Get bot status with updated position sizing info."""
+    async def get_status(self):
+        """Get bot status."""
         try:
-            status = await self.trading_bot.get_status()
-            
-            # Add position sizing strategy info
-            sizing_info = (
-                " Position Sizing:\n"
-                f"  • Strategy: Dynamic (1-10% of portfolio)\n"
-                f"  • Min Size: 1% of available funds\n"
-                f"  • Max Size: 10% of available funds\n"
-                f"  • Scaling: Based on signal strength\n"
-            )
-            
-            return status + "\n" + sizing_info
-            
+            return await self.trading_bot.get_status()
         except Exception as e:
-            await self.trading_bot.log(f"Error getting status: {str(e)}", level="error")
-            return self._format_error(f"Error getting status: {str(e)}")
+            return self._format_error(str(e))
         
     async def test_api(self, *args):
         try:
@@ -633,7 +620,7 @@ class CommandHandler:
                     self.trading_bot.partial_tp_size = partial_size
                     changes.append(f"partial size: {partial_size*100}%")
                 else:
-                    return "❌ Partial size must be between 0.1 and 0.9"
+                    return "��� Partial size must be between 0.1 and 0.9"
                     
             if changes:
                 self.trading_bot.save_config()
