@@ -434,16 +434,51 @@ class TradingBot:
     def get_trade_history(self):
         return self.trade_history
         
-    def add_coin(self, symbol: str) -> bool:
-        """Add a coin to watchlist"""
+    async def add_coin(self, symbol: str) -> bool:
+        """
+        Add a coin to watchlist with validation.
+        
+        Args:
+            symbol: The cryptocurrency symbol to add (e.g., 'BTC')
+            
+        Returns:
+            bool: True if added successfully, False otherwise
+        """
         try:
-            # Validate the symbol
-            self.client.get_product(f"{symbol}-USD")
+            symbol = symbol.upper()
+            
+            # Check if already in watchlist
+            if symbol in self.watched_coins:
+                await self.log(f"{symbol} already in watchlist", level="warning")
+                return True
+            
+            # Validate symbol with Coinbase API
+            try:
+                product = self.client.get_product(f"{symbol}-USD")
+                if not product:
+                    raise ValueError(f"Invalid symbol: {symbol}")
+            except Exception as e:
+                await self.log(f"Failed to validate {symbol}: {str(e)}", level="error")
+                return False
+            
+            # Initialize price cache for new symbol
+            try:
+                await self.price_manager.get_cached_price_data(symbol)
+            except Exception as e:
+                await self.log(f"Failed to initialize price cache for {symbol}: {str(e)}", level="error")
+                return False
+            
+            # Add to watchlist
             self.watched_coins.add(symbol)
-            logging.info(f"Added {symbol} to watchlist")
+            await self.log(f"Added {symbol} to watchlist")
+            
+            # Save updated configuration
+            self.save_config()
+            
             return True
+            
         except Exception as e:
-            logging.error(f"Failed to add {symbol}: {str(e)}")
+            await self.log(f"Error adding {symbol}: {str(e)}", level="error")
             return False
 
     async def remove_coin(self, symbol: str) -> bool:
@@ -514,46 +549,73 @@ class TradingBot:
             logging.error(f"Error checking balance: {str(e)}")
             return False 
 
-    def save_config(self):
-        """Save current configuration to file"""
-        config = {
-            'watched_coins': list(self.watched_coins),
-            'trading_interval': self.trading_interval,
-            'rsi_period': self.rsi_period,
-            'rsi_overbought': self.rsi_overbought,
-            'rsi_oversold': self.rsi_oversold,
-            'trade_amount': self.trade_amount,
-            'stop_loss_percentage': self.stop_loss_percentage,  # Add this
-            'take_profit_percentage': self.take_profit_percentage,
-            'partial_tp_percentage': self.partial_tp_percentage,
-            'partial_tp_size': self.partial_tp_size,
-            'trailing_stop_percentage': self.trailing_stop_percentage,
-            'trailing_stop_enabled': self.trailing_stop_enabled,
-            'trailing_stop_activation': self.trailing_stop_activation
-        }
+    def save_config(self) -> None:
+        """Save current configuration to file with error handling"""
         try:
+            config = {
+                'watched_coins': list(self.watched_coins),
+                'trading_interval': self.trading_interval,
+                'rsi_period': self.rsi_period,
+                'rsi_overbought': self.rsi_overbought,
+                'rsi_oversold': self.rsi_oversold,
+                'trade_amount': self.trade_amount,
+                'stop_loss_percentage': self.stop_loss_percentage,
+                'take_profit_percentage': self.take_profit_percentage,
+                'max_position_size': self.max_position_size,
+                'partial_tp_percentage': self.partial_tp_percentage,
+                'partial_tp_size': self.partial_tp_size,
+                'trailing_stop_percentage': self.trailing_stop_percentage,
+                'trailing_stop_enabled': self.trailing_stop_enabled,
+                'trailing_stop_activation': self.trailing_stop_activation
+            }
+            
             with open(self.CONFIG_FILE, 'w') as f:
-                json.dump(config, f)
+                json.dump(config, f, indent=4)
+            
             logging.info("Configuration saved successfully")
+            
         except Exception as e:
             logging.error(f"Error saving configuration: {str(e)}")
-            
-    def load_config(self):
+
+    def load_config(self) -> None:
         """Load configuration from file or use defaults"""
         try:
+            if not os.path.exists(self.CONFIG_FILE):
+                logging.warning("No config file found, using defaults")
+                return
+            
             with open(self.CONFIG_FILE, 'r') as f:
                 config = json.load(f)
-                self.rsi_period = config.get('rsi_period', 14)
-                self.rsi_overbought = config.get('rsi_overbought', 70.0)
-                self.rsi_oversold = config.get('rsi_oversold', 30.0)
-                self.trading_interval = config.get('trading_interval', 300)
-                self.trade_amount = config.get('trade_amount', 100.0)
-                self.stop_loss_percentage = config.get('stop_loss_percentage', 5.0)
-                self.take_profit_percentage = config.get('take_profit_percentage', 10.0)
-                self.max_position_size = config.get('max_position_size', 1000.0)
-        except FileNotFoundError:
-            # Use synchronous logging here since we're in a sync method
-            logging.warning("No config file found, using defaults")
+            
+            # Load watched coins
+            self.watched_coins = set(config.get('watched_coins', []))
+            
+            # Load trading parameters
+            self.trading_interval = config.get('trading_interval', 300)
+            self.trade_amount = config.get('trade_amount', 100.0)
+            self.max_position_size = config.get('max_position_size', 1000.0)
+            
+            # Load technical analysis parameters
+            self.rsi_period = config.get('rsi_period', 14)
+            self.rsi_overbought = config.get('rsi_overbought', 70)
+            self.rsi_oversold = config.get('rsi_oversold', 30)
+            
+            # Load risk management parameters
+            self.stop_loss_percentage = config.get('stop_loss_percentage', 5.0)
+            self.take_profit_percentage = config.get('take_profit_percentage', 10.0)
+            self.partial_tp_percentage = config.get('partial_tp_percentage', 5.0)
+            self.partial_tp_size = config.get('partial_tp_size', 0.5)
+            
+            # Load trailing stop parameters
+            self.trailing_stop_percentage = config.get('trailing_stop_percentage', 2.0)
+            self.trailing_stop_enabled = config.get('trailing_stop_enabled', True)
+            self.trailing_stop_activation = config.get('trailing_stop_activation', 3.0)
+            
+            logging.info("Configuration loaded successfully")
+            
+        except Exception as e:
+            logging.error(f"Error loading configuration: {str(e)}")
+            logging.warning("Using default configuration")
 
     async def test_api_connection(self):
         """Test API connection by fetching BTC price"""
