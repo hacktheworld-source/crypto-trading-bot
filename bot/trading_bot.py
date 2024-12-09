@@ -1737,25 +1737,40 @@ class TradingBot:
             real_positions = len(getattr(self, 'positions', {}))
             paper_positions = len(getattr(self, 'paper_positions', {}))
             
-            status = f"Bot Status:\n```" \
-                    f"🤖 Mode:\n" \
-                    f"  • Real Trading: {'Active ✅' if self.trading_active else 'Inactive ❌'}\n" \
-                    f"  • Paper Trading: {'Active ✅' if self.paper_trading_active else 'Inactive ❌'}\n\n" \
-                    f"📊 Positions:\n" \
-                    f"  • Real: {real_positions}\n" \
-                    f"  • Paper: {paper_positions}\n" \
-                    f"  • Watching: {watched} coins\n\n" \
-                    f"💰 Balance:\n"
+            # Get balances with error handling
+            try:
+                real_balance = await self.get_account_balance()
+            except Exception as e:
+                logging.warning(f"Failed to get real balance: {str(e)}")
+                real_balance = {'balances': {}, 'total_usd_value': 0.0}
             
+            try:
+                paper_balance = self.get_paper_balance()
+            except Exception as e:
+                logging.warning(f"Failed to get paper balance: {str(e)}")
+                paper_balance = {'cash_balance': 0, 'total_value': 0}
+            
+            status = "Bot Status:\n```"
+            
+            # Trading Status
+            status += "\n🤖 Mode:\n"
+            status += f"  • Real Trading: {'✅' if self.trading_active else '❌'}\n"
+            status += f"  • Paper Trading: {'✅' if self.paper_trading_active else '❌'}\n\n"
+            
+            status += "📊 Positions:\n"
+            status += f"  • Real: {real_positions}\n"
+            status += f"  • Paper: {paper_positions}\n"
+            status += f"  • Watching: {watched} coins\n\n"
+            
+            status += "💰 Balance:\n"
             if self.paper_trading_active:
-                paper_balance = await self.get_paper_balance()
                 status += f"  • Paper: ${paper_balance['total_value']:.2f}\n"
                 
             if self.trading_active:
-                real_balance = await self.get_account_balance()
                 status += f"  • Real: ${real_balance['total_usd_value']:.2f}\n"
                 
-            return status + "```"
+            status += "```"
+            return status
             
         except Exception as e:
             await self.log(f"Error getting status: {str(e)}", level="error")
