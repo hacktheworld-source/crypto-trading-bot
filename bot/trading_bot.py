@@ -1752,21 +1752,38 @@ class TradingBot:
             # Trading Status
             status += "\n🤖 Mode:\n"
             status += f"  • Real Trading: {'✅' if self.trading_active else '❌'}\n"
-            status += f"  • Paper Trading: {'✅' if self.paper_trading_active else '❌'}\n\n"
+            status += f"  • Paper Trading: {'✅' if self.paper_trading_active else '❌'}\n"
             
-            status += "📊 Positions:\n"
+            # Positions
+            status += "\n📊 Positions:\n"
             status += f"  • Real: {real_positions}\n"
             status += f"  • Paper: {paper_positions}\n"
-            status += f"  • Watching: {watched} coins\n\n"
+            status += f"  • Watching: {watched} coins\n"
             
-            status += "💰 Balance:\n"
-            if self.paper_trading_active:
-                status += f"  • Paper: ${paper_balance['total_value']:.2f}\n"
-                
-            if self.trading_active:
-                status += f"  • Real: ${real_balance['total_usd_value']:.2f}\n"
-                
-            # Add position sizing info
+            # Real Account Balances
+            if real_balance['balances']:
+                status += "\n💰 Real Account Balances:\n"
+                for symbol, data in real_balance['balances'].items():
+                    status += f"  • {symbol}: {data['balance']:.8f} (${data['usd_value']:.2f})\n"
+                status += f"  • Total Real Portfolio Value: ${real_balance['total_usd_value']:.2f}\n"
+            
+            # Paper Trading Account
+            status += "\n📝 Paper Trading Account:\n"
+            status += f"  • Paper Cash: ${paper_balance['cash_balance']:.2f}\n"
+            status += f"  • Paper Portfolio Value: ${paper_balance['total_value']:.2f}\n"
+            
+            # Watched Coins with Current Prices
+            status += "\n🔍 Watched Coins:\n"
+            for coin in sorted(self.watched_coins):
+                try:
+                    product = self.client.get_product(f"{coin}-USD")
+                    current_price = float(product.price)
+                    rsi = await self.calculate_rsi(coin)
+                    status += f"  • {coin}: ${current_price:,.2f} (RSI: {rsi:.1f})\n"
+                except Exception as e:
+                    status += f"  • {coin}: Error fetching data\n"
+            
+            # Position Sizing Strategy
             status += "\n📊 Position Sizing:\n"
             status += f"  • Strategy: Dynamic (1-10% of portfolio)\n"
             status += f"  • Min Size: 1% of available funds\n"
