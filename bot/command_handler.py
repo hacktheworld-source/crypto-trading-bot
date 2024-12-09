@@ -166,97 +166,21 @@ class CommandHandler:
         """Stop any active trading"""
         return await self.trading_bot.stop_trading()
         
-    async def get_status(self):
-        """
-        Get comprehensive bot status with proper error handling.
-        
-        Returns:
-            str: Formatted status message for Discord
-        """
+    async def get_status(self, *args) -> str:
+        """Get bot status with updated position sizing info."""
         try:
-            bot = self.trading_bot
+            status = await self.trading_bot.get_status()
             
-            # Get balances with error handling
-            try:
-                real_balance = await bot.get_account_balance()
-            except Exception as e:
-                logging.warning(f"Failed to get real balance: {str(e)}")
-                real_balance = {'balances': {}, 'total_usd_value': 0.0}
+            # Add position sizing strategy info
+            sizing_info = (
+                " Position Sizing:\n"
+                f"  • Strategy: Dynamic (1-10% of portfolio)\n"
+                f"  • Min Size: 1% of available funds\n"
+                f"  • Max Size: 10% of available funds\n"
+                f"  • Scaling: Based on signal strength\n"
+            )
             
-            try:
-                paper_balance = bot.get_paper_balance() if hasattr(bot, 'get_paper_balance') else {'cash_balance': 0, 'total_value': 0}
-            except Exception as e:
-                logging.warning(f"Failed to get paper balance: {str(e)}")
-                paper_balance = {'cash_balance': 0, 'total_value': 0}
-            
-            status = "Bot Status:\n```"
-            
-            # Trading Status
-            status += "\n📊 Trading Status:"
-            status += f"\n  Trading Active: {'✅' if bot.trading_active else '❌'}"
-            status += f"\n  Paper Trading: {'✅' if bot.paper_trading_active else '❌'}"
-            status += f"\n  Check Interval: {bot.trading_interval//60} minutes"
-            
-            # Paper Trading Status
-            if hasattr(bot, 'paper_positions'):
-                status += f"\n  Paper Positions: {len(bot.paper_positions)}"
-            if hasattr(bot, 'paper_trade_history'):
-                status += f"\n  Paper Trades: {len(bot.paper_trade_history)}"
-            
-            # Trading Configuration
-            status += "\n\n⚙️ Configuration:"
-            status += f"\n  Trade Amount: ${bot.trade_amount:.2f}"
-            status += f"\n  Stop Loss: {bot.stop_loss_percentage}%"
-            status += f"\n  Take Profit: {bot.take_profit_percentage}%"
-            status += f"\n  Max Position Size: ${bot.max_position_size:.2f}"
-            
-            # Technical Indicators
-            status += "\n\n📈 Technical Indicators:"
-            status += f"\n  RSI Period: {bot.rsi_period} days"
-            status += f"\n  RSI Thresholds: {bot.rsi_oversold} (oversold) / {bot.rsi_overbought} (overbought)"
-            
-            # Watched Coins
-            status += "\n\n🔍 Watched Coins:"
-            if bot.watched_coins:
-                for coin in sorted(bot.watched_coins):
-                    try:
-                        # Use synchronous price fetch
-                        product = bot.client.get_product(f"{coin}-USD")
-                        current_price = float(product.price)
-                        
-                        # Calculate RSI using existing method
-                        rsi = await bot.calculate_rsi(coin)
-                        
-                        status += f"\n  {coin}: ${current_price:,.2f} (RSI: {rsi:.1f})"
-                    except Exception as e:
-                        status += f"\n  {coin}: Error fetching data ({str(e)})"
-            else:
-                status += "\n  None"
-            
-            # Real Account Balances (only show if there are balances)
-            if real_balance['balances']:
-                status += "\n\n💰 Real Account Balances:"
-                for symbol, data in real_balance['balances'].items():
-                    status += f"\n  {symbol}: {data['balance']:.8f} (${data['usd_value']:.2f})"
-                status += f"\n  Total Real Portfolio Value: ${real_balance['total_usd_value']:.2f}"
-            
-            # Paper Trading Account
-            status += "\n\n📝 Paper Trading Account:"
-            status += f"\n  Paper Cash: ${paper_balance['cash_balance']:.2f}"
-            paper_profit = paper_balance['total_value'] - 1000.0  # Assuming $1000 starting balance
-            paper_profit_pct = (paper_profit / 1000.0) * 100
-            status += f"\n  Paper Portfolio Value: ${paper_balance['total_value']:.2f}"
-            status += f"\n  Paper P/L: ${paper_profit:+.2f} ({paper_profit_pct:+.2f}%)"
-            
-            # Trading History Summary
-            status += "\n\n📜 Trading History:"
-            status += f"\n  Total Real Trades: {len(bot.trade_history)}"
-            status += f"\n  Total Paper Trades: {len(getattr(bot, 'paper_trade_history', []))}"
-            status += f"\n  Active Real Positions: {len(getattr(bot, 'positions', []))}"
-            status += f"\n  Active Paper Positions: {len(getattr(bot, 'paper_positions', []))}"
-            
-            status += "```"
-            return status
+            return status + "\n" + sizing_info
             
         except Exception as e:
             await self.trading_bot.log(f"Error getting status: {str(e)}", level="error")

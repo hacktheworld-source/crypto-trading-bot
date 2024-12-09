@@ -25,6 +25,14 @@ class Position:
         self.exit_history = []
         self.metrics = PositionMetrics(self)
         self.stops = PositionStops(self)
+        
+        # Add position value tracking
+        self.initial_value = entry_price * quantity
+        self.current_value = self.initial_value
+        
+        # Add risk metrics
+        self.risk_score = 0.0  # Updated by signal calculations
+        self.market_correlation = 0.0  # Updated by BTC correlation
 
     async def update_metrics(self, current_price: float) -> None:
         """Update position metrics"""

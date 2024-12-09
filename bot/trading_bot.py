@@ -78,7 +78,6 @@ class PriceManager:
             prices = pd.Series(
                 [float(candle.close) for candle in reversed(response.candles)],
                 index=[datetime.fromtimestamp(float(candle.start)) for candle in reversed(response.candles)]
-            )
             
             # Update cache
             self._cache[cache_key] = (prices, current_time)
@@ -185,12 +184,11 @@ class TradingBot:
             self.rsi_overbought = 70
             self.rsi_oversold = 30
             self.trading_interval = 300  # 5 minutes
-            self.trade_amount = 100.0
-            self.stop_loss_percentage = 5.0
-            self.take_profit_percentage = 10.0
-            self.max_position_size = 1000.0
-            self.partial_tp_percentage = 5.0
-            self.partial_tp_size = 0.5
+            self.stop_loss_percentage = float(os.getenv('STOP_LOSS_PERCENTAGE', 5.0))
+            self.take_profit_percentage = float(os.getenv('TAKE_PROFIT_PERCENTAGE', 10.0))
+            self.max_position_size = float(os.getenv('MAX_POSITION_SIZE', 1000.0))
+            self.partial_tp_percentage = float(os.getenv('PARTIAL_TP_PERCENTAGE', 7.0))
+            self.partial_tp_size = float(os.getenv('PARTIAL_TP_SIZE', 0.5))
             self.trailing_stop_percentage = 2.0
             self.trailing_stop_enabled = True
             self.trailing_stop_activation = 3.0
@@ -606,30 +604,28 @@ class TradingBot:
         for symbol in self.paper_positions.keys():
             self.watched_coins.add(symbol)
 
-    def _check_balance(self, symbol, action='BUY'):
+    async def _check_balance(self, symbol: str, action: str = 'BUY') -> bool:
+        """Check if sufficient balance exists for trade."""
         try:
+            if self.paper_trading_active:
+                if action == 'BUY':
+                    return self.paper_balance > 0
+                else:
+                    return symbol in self.paper_positions
+                    
+            # Real trading balance check
             accounts = self.client.get_accounts()
             
             if action == 'BUY':
-                # Check USD balance
                 usd_account = next((acc for acc in accounts.data if acc.currency == 'USD'), None)
-                if not usd_account:
-                    return False
-                return float(usd_account.available_balance.value) >= self.trade_amount
+                return bool(usd_account and float(usd_account.available_balance.value) > 0)
             else:
-                # Check crypto balance
                 crypto_account = next((acc for acc in accounts.data if acc.currency == symbol), None)
-                if not crypto_account:
-                    return False
-                    
-                # Get current price using get_product instead of get_spot_price
-                product = self.client.get_product(f"{symbol}-USD")
-                current_price = float(product.price)
-                return float(crypto_account.available_balance.value) * current_price >= self.trade_amount
+                return bool(crypto_account and float(crypto_account.available_balance.value) > 0)
                 
         except Exception as e:
-            logging.error(f"Error checking balance: {str(e)}")
-            return False 
+            await self.log(f"Error checking balance: {str(e)}", level="error")
+            return False
 
     def save_config(self) -> None:
         """Save current configuration to file with error handling"""
@@ -685,7 +681,7 @@ class TradingBot:
             # Load risk management parameters
             self.stop_loss_percentage = config.get('stop_loss_percentage', 5.0)
             self.take_profit_percentage = config.get('take_profit_percentage', 10.0)
-            self.partial_tp_percentage = config.get('partial_tp_percentage', 5.0)
+            self.partial_tp_percentage = config.get('partial_tp_percentage', 7.0)
             self.partial_tp_size = config.get('partial_tp_size', 0.5)
             
             # Load trailing stop parameters
@@ -822,44 +818,50 @@ class TradingBot:
             raise
 
     async def _calculate_position_size(self, symbol: str) -> float:
-        """Calculate position size based on risk parameters and available funds."""
+        """Calculate position size based on available funds and risk."""
         try:
-            # For paper trading, we should use paper balance instead of real balance
+            # Get available funds
             if self.paper_trading_active:
                 available_funds = self.paper_balance
-                paper_balance = await self.get_paper_balance()
-                portfolio_value = paper_balance['total_value']
             else:
-                account_balance = await self.get_account_balance()
-                available_funds = float(account_balance['balances'].get('USD', {}).get('balance', 0))
-                portfolio_value = account_balance['total_usd_value']
+                account = await self.get_account_balance()
+                available_funds = float(account['balances'].get('USD', {}).get('balance', 0))
+
+            if available_funds <= 0:
+                return 0
+
+            # Get current price
+            current_price = await self.price_manager.get_current_price(symbol)
             
-            # Never risk more than 2% of total portfolio on any single trade
-            max_risk_amount = portfolio_value * 0.02
+            # Calculate risk score (0-1)
+            signal = await self._calculate_trade_signal(symbol)
+            risk_score = min(max((signal['score'] / 100), 0), 1)  # Normalize to 0-1
             
-            # Calculate position size based on stop loss
-            current_price = float(self.client.get_product(f"{symbol}-USD").price)
-            risk_per_share = current_price * (self.stop_loss_percentage / 100)
+            # Base position size on risk score (1-10% of available funds)
+            position_percentage = 0.01 + (risk_score * 0.09)  # 1-10% based on risk
+            position_size = available_funds * position_percentage
             
-            # Position size that risks the max risk amount
-            position_size = min(
-                max_risk_amount / risk_per_share * current_price,
-                available_funds * 0.95,  # Leave 5% buffer for fees
-                self.max_position_size
+            # Ensure minimum order size (0.1% of available funds)
+            min_order = available_funds * 0.001
+            if position_size < min_order:
+                return 0
+            
+            # Calculate quantity
+            quantity = position_size / current_price
+            
+            # Log calculation
+            await self.log(
+                f"Position size calculation for {symbol}:",
+                context={
+                    'available_funds': available_funds,
+                    'risk_score': risk_score,
+                    'position_percentage': position_percentage,
+                    'position_size': position_size,
+                    'quantity': quantity
+                }
             )
             
-            # Log calculation details
-            await self.log(f"Position size calculation for {symbol}:", context={
-                'available_funds': available_funds,
-                'portfolio_value': portfolio_value,
-                'max_risk_amount': max_risk_amount,
-                'current_price': current_price,
-                'risk_per_share': risk_per_share,
-                'calculated_size': position_size
-            })
-            
-            # Ensure minimum trade size
-            return max(5.0, position_size) if position_size >= 5.0 else 0
+            return quantity
             
         except Exception as e:
             await self.log(f"Error calculating position size: {str(e)}", level="error")
@@ -1880,3 +1882,33 @@ class TradingBot:
         except Exception as e:
             await self.log(f"Error executing trade: {str(e)}", level="error")
             return False
+
+    async def _calculate_btc_correlation(self, symbol: str) -> float:
+        """
+        Calculate correlation between symbol and BTC prices.
+        
+        Args:
+            symbol: The cryptocurrency symbol to compare with BTC
+            
+        Returns:
+            float: Correlation coefficient (-1 to 1)
+        """
+        try:
+            if symbol == 'BTC':
+                return 1.0
+            
+            # Get price data for both assets
+            btc_prices = await self.price_manager.get_cached_price_data('BTC', days=30)
+            symbol_prices = await self.price_manager.get_cached_price_data(symbol, days=30)
+            
+            # Calculate daily returns
+            btc_returns = btc_prices.pct_change().dropna()
+            symbol_returns = symbol_prices.pct_change().dropna()
+            
+            # Calculate correlation
+            correlation = btc_returns.corr(symbol_returns)
+            return float(correlation) if not pd.isna(correlation) else 0.0
+            
+        except Exception as e:
+            await self.log(f"Error calculating BTC correlation for {symbol}: {str(e)}", level="error")
+            return 0.0  # Default to no correlation on error
