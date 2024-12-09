@@ -899,7 +899,13 @@ class TradingBot:
             
             # Calculate volatility
             price_range = ((prices.max() - prices.min()) / prices.min()) * 100
-            is_volatile = price_range > 10
+            is_volatile = price_range > 10  # Define volatility threshold
+            
+            await self.log(f"Market conditions for {symbol}:", context={
+                'price_range': f"{price_range:.1f}%",
+                'is_volatile': is_volatile,
+                'threshold': "10%"
+            })
             
             # Check trading hours
             current_hour = datetime.now().hour
@@ -908,7 +914,7 @@ class TradingBot:
             # Get market alignment
             btc_correlation = await self._calculate_btc_correlation(symbol) if symbol != 'BTC' else 1.0
             
-            return {
+            conditions = {
                 'is_volatile': is_volatile,
                 'price_range_7d': price_range,
                 'is_high_activity': is_high_activity,
@@ -919,6 +925,10 @@ class TradingBot:
                     btc_correlation > 0.5
                 )
             }
+            
+            await self.log(f"Trading conditions for {symbol}:", context=conditions)
+            return conditions
+            
         except Exception as e:
             await self.log(f"Error checking market conditions: {str(e)}", level="error")
             raise TradingError(f"Failed to check market conditions: {str(e)}", error_type='DATA')
@@ -1880,8 +1890,15 @@ class TradingBot:
             bb_score = ((current_price - bb_data['lower']) / (bb_data['upper'] - bb_data['lower']) - 0.5) * -100
             sentiment_score = sentiment['sentiment_score']
             
-            # Combine scores
+            # Combine scores with detailed logging
             total_score = (rsi_score * 0.3) + (bb_score * 0.3) + (sentiment_score * 0.4)
+            
+            # Log individual components
+            await self.log(f"Signal components for {symbol}:", context={
+                'rsi': {'value': rsi, 'score': rsi_score, 'weight': 0.3},
+                'bollinger': {'score': bb_score, 'weight': 0.3},
+                'sentiment': {'score': sentiment_score, 'weight': 0.4}
+            })
             
             # Determine action
             action = 'HOLD'
@@ -1889,6 +1906,14 @@ class TradingBot:
                 action = 'BUY'
             elif total_score < -20:
                 action = 'SELL'
+            
+            # Log final decision
+            await self.log(f"Trading decision for {symbol}:", context={
+                'action': action,
+                'total_score': total_score,
+                'threshold': {'buy': 20, 'sell': -20},
+                'market_suitable': conditions['suitable_for_trading']
+            })
             
             return {
                 'action': action,
