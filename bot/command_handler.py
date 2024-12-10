@@ -404,101 +404,93 @@ class CommandHandler:
         except Exception as e:
             return self._format_error(str(e))
         
-    def get_paper_balance(self):
-        """Get paper trading account status"""
-        balance = self.trading_bot.get_paper_balance()
+    async def get_paper_balance(self) -> str:
+        """Get paper trading balance information."""
+        try:
+            balance = self.trading_bot.get_paper_balance()
+            return (
+                "Paper Trading Balance:\n```"
+                f"💰 Cash Balance: ${balance['cash_balance']:.2f}\n"
+                f"📊 Portfolio Value: ${balance['total_value']:.2f}\n"
+                f"📈 P/L: ${balance['total_value'] - 1000:.2f} "
+                f"({((balance['total_value'] - 1000) / 1000) * 100:+.2f}%)```"
+            )
+        except Exception as e:
+            return self._format_error(str(e))
         
-        response = "Paper Trading Account:\n```"
-        response += f"Cash Balance: ${balance['cash_balance']:.2f}\n"
-        response += f"Total Value: ${balance['total_value']:.2f}\n"
+    async def get_paper_positions(self) -> str:
+        """Get current paper trading positions."""
+        try:
+            if not self.trading_bot.paper_positions:
+                return "No active paper trading positions"
+            
+            response = "Paper Trading Positions:\n```"
+            for symbol, position in self.trading_bot.paper_positions.items():
+                current_price = float(self.trading_bot.client.get_product(f"{symbol}-USD").price)
+                profit_info = position.calculate_profit(current_price)
+                
+                response += f"\n{symbol}:"
+                response += f"\n  Entry: ${position.entry_price:.2f}"
+                response += f"\n  Current: ${current_price:.2f}"
+                response += f"\n  Quantity: {position.quantity:.8f}"
+                response += f"\n  P/L: ${profit_info['profit_usd']:+.2f} ({profit_info['profit_percentage']:+.2f}%)"
+                response += "\n"
+            response += "```"
+            return response
         
-        # Calculate profit/loss
-        profit = balance['total_value'] - 1000.0  # Assuming $1000 starting balance
-        profit_percentage = (profit / 1000.0) * 100
+        except Exception as e:
+            return self._format_error(str(e))
         
-        response += f"Total P/L: ${profit:+.2f} ({profit_percentage:+.2f}%)"
-        response += "```"
-        return response
+    async def get_paper_trades(self) -> str:
+        """Get paper trading history."""
+        try:
+            if not self.trading_bot.paper_trade_history:
+                return "No paper trade history available"
+            
+            response = "Paper Trading History:\n```"
+            for trade in self.trading_bot.paper_trade_history[-10:]:  # Show last 10 trades
+                response += (
+                    f"\n{trade['timestamp'].strftime('%Y-%m-%d %H:%M:%S')} - "
+                    f"{trade['action']} {trade['symbol']}: "
+                    f"{trade['quantity']:.8f} @ ${trade['price']:.2f}"
+                )
+            response += "```"
+            return response
+        
+        except Exception as e:
+            return self._format_error(str(e))
+        
+    async def get_paper_stats(self) -> str:
+        """Get paper trading statistics."""
+        try:
+            balance = self.trading_bot.get_paper_balance()
+            history = self.trading_bot.paper_trade_history
+            positions = self.trading_bot.paper_positions
+            
+            total_trades = len(history)
+            winning_trades = sum(1 for trade in history if trade.get('profit_usd', 0) > 0)
+            
+            response = "Paper Trading Statistics:\n```"
+            response += f"\n💰 Account Status:"
+            response += f"\n  • Starting Balance: $1,000.00"
+            response += f"\n  • Current Value: ${balance['total_value']:.2f}"
+            response += f"\n  • Total P/L: ${balance['total_value'] - 1000:.2f} ({((balance['total_value'] - 1000) / 1000) * 100:+.2f}%)"
+            
+            response += f"\n\n📊 Trading Activity:"
+            response += f"\n  • Total Trades: {total_trades}"
+            response += f"\n  • Win Rate: {(winning_trades/total_trades*100):.1f}%" if total_trades > 0 else "\n  • Win Rate: N/A"
+            response += f"\n  • Active Positions: {len(positions)}"
+            
+            response += "```"
+            return response
+        
+        except Exception as e:
+            return self._format_error(str(e))
         
     def reset_paper_trading(self, initial_balance: float = 1000.0):
         """Reset paper trading with new balance"""
         self.trading_bot.reset_paper_trading(initial_balance)
         return f"Paper trading reset with ${initial_balance:.2f} balance"
-        
-    def get_paper_stats(self):
-        """Get detailed paper trading statistics"""
-        paper_balance = self.trading_bot.get_paper_balance()
-        paper_trades = self.trading_bot.paper_trade_history
-        
-        if not paper_trades:
-            return "No paper trading history available"
-        
-        # Calculate statistics
-        total_trades = len(paper_trades)
-        winning_trades = len([t for t in paper_trades if t.get('profit', 0) > 0])
-        total_profit = sum(t.get('profit', 0) for t in paper_trades)
-        total_fees = sum(t.get('fees', 0) for t in paper_trades)
-        
-        response = "Paper Trading Statistics:\n```"
-        response += f"Total Trades: {total_trades}\n"
-        response += f"Winning Trades: {winning_trades}\n"
-        response += f"Win Rate: {(winning_trades/total_trades*100):.1f}%\n"
-        response += f"Total Profit: ${total_profit:,.2f}\n"
-        response += f"Total Fees Paid: ${total_fees:.2f}\n"
-        response += f"Current Balance: ${paper_balance['cash_balance']:,.2f}\n"
-        response += f"Portfolio Value: ${paper_balance['total_value']:,.2f}\n"
-        
-        # Calculate return on initial investment
-        roi = ((paper_balance['total_value'] - 1000.0) / 1000.0) * 100
-        response += f"Total Return: {roi:+.2f}%"
-        response += "```"
-        return response
-        
-    def get_paper_trades(self):
-        """Show paper trading history"""
-        trades = self.trading_bot.paper_trade_history
-        if not trades:
-            return "No paper trades yet"
-        
-        response = "Paper Trading History:\n```"
-        # Show last 10 trades
-        for trade in trades[-10:]:
-            response += f"\n{trade['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}"
-            response += f"\n{trade['action']} {trade['symbol']}"
-            response += f"\nPrice: ${trade['price']:,.2f}"
-            response += f"\nQuantity: {trade['quantity']:.8f}"
-            response += f"\nTotal: ${trade['amount_usd']:,.2f}"
-            response += f"\nFees: ${trade['fees']:.2f}"
-            if 'profit' in trade:
-                response += f"\nProfit: ${trade['profit']:+,.2f} ({trade['profit_percentage']:+.2f}%)"
-            response += "\n"
-        response += "```"
-        return response
-        
-    def get_paper_positions(self):
-        """Show paper trading positions"""
-        if not self.trading_bot.paper_positions:
-            return "No paper trading positions"
-            
-        response = "Paper Trading Positions:\n```"
-        
-        for symbol, pos in self.trading_bot.paper_positions.items():
-            current_price = float(self.trading_bot.client.get_product(f"{symbol}-USD").price)
-            profit_info = pos.calculate_profit(current_price)
-            
-            response += f"\n{symbol}:"
-            response += f"\n  Entry Price: ${pos.entry_price:,.2f}"
-            response += f"\n  Current Price: ${current_price:,.2f}"
-            response += f"\n  Quantity: {pos.quantity:.8f}"
-            response += f"\n  Value: ${current_price * pos.quantity:,.2f}"
-            response += f"\n  P/L: ${profit_info['profit_usd']:+,.2f} ({profit_info['profit_percentage']:+.2f}%)"
-            response += f"\n  Fees Paid: ${profit_info['fees_paid']:.2f}"
-            response += f"\n  Holding Time: {datetime.now() - pos.entry_time}"
-            response += "\n"
-            
-        response += f"\nPaper Balance: ${self.trading_bot.paper_balance:,.2f}"
-        response += "```"
-        return response
         
     def get_balance(self):
         """Get real trading account status"""
