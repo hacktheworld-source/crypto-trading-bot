@@ -185,55 +185,45 @@ class CommandHandler:
         except Exception as e:
             return self._format_error(str(e))
         
-    def get_help(self):
-        help_text = "Trading Bot Commands:\n```"
-        
-        help_text += "\nReal Trading Commands:"
-        help_text += "\n!start         - Start the trading bot"
-        help_text += "\n!stop          - Stop the trading bot"
-        help_text += "\n!status        - Show bot status and portfolio value"
-        help_text += "\n!positions     - View all positions (real & paper)"
-        help_text += "\n!poshistory    - View position history"
-        help_text += "\n!performance   - View trading performance stats"
-        
-        help_text += "\n\nPaper Trading Commands:"
-        help_text += "\n!paper start [balance] - Start paper trading with optional balance"
-        help_text += "\n!paper balance         - Show paper trading balance"
-        help_text += "\n!paper reset           - Reset paper trading"
-        help_text += "\n!paper stats           - Show paper trading statistics"
-        help_text += "\n!paper trades          - Show paper trade history"
-        help_text += "\n!paper positions       - Show paper positions only"
-        help_text += "\n!paper settings        - Show/modify paper settings"
-        
-        help_text += "\n\nAnalysis Commands:"
-        help_text += "\n!price BTC     - Get current price"
-        help_text += "\n!rsi BTC       - Get RSI with interpretation"
-        help_text += "\n!ma BTC        - Get Moving Average analysis"
-        help_text += "\n!bb BTC        - Get Bollinger Bands analysis"
-        help_text += "\n!volume BTC    - Get volume analysis"
-        help_text += "\n!sentiment BTC - Get market sentiment analysis"
-        help_text += "\n!conditions BTC - Get market conditions analysis"
-        
-        help_text += "\n\nCoin Management:"
-        help_text += "\n!addcoin BTC   - Add a coin to watchlist"
-        help_text += "\n!removecoin BTC - Remove a coin from watchlist"
-        help_text += "\n!listcoins     - Show all watched coins"
-        
-        help_text += "\n\nRisk Management:"
-        help_text += "\n!setrisk <stop_loss> <take_profit> <max_position>"
-        help_text += "\n  Example: !setrisk 5 10 1000"
-        help_text += "\n  Sets: 5% stop loss, 10% take profit, $1000 max position"
-        
-        help_text += "\n\nConfiguration:"
-        help_text += "\n!setamount 100 - Set trade amount in USD"
-        help_text += "\n!setrsi 30 70  - Set RSI thresholds (oversold overbought)"
-        help_text += "\n!setinterval 5 - Set check interval in minutes"
-        
-        help_text += "\n\nSystem Commands:"
-        help_text += "\n!testapi       - Test Coinbase API connection"
-        help_text += "\n!ping          - Test if bot is responsive"
-        help_text += "\n!commands      - Show this help message"
-        help_text += "```"
+    async def get_help(self):
+        """Get list of available commands and usage."""
+        help_text = (
+            "Available Commands:\n```"
+            "\n📈 Trading Commands:"
+            "\n  !start [paper|real] - Start trading in paper or real mode"
+            "\n  !stop - Stop active trading"
+            "\n  !status - Show bot status and positions"
+            "\n  !balance - Show account balances"
+            
+            "\n\n📊 Analysis Commands:"
+            "\n  !rsi <symbol> - Get RSI analysis"
+            "\n  !ma <symbol> - Get moving average analysis"
+            "\n  !bb <symbol> - Get Bollinger Bands analysis"
+            "\n  !volume <symbol> - Get volume analysis"
+            "\n  !sentiment <symbol> - Get market sentiment analysis"
+            "\n  !conditions <symbol> - Get market conditions analysis"
+            
+            "\n\n💼 Portfolio Commands:"
+            "\n  !add <symbol> - Add coin to watchlist"
+            "\n  !remove <symbol> - Remove coin from watchlist"
+            "\n  !list - Show watched coins"
+            "\n  !position <symbol> - Show position details"
+            "\n  !stats - Show trading statistics"
+            
+            "\n\n📝 Paper Trading Commands:"
+            "\n  !paper start [balance] - Start paper trading"
+            "\n  !paper balance - Show paper balance"
+            "\n  !paper reset - Reset paper trading"
+            "\n  !paper stats - Show paper trading stats"
+            "\n  !paper trades - Show paper trade history"
+            "\n  !paper positions - Show paper positions"
+            
+            "\n\n🛠️ Utility Commands:"
+            "\n  !ping - Test bot connectivity"
+            "\n  !version - Show bot version"
+            "\n  !testapi - Test API connection"
+            "```"
+        )
         return help_text
         
     async def get_price(self, symbol: str):
