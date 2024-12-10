@@ -620,7 +620,7 @@ class CommandHandler:
                     self.trading_bot.partial_tp_size = partial_size
                     changes.append(f"partial size: {partial_size*100}%")
                 else:
-                    return "��� Partial size must be between 0.1 and 0.9"
+                    return "❌ Partial size must be between 0.1 and 0.9"
                     
             if changes:
                 self.trading_bot.save_config()
@@ -741,15 +741,19 @@ class CommandHandler:
                              "Oversold 🔥" if price_position < 20 else \
                              "Neutral ⚖️"
             
-            return f"Bollinger Bands Analysis for {symbol}:\n```" \
-                   f"📊 Band Levels:\n" \
-                   f"  • Upper Band: ${bb_data['upper']:,.2f}\n" \
-                   f"  • Middle Band: ${bb_data['middle']:,.2f}\n" \
-                   f"  • Lower Band: ${bb_data['lower']:,.2f}\n\n" \
-                   f"📈 Position Analysis:\n" \
-                   f"  • Current Price: ${current_price:,.2f}\n" \
-                   f"  • Position: {position_status} ({price_position:.1f}%)\n" \
-                   f"  • Bandwidth: {bb_data['bandwidth']:.1f}%"
+            return (
+                f"Bollinger Bands Analysis for {symbol}:\n"
+                "```\n"  # Opening backticks with newline
+                f"📊 Band Levels:\n"
+                f"  • Upper Band: ${bb_data['upper']:,.2f}\n"
+                f"  • Middle Band: ${bb_data['middle']:,.2f}\n"
+                f"  • Lower Band: ${bb_data['lower']:,.2f}\n\n"
+                f"📈 Position Analysis:\n"
+                f"  • Current Price: ${current_price:,.2f}\n"
+                f"  • Position: {position_status} ({price_position:.1f}%)\n"
+                f"  • Bandwidth: {bb_data['bandwidth']:.1f}%\n"
+                "```"  # Closing backticks
+            )
         except Exception as e:
             return self._format_error(str(e))
         
