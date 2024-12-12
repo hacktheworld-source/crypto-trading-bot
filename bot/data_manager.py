@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import asyncio
 from coinbase.rest import RESTClient
 from bot.exceptions import TradingError
+from bot.constants import TimeFrame
 import time
 
 class DataManager:

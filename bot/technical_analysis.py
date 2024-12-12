@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 from bot.exceptions import TradingError
+from bot.constants import TimeFrame
 import asyncio
 
 class TechnicalAnalyzer:
