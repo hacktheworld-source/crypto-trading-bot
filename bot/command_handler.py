@@ -26,6 +26,7 @@ class CommandHandler:
             trading_bot: Instance of the trading bot to handle commands for
         """
         self.trading_bot = trading_bot
+        self.data_manager = trading_bot.data_manager
         self.commands = self._initialize_commands()
     
     def _initialize_commands(self) -> Dict[str, callable]:
@@ -60,7 +61,14 @@ class CommandHandler:
             'stats': self.get_stats,
             'bb': self.get_bb_analysis,
             'conditions': self.get_market_conditions,
-            'commands': self.get_help
+            'commands': self.get_help,
+            'risk': self.get_risk_analysis,
+            'portfolio': self.get_portfolio_analysis,
+            'alerts': self.get_risk_alerts,
+            'limits': self.show_risk_limits,
+            'analyze': self.analyze_coin,
+            'set_risk': self.set_stop_loss,
+            'set_max_positions': self.set_max_positions
         }
     
     async def handle_command(self, command: str, *args) -> str:
@@ -114,9 +122,8 @@ class CommandHandler:
         """Get RSI value for a symbol with interpretation"""
         try:
             symbol = symbol.upper()
-            product = self.trading_bot.client.get_product(f"{symbol}-USD")
-            current_price = float(product.price)
-            rsi = await self.trading_bot.calculate_rsi(symbol)
+            current_price = await self.trading_bot.price_manager.get_current_price(symbol)
+            rsi = await self.trading_bot.technical_analyzer.calculate_rsi(symbol)
             
             # Add RSI interpretation
             rsi_status = "Overbought" if rsi > 70 else \
@@ -226,12 +233,11 @@ class CommandHandler:
         )
         return help_text
         
-    async def get_price(self, symbol: str):
+    async def get_price(self, symbol: str) -> str:
+        """Get current price for a symbol"""
         try:
-            # Convert symbol to uppercase
-            symbol = symbol.upper()
-            price = await self.trading_bot.get_current_price(symbol)
-            return f"{symbol} Price: ${price:,.2f}"
+            price_data = await self.data_manager.get_ticker(symbol)
+            return f"Current {symbol} price: ${price_data['price']:.2f}"
         except Exception as e:
             return self._format_error(str(e))
         
@@ -335,7 +341,7 @@ class CommandHandler:
     async def get_ma_analysis(self, symbol: str):
         """Get moving average analysis for a symbol."""
         try:
-            return await self.trading_bot.get_ma_analysis(symbol)
+            return await self.trading_bot.technical_analyzer.get_ma_analysis(symbol)
         except Exception as e:
             return self._format_error(str(e))
         
@@ -639,13 +645,112 @@ class CommandHandler:
         except Exception as e:
             return self._format_error(str(e))
         
-    async def get_position_metrics(self, symbol: str = None):
+    async def get_position_metrics(self, *args) -> str:
+        """Get detailed metrics for a position"""
         try:
-            metrics = await self.trading_bot.get_position_metrics(symbol)
-            return self._format_metrics_response(metrics)
+            if not args:
+                return self._format_error("Please specify a symbol: !metrics <symbol>")
+                
+            symbol = args[0].upper()
+            position = self.trading_bot.positions.get(symbol)
+            
+            if not position:
+                return self._format_error(f"No active position for {symbol}")
+                
+            metrics = position.get_info()
+            profit_pct = metrics['pnl_pct']
+            
+            return (
+                f"Position Metrics for {symbol}:\n```"
+                f"📊 Core Metrics:\n"
+                f"  • Entry Price: ${metrics['entry_price']:.2f}\n"
+                f"  • Current Price: ${metrics['current_price']:.2f}\n"
+                f"  • P/L: {profit_pct:+.2f}%\n"
+                f"  • Quantity: {metrics['remaining_quantity']:.8f}\n\n"
+                f"🛡️ Risk Levels:\n"
+                f"  • Stop Loss: ${metrics['risk_levels']['stop_loss']:.2f}\n"
+                f"  • Take Profit: ${metrics['risk_levels']['take_profit']:.2f}\n"
+                f"  • Trailing Stop: ${metrics['risk_levels']['trailing_stop']:.2f if metrics['risk_levels']['trailing_stop'] else 'Not Active'}\n\n"
+                f"📈 Position Status:\n"
+                f"  • Initial Size: {metrics['initial_quantity']:.8f}\n"
+                f"  • Remaining: {metrics['remaining_quantity']:.8f}\n"
+                f"  • Partial Exits: {len(metrics['partial_exits'])}\n"
+                f"  • Scale Levels: {len(metrics['scale_levels'])}\n"
+                "```"
+            )
+            
         except Exception as e:
             return self._format_error(str(e))
-        
+
+    async def get_market_conditions(self, *args) -> str:
+        """Get market conditions analysis for a symbol"""
+        try:
+            if not args:
+                return self._format_error("Please specify a symbol: !conditions <symbol>")
+                
+            symbol = args[0].upper()
+            conditions = await self.trading_bot.technical_analyzer.check_market_conditions(symbol)
+            
+            # Get BTC correlation if not BTC
+            correlation = await self.trading_bot.technical_analyzer._calculate_btc_correlation(symbol) if symbol != 'BTC' else 1.0
+            
+            return (
+                f"Market Conditions Analysis for {symbol}:\n```"
+                f"📊 Trading Conditions:\n"
+                f"  • Volatility: {'High ⚠️' if conditions['is_volatile'] else 'Normal ✅'}\n"
+                f"  • Price Range (7d): {conditions['price_range_7d']:.1f}%\n"
+                f"  • Market Hours: {'Active 🟢' if conditions['is_high_activity'] else 'Quiet 🔴'}\n\n"
+                f"📈 Market Alignment:\n"
+                f"  • BTC Correlation: {correlation:.2f}\n"
+                f"  • Market Aligned: {'Yes ✅' if conditions['market_aligned'] else 'No ⚠️'}\n"
+                f"  • Suitable for Trading: {'Yes ✅' if conditions['suitable_for_trading'] else 'No ❌'}"
+                "```"
+            )
+            
+        except Exception as e:
+            return self._format_error(str(e))
+
+    async def get_risk_alerts(self) -> str:
+        """Get current risk alerts"""
+        try:
+            risk_status = await self.trading_bot.risk_manager.monitor_risk_levels()
+            
+            if not risk_status['alerts']:
+                return "No active risk alerts 👍"
+                
+            return (
+                "Active Risk Alerts:\n```" +
+                "\n".join(
+                    f"{'🚨' if a['level'] == 'critical' else '⚠️'} {a['message']}"
+                    for a in risk_status['alerts']
+                ) +
+                "```"
+            )
+            
+        except Exception as e:
+            return self._format_error(str(e))
+
+    async def show_risk_limits(self) -> str:
+        """Show current risk limits and usage"""
+        try:
+            limits = self.trading_bot.risk_manager.risk_limits
+            current = await self.trading_bot.risk_manager.get_current_risk_levels()
+            
+            return (
+                "Risk Management Status:\n```"
+                f"📊 Position Limits:\n"
+                f"  • Max Positions: {len(self.trading_bot.positions)}/{limits['max_position_count']}\n"
+                f"  • Portfolio Exposure: {current['exposure']*100:.1f}%/{limits['max_exposure']*100:.1f}%\n\n"
+                f"⚠️ Risk Thresholds:\n"
+                f"  • Daily Drawdown: {current['drawdown']*100:.1f}%/{limits['max_drawdown']*100:.1f}%\n"
+                f"  • Risk per Trade: {limits['risk_per_trade']*100:.1f}%\n"
+                f"  • Position Size: {limits['max_position_size']*100:.1f}%\n"
+                "```"
+            )
+            
+        except Exception as e:
+            return self._format_error(str(e))
+
     async def handle_paper_commands(self, subcommand: str, *args):
         """Handle paper trading subcommands"""
         try:
@@ -714,7 +819,7 @@ class CommandHandler:
         """Get Bollinger Bands analysis"""
         try:
             symbol = symbol.upper()
-            bb_data = await self.trading_bot.calculate_bollinger_bands(symbol)
+            bb_data = await self.trading_bot.technical_analyzer.calculate_bollinger_bands(symbol)
             current_price = await self.trading_bot.price_manager.get_current_price(symbol)
             
             # Calculate price position
@@ -725,39 +830,95 @@ class CommandHandler:
             
             return (
                 f"Bollinger Bands Analysis for {symbol}:\n"
-                "```\n"  # Opening backticks with newline
+                "```\n"
                 f"📊 Band Levels:\n"
                 f"  • Upper Band: ${bb_data['upper']:,.2f}\n"
                 f"  • Middle Band: ${bb_data['middle']:,.2f}\n"
                 f"  • Lower Band: ${bb_data['lower']:,.2f}\n\n"
                 f"📈 Position Analysis:\n"
-                f"  • Current Price: ${current_price:,.2f}\n"
+                f"   Current Price: ${current_price:,.2f}\n"
                 f"  • Position: {position_status} ({price_position:.1f}%)\n"
                 f"  • Bandwidth: {bb_data['bandwidth']:.1f}%\n"
-                "```"  # Closing backticks
+                "```"
             )
         except Exception as e:
             return self._format_error(str(e))
         
-    async def get_market_conditions(self, *args) -> str:
-        """Get market conditions analysis for a symbol."""
+    async def get_risk_analysis(self, symbol: str = None) -> str:
+        """
+        Get risk analysis for portfolio or specific position.
+        
+        Args:
+            symbol: Optional symbol for position-specific analysis
+        """
         try:
-            if not args:
-                return self._format_error("Please specify a symbol: !conditions <symbol>")
-            symbol = args[0].upper()
-            conditions = await self.trading_bot.check_market_conditions(symbol)
-            
-            # Get BTC correlation if not BTC
-            correlation = await self.trading_bot._calculate_btc_correlation(symbol) if symbol != 'BTC' else 1.0
-            
-            return f"Market Conditions Analysis for {symbol}:\n```" \
-                   f"📊 Trading Conditions:\n" \
-                   f"  • Volatility: {'High ⚠️' if conditions['is_volatile'] else 'Normal ✅'}\n" \
-                   f"  • Price Range (7d): {conditions['price_range_7d']:.1f}%\n" \
-                   f"  • Market Hours: {'Active 🟢' if conditions['is_high_activity'] else 'Quiet 🔴'}\n\n" \
-                   f"📈 Market Alignment:\n" \
-                   f"  • BTC Correlation: {correlation:.2f}\n" \
-                   f"  • Market Aligned: {'Yes ✅' if conditions['market_aligned'] else 'No ⚠️'}\n" \
-                   f"  • Suitable for Trading: {'Yes ✅' if conditions['suitable_for_trading'] else 'No ❌'}```"
+            if symbol:
+                # Position-specific risk analysis
+                position = self.trading_bot.positions.get(symbol.upper())
+                if not position:
+                    return self._format_error(f"No position found for {symbol}")
+                
+                exit_signals = await self.trading_bot.risk_manager.check_position_exit_signals(position)
+                metrics = position.risk_metrics
+                
+                return (
+                    f"Risk Analysis for {symbol}:\n```"
+                    f"📊 Risk Metrics:\n"
+                    f"  • Value at Risk: {metrics['var']:.2f}%\n"
+                    f"  • Volatility: {metrics['volatility']:.2f}%\n"
+                    f"  • Beta: {metrics['beta']:.2f}\n\n"
+                    f"⚠️ Active Signals:\n" +
+                    "\n".join(f"  • {s['message']}" for s in exit_signals['signals']) +
+                    "```"
+                )
+            else:
+                # Portfolio risk analysis
+                risk_status = await self.trading_bot.risk_manager.monitor_risk_levels()
+                metrics = risk_status['metrics']
+                
+                return (
+                    "Portfolio Risk Analysis:\n```"
+                    f"📊 Risk Metrics:\n"
+                    f"  • Portfolio VaR: {metrics['risk_metrics']['value_at_risk']:.2f}%\n"
+                    f"  • Current Drawdown: {metrics['risk_metrics']['current_drawdown']:.2f}%\n"
+                    f"  • Max Correlation: {metrics['risk_metrics']['max_correlation']:.2f}\n"
+                    f"  • Portfolio Beta: {metrics['risk_metrics']['portfolio_beta']:.2f}\n\n"
+                    f"📈 Performance Metrics:\n"
+                    f"  • Sharpe Ratio: {metrics['risk_adjusted_metrics']['sharpe_ratio']:.2f}\n"
+                    f"  • Sortino Ratio: {metrics['risk_adjusted_metrics']['sortino_ratio']:.2f}\n"
+                    f"  • Annualized Return: {metrics['risk_adjusted_metrics']['annualized_return']:.1f}%\n"
+                    f"  • Annualized Vol: {metrics['risk_adjusted_metrics']['annualized_volatility']:.1f}%\n\n"
+                    f"⚠️ Active Alerts:\n" +
+                    "\n".join(f"  • {a['message']}" for a in risk_status['alerts']) +
+                    "```"
+                )
+                
         except Exception as e:
-            return self._format_error(str(e))
+            return self._format_error(f"Error getting risk analysis: {str(e)}")
+
+    async def get_portfolio_analysis(self) -> str:
+        """Get detailed portfolio analysis."""
+        try:
+            metrics = await self.trading_bot.risk_manager.calculate_portfolio_metrics()
+            
+            # Format position correlations
+            corr_matrix = metrics['position_correlations']
+            corr_str = "\nCorrelation Matrix:\n"
+            symbols = sorted(corr_matrix.keys())
+            for s1 in symbols:
+                corr_str += f"  {s1}: " + " ".join(f"{corr_matrix[s1][s2]:.2f}" for s2 in symbols) + "\n"
+            
+            return (
+                "Portfolio Analysis:\n```"
+                f"💰 Risk Concentration:\n"
+                f"  • Largest Position: {metrics['risk_concentration']['largest_position']*100:.1f}%\n"
+                f"  • Concentration Index: {metrics['risk_concentration']['herfindahl_index']:.2f}\n\n"
+                f"📊 Risk Metrics:\n"
+                f"  • Portfolio Beta: {metrics['risk_metrics']['portfolio_beta']:.2f}\n"
+                f"  • Max Drawdown: {metrics['risk_metrics']['current_drawdown']*100:.1f}%\n\n"
+                f"{corr_str}"
+                "```"
+            )
+            
+        except Exception as e:
+            return self._format_error(f"Error getting portfolio analysis: {str(e)}")

@@ -54,4 +54,4 @@ async def on_message(message):
 
 # Run the bot
 keep_alive()
-bot.run(os.getenv('DISCORD_TOKEN')) 
+bot.run(os.environ['DISCORD_TOKEN']) 
