@@ -33,11 +33,23 @@ class TradingConfig:
     RSI_OVERBOUGHT: float = float(os.getenv('RSI_OVERBOUGHT', '70.0'))
     RSI_OVERSOLD: float = float(os.getenv('RSI_OVERSOLD', '30.0'))
     
+    # Timeframes Configuration
+    TIMEFRAMES: Dict[str, Dict[str, Any]] = {
+        '1h': {'weight': 0.4, 'periods': 24},  # Hourly for entry timing
+        '1d': {'weight': 0.6, 'periods': 90}   # Daily for trend direction
+    }
+    
     # Paper Trading
     PAPER_BALANCE: float = float(os.getenv('PAPER_BALANCE', '10000.0'))
     
     # Exchange Settings
     EXCHANGE_FEE: float = float(os.getenv('EXCHANGE_FEE', '0.004'))
+    
+    # Cache Settings
+    CACHE_TTL: Dict[str, int] = {
+        '1h': 1800,   # 30 minutes
+        '1d': 21600   # 6 hours
+    }
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert config to dictionary"""
