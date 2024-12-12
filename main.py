@@ -3,7 +3,6 @@ from bot.trading_bot import TradingBot
 from bot.command_handler import CommandHandler
 from discord.ext import commands
 import discord
-from keep_alive import keep_alive
 import logging
 
 # Add at top of file
@@ -53,5 +52,4 @@ async def on_message(message):
         await message.channel.send(response)
 
 # Run the bot
-keep_alive()
 bot.run(os.environ['DISCORD_TOKEN']) 
