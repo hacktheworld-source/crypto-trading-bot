@@ -132,6 +132,13 @@ class TradingBot:
     def __init__(self):
         self.config = Config()
         self.fee_rate = self.config.EXCHANGE_FEE
+        
+        # Initialize Coinbase client first
+        self.client = RESTClient(
+            api_key=self.config.COINBASE_API_KEY,
+            api_secret=self.config.COINBASE_API_SECRET
+        )
+        
         # Core components only
         self.data_manager = DataManager(self)
         self.technical_analyzer = TechnicalAnalyzer(self)
