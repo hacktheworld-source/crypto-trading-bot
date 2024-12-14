@@ -23,7 +23,6 @@ class TradingConstants:
     # Technical Analysis
     TIMEFRAMES = {
         "1h": {"weight": 0.4, "periods": 24},
-        "4h": {"weight": 0.3, "periods": 30},
         "1d": {"weight": 0.3, "periods": 90}
     }
     

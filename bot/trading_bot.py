@@ -775,3 +775,56 @@ class TradingBot:
         except Exception as e:
             await self.log(f"Error getting status: {str(e)}", level="error")
             return "❌ Error getting bot status"
+
+    async def add_coin(self, symbol: str) -> bool:
+        """
+        Add a coin to the watchlist.
+        
+        Args:
+            symbol: Base symbol (e.g., 'BTC', 'ETH')
+            
+        Returns:
+            bool: True if successfully added
+        """
+        try:
+            # Convert to uppercase and add USD pair
+            symbol = symbol.upper()
+            trading_pair = f"{symbol}-USD"
+            
+            # Validate symbol exists
+            try:
+                await self.data_manager.get_current_price(symbol)
+            except Exception as e:
+                await self.log(f"Invalid symbol {symbol}: {str(e)}", level="error")
+                return False
+            
+            # Add to watchlist
+            self.watched_symbols.add(symbol)
+            await self.log(f"Added {symbol} to watchlist", level="info")
+            return True
+            
+        except Exception as e:
+            await self.log(f"Error adding {symbol}: {str(e)}", level="error")
+            return False
+
+    async def remove_coin(self, symbol: str) -> bool:
+        """
+        Remove a coin from the watchlist.
+        
+        Args:
+            symbol: Base symbol (e.g., 'BTC', 'ETH')
+            
+        Returns:
+            bool: True if successfully removed
+        """
+        try:
+            symbol = symbol.upper()
+            if symbol in self.watched_symbols:
+                self.watched_symbols.remove(symbol)
+                await self.log(f"Removed {symbol} from watchlist", level="info")
+                return True
+            return False
+            
+        except Exception as e:
+            await self.log(f"Error removing {symbol}: {str(e)}", level="error")
+            return False

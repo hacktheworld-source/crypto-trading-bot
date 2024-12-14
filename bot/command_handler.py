@@ -104,6 +104,9 @@ class CommandHandler:
             Symbols are automatically converted to uppercase
             Invalid symbols will be rejected with error messages
         """
+        if not symbols:
+            return self._format_error("Please specify at least one symbol")
+            
         results = []
         for symbol in symbols:
             if await self.trading_bot.add_coin(symbol.upper()):
