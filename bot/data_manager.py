@@ -4,7 +4,7 @@ import numpy as np
 from datetime import datetime, timedelta
 import asyncio
 from coinbase.rest import RESTClient
-from bot.exceptions import TradingError
+from bot.exceptions import TradingError, DataError
 from bot.constants import TimeFrame
 import time
 
@@ -24,70 +24,101 @@ class DataManager:
         self.trading_bot = trading_bot
         self.client = trading_bot.client
         
+        # Initialize cache
+        self._cache: Dict[str, tuple[pd.DataFrame, float]] = {}
+        self._cache_lock = asyncio.Lock()
+        
         # Timeframe configurations
         self.timeframes = {
-            '1h': {'days': 14, 'granularity': 'ONE_HOUR'},
-            '4h': {'days': 30, 'granularity': 'FOUR_HOUR'},
-            '1d': {'days': 90, 'granularity': 'ONE_DAY'}
-        }
-        
-        # Cache settings
-        self.cache = {}
-        self.cache_ttl = {
-            '1h': 1800,   # 30 minutes
-            '4h': 7200,   # 2 hours
-            '1d': 21600   # 6 hours
+            TimeFrame.HOUR_1: {'days': 14, 'granularity': 'ONE_HOUR'},
+            TimeFrame.DAY_1: {'days': 90, 'granularity': 'ONE_DAY'}
         }
         
         # Rate limiting
         self.rate_limit = 0.1  # seconds between requests
         self.last_request = 0
         
-        # Locks for thread safety
-        self.cache_lock = asyncio.Lock()
-        self.api_lock = asyncio.Lock() 
-
-        # Add data validation
-        self.validation = {
-            'min_candles': {
-                '1h': 24,
-                '4h': 30,
-                '1d': 90
-            },
-            'max_gap': {
-                '1h': 3600,
-                '4h': 14400,
-                '1d': 86400
-            }
-        }
+        # API lock for thread safety
+        self.api_lock = asyncio.Lock()
 
     async def get_price_data(
         self, 
         symbol: str, 
         timeframe: TimeFrame,
-        periods: int = None
+        periods: Optional[int] = None
     ) -> pd.DataFrame:
         """Get price data for specified timeframe with caching"""
         try:
             cache_key = f"{symbol}_{timeframe.value}"
             
-            # Check cache first
-            if cache_key in self._cache:
-                data, timestamp = self._cache[cache_key]
-                if (time.time() - timestamp) < self.config.CACHE_TTL[timeframe.value]:
-                    return data
+            async with self._cache_lock:
+                # Check cache first
+                if cache_key in self._cache:
+                    data, timestamp = self._cache[cache_key]
+                    if (time.time() - timestamp) < self.trading_bot.config.CACHE_TTL[timeframe.value]:
+                        return data
                     
-            # Fetch new data
-            data = await self._fetch_price_data(symbol, timeframe, periods)
-            
-            # Update cache
-            self._cache[cache_key] = (data, time.time())
-            
-            return data
-            
+                # Fetch new data
+                data = await self._fetch_price_data(symbol, timeframe, periods)
+                
+                # Update cache
+                self._cache[cache_key] = (data, time.time())
+                
+                return data
+                
         except Exception as e:
             await self.trading_bot.log(f"Price data fetch error: {str(e)}", level="error")
             raise DataError(f"Failed to get price data: {str(e)}")
+
+    async def _fetch_price_data(
+        self, 
+        symbol: str, 
+        timeframe: TimeFrame,
+        periods: Optional[int] = None
+    ) -> pd.DataFrame:
+        """Fetch historical price data from exchange"""
+        try:
+            async with self.api_lock:
+                # Rate limiting
+                now = time.time()
+                if now - self.last_request < self.rate_limit:
+                    await asyncio.sleep(self.rate_limit - (now - self.last_request))
+                
+                # Get candles
+                product_id = f"{symbol}-USD"
+                candles = self.client.get_product_candles(
+                    product_id=product_id,
+                    granularity=self.timeframes[timeframe]['granularity']
+                )
+                self.last_request = time.time()
+                
+                # Convert to DataFrame
+                df = pd.DataFrame(
+                    [
+                        {
+                            'timestamp': datetime.fromtimestamp(float(candle.start)),
+                            'open': float(candle.open),
+                            'high': float(candle.high),
+                            'low': float(candle.low),
+                            'close': float(candle.close),
+                            'volume': float(candle.volume)
+                        }
+                        for candle in candles
+                    ]
+                )
+                
+                if not df.empty:
+                    df.set_index('timestamp', inplace=True)
+                    df.sort_index(inplace=True)
+                    
+                    if periods:
+                        df = df.tail(periods)
+                        
+                return df
+                
+        except Exception as e:
+            await self.trading_bot.log(f"Data fetch error: {str(e)}", level="error")
+            raise DataError(f"Failed to fetch price data: {str(e)}")
 
     async def get_current_price(self, symbol: str) -> float:
         """Get current price for a symbol."""
