@@ -87,3 +87,17 @@ class RiskManager:
         except Exception as e:
             await self.trading_bot.log(f"Drawdown check error: {str(e)}", level="error")
             return True  # Fail safe
+
+    async def validate_position_limits(self) -> bool:
+        """Validate current position count against limits"""
+        try:
+            current_positions = len(self.trading_bot.positions)
+            if current_positions > TradingConstants.MAX_POSITIONS:
+                raise RiskError(
+                    f"Position limit exceeded: {current_positions}/{TradingConstants.MAX_POSITIONS}",
+                    {"current": current_positions, "limit": TradingConstants.MAX_POSITIONS}
+                )
+            return True
+        except Exception as e:
+            await self.trading_bot.log(f"Position validation error: {str(e)}", level="error")
+            return False

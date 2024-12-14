@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 import asyncio
 import pandas as pd
 import logging
+from bot.constants import TradingConstants
 
 class CommandHandler:
     """
@@ -185,7 +186,7 @@ class CommandHandler:
             current_positions = len(self.trading_bot.positions)
             position_status = (
                 f"{current_positions}/{self.trading_bot.config.RISK_MAX_POSITIONS} "
-                f"(Target: {TradingConfig.TARGET_POSITIONS})"
+                f"(Target: {TradingConstants.TARGET_POSITIONS})"
             )
             
             return (
@@ -193,7 +194,12 @@ class CommandHandler:
                 f"Status: {status}\n"
                 f"Mode: {mode}\n"
                 f"Positions: {position_status}\n"
-                # ... rest of status display
+                f"Watched Coins: {len(self.trading_bot.watched_symbols)}\n"
+                f"\nRisk Settings:\n"
+                f"• Risk per Trade: {self.trading_bot.config.RISK_PER_TRADE*100:.1f}%\n"
+                f"• Max Drawdown: {self.trading_bot.config.RISK_MAX_DRAWDOWN*100:.1f}%\n"
+                f"• Stop Loss: {self.trading_bot.config.STOP_LOSS_PERCENTAGE:.1f}%\n"
+                f"• Take Profit: {self.trading_bot.config.TAKE_PROFIT_PERCENTAGE:.1f}%"
                 "```"
             )
         except Exception as e:

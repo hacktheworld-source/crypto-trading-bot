@@ -17,6 +17,7 @@ from bot.data_manager import DataManager  # Add this import
 from bot.exceptions import TradingError
 from bot.config import TradingConfig as Config  # Rename to avoid conflict
 import numpy as np
+from bot.constants import TradingConstants  # Add this import
 
 # Set up logging
 logging.basicConfig(
@@ -749,20 +750,19 @@ class TradingBot:
     async def get_status(self) -> str:
         """Get current bot status and configuration"""
         try:
-            # Get basic state
             status = "🟢 Active" if self.trading_active else "🔴 Inactive"
             mode = "📝 Paper Trading" if self.paper_trading else "💵 Live Trading"
             
-            # Get position info
             active_positions = len(self.positions)
             watched_coins = len(self.watched_symbols)
             
-            # Format response
+            # Format response with target positions
             return (
                 f"Trading Bot Status:\n```"
                 f"Status: {status}\n"
                 f"Mode: {mode}\n"
-                f"Active Positions: {active_positions}/{self.config.RISK_MAX_POSITIONS}\n"
+                f"Active Positions: {active_positions}/{self.config.RISK_MAX_POSITIONS} "
+                f"(Target: {TradingConstants.TARGET_POSITIONS})\n"
                 f"Watched Coins: {watched_coins}\n"
                 f"\nRisk Settings:\n"
                 f"• Risk per Trade: {self.config.RISK_PER_TRADE*100:.1f}%\n"

@@ -124,7 +124,7 @@ position_size = account_value * risk_per_trade / (entry_price * stop_loss_distan
 ### Risk Limits
 - Maximum 2% risk per trade
 - Maximum 80% portfolio exposure
-- Maximum 5 concurrent positions
+- Maximum 10 positions (Target: 7)
 - 15% maximum drawdown limit
 
 ### Position Management
