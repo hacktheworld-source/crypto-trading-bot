@@ -693,3 +693,61 @@ class TradingBot:
         """Send position status to Discord"""
         for symbol, position in self.positions.items():
             await self.send_notification(f"Position Update: {position.get_status()}")
+
+    async def post_init(self) -> None:
+        """
+        Post-initialization setup that runs after Discord bot is ready.
+        Handles channel setup and initial state configuration.
+        """
+        try:
+            # Initialize Discord channels
+            self.notification_channel = None
+            self.logs_channel = None
+            
+            # Set initial trading state
+            self.trading_active = False
+            self.paper_trading = True
+            self.watched_symbols = set()
+            
+            # Initialize data structures
+            self.positions = {}
+            self.position_history = []
+            self.closed_positions = []
+            
+            # Log initialization
+            await self.log("Trading bot post-initialization complete", level="info")
+            
+        except Exception as e:
+            logging.error(f"Post-initialization error: {str(e)}")
+            raise TradingError(f"Failed to complete post-initialization: {str(e)}", "INIT")
+
+    def set_discord_channel(self, channel) -> None:
+        """Set the Discord notification channel"""
+        self.notification_channel = channel
+
+    def set_logs_channel(self, channel) -> None:
+        """Set the Discord logs channel"""
+        self.logs_channel = channel
+
+    async def send_notification(self, message: str) -> None:
+        """Send a notification to the Discord channel"""
+        try:
+            if self.notification_channel:
+                await self.notification_channel.send(message)
+        except Exception as e:
+            logging.error(f"Failed to send notification: {str(e)}")
+
+    async def log(self, message: str, level: str = "info") -> None:
+        """Log a message and optionally send to Discord logs channel"""
+        try:
+            # Standard logging
+            log_func = getattr(logging, level.lower())
+            log_func(message)
+            
+            # Discord logging
+            if self.logs_channel and level in ["error", "warning"]:
+                prefix = "🚨" if level == "error" else "⚠️"
+                await self.logs_channel.send(f"{prefix} {message}")
+                
+        except Exception as e:
+            logging.error(f"Logging error: {str(e)}")
