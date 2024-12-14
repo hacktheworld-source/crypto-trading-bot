@@ -9,7 +9,7 @@ class TimeFrame(str, Enum):
     HOUR_4 = "FOUR_HOURS"
     DAY_1 = "ONE_DAY"
 
-class TradingConfig:
+class TradingConstants:
     """Trading configuration constants"""
     
     # Risk Management

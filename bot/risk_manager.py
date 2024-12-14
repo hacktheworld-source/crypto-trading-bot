@@ -2,6 +2,7 @@ from typing import Dict, Any
 from datetime import datetime
 from bot.exceptions import TradingError, RiskError
 from bot.config import TradingConfig
+from bot.constants import TradingConstants
 
 class RiskManager:
     """Core risk management system"""
@@ -12,8 +13,8 @@ class RiskManager:
         
         # Use new config structure with position limits
         self.max_positions = self.config.RISK_MAX_POSITIONS
-        self.target_positions = TradingConfig.TARGET_POSITIONS  # From constants
-        self.min_positions = TradingConfig.MIN_POSITIONS       # From constants
+        self.target_positions = TradingConstants.TARGET_POSITIONS
+        self.min_positions = TradingConstants.MIN_POSITIONS
         
         # Other risk parameters
         self.max_drawdown = self.config.RISK_MAX_DRAWDOWN
@@ -26,9 +27,9 @@ class RiskManager:
             current_positions = len(self.trading_bot.positions)
             
             # Check position count against absolute maximum
-            if current_positions >= TradingConfig.MAX_POSITIONS:
+            if current_positions >= TradingConstants.MAX_POSITIONS:
                 await self.trading_bot.log(
-                    f"Maximum position limit ({TradingConfig.MAX_POSITIONS}) reached", 
+                    f"Maximum position limit ({TradingConstants.MAX_POSITIONS}) reached", 
                     level="warning"
                 )
                 return False
