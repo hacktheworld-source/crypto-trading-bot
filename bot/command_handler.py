@@ -1,4 +1,4 @@
-from typing import Optional, List, Union, Literal, Dict, Any
+from typing import Optional, List, Union, Literal, Dict, Any, Callable
 from datetime import datetime, timedelta
 import asyncio
 import pandas as pd
@@ -68,7 +68,10 @@ class CommandHandler:
             'limits': self.show_risk_limits,
             'analyze': self.analyze_coin,
             'set_risk': self.set_stop_loss,
-            'set_max_positions': self.set_max_positions
+            'set_max_positions': self.set_max_positions,
+            'set_risk_per_trade': self.set_risk_per_trade,
+            'set_max_drawdown': self.set_max_drawdown,
+            'set_daily_var': self.set_daily_var
         }
     
     async def handle_command(self, command: str, *args) -> str:
@@ -922,3 +925,55 @@ class CommandHandler:
             
         except Exception as e:
             return self._format_error(f"Error getting portfolio analysis: {str(e)}")
+
+    async def set_max_positions(self, *args) -> str:
+        """Set maximum number of concurrent positions"""
+        try:
+            if not args:
+                return self._format_error("Please provide a number for max positions")
+            max_positions = int(args[0])
+            if max_positions < 1:
+                return self._format_error("Max positions must be at least 1")
+            self.trading_bot.config.RISK_MAX_POSITIONS = max_positions
+            return self._format_success(f"Max positions set to {max_positions}")
+        except ValueError:
+            return self._format_error("Invalid number format")
+
+    async def set_risk_per_trade(self, *args) -> str:
+        """Set risk percentage per trade"""
+        try:
+            if not args:
+                return self._format_error("Please provide a percentage for risk per trade")
+            risk = float(args[0])
+            if not 0 < risk < 5:  # Cap at 5% for safety
+                return self._format_error("Risk per trade must be between 0 and 5 percent")
+            self.trading_bot.config.RISK_PER_TRADE = risk / 100
+            return self._format_success(f"Risk per trade set to {risk}%")
+        except ValueError:
+            return self._format_error("Invalid number format")
+
+    async def set_max_drawdown(self, *args) -> str:
+        """Set maximum drawdown percentage"""
+        try:
+            if not args:
+                return self._format_error("Please provide a percentage for max drawdown")
+            drawdown = float(args[0])
+            if not 0 < drawdown < 30:  # Cap at 30% for safety
+                return self._format_error("Max drawdown must be between 0 and 30 percent")
+            self.trading_bot.config.RISK_MAX_DRAWDOWN = drawdown / 100
+            return self._format_success(f"Max drawdown set to {drawdown}%")
+        except ValueError:
+            return self._format_error("Invalid number format")
+
+    async def set_daily_var(self, *args) -> str:
+        """Set daily Value at Risk limit"""
+        try:
+            if not args:
+                return self._format_error("Please provide a percentage for daily VaR")
+            var = float(args[0])
+            if not 0 < var < 10:  # Cap at 10% for safety
+                return self._format_error("Daily VaR must be between 0 and 10 percent")
+            self.trading_bot.config.RISK_DAILY_VAR = var / 100
+            return self._format_success(f"Daily VaR set to {var}%")
+        except ValueError:
+            return self._format_error("Invalid number format")
