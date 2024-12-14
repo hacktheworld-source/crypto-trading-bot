@@ -84,11 +84,44 @@ class CommandHandler:
         except Exception as e:
             return self._format_error(str(e))
         
-    async def list_coins(self):
-        coins = list(self.trading_bot.watched_coins)
-        if coins:
-            return f"Watched coins: {', '.join(coins)}"
-        return "No coins in watchlist"
+    async def list_coins(self) -> str:
+        """List watched coins with their current metrics"""
+        try:
+            if not self.trading_bot.watched_symbols:
+                return "No coins in watchlist"
+                
+            # Header
+            response = "Watched Coins:\n```"
+            
+            # Get data for each coin
+            for symbol in sorted(self.trading_bot.watched_symbols):
+                try:
+                    # Get current price and analysis
+                    price = await self.trading_bot.data_manager.get_current_price(symbol)
+                    analysis = await self.trading_bot.technical_analyzer.analyze_trend(symbol)
+                    
+                    # Format trend indicators
+                    trend = "🟢" if analysis['trend']['daily'] > 0 else "🔴"
+                    volume = "✅" if analysis['volume_confirmed'] else "❌"
+                    
+                    # Add coin info
+                    response += (
+                        f"\n{symbol}:\n"
+                        f"  • Price: ${price:,.2f}\n"
+                        f"  • Trend: {trend} "
+                        f"({'Bullish' if analysis['trend']['daily'] > 0 else 'Bearish'})\n"
+                        f"  • Volume: {volume}\n"
+                        f"  • Signal Strength: {analysis['strength']*100:.1f}%\n"
+                    )
+                    
+                except Exception as e:
+                    response += f"\n{symbol}: Error getting data - {str(e)}\n"
+                    
+            response += "```"
+            return response
+            
+        except Exception as e:
+            return self._format_error(f"Error listing coins: {str(e)}")
         
     async def add_coin(self, *symbols: str) -> str:
         """
@@ -1002,3 +1035,107 @@ class CommandHandler:
             return self._format_success(f"Daily VaR set to {var}%")
         except ValueError:
             return self._format_error("Invalid number format")
+
+    async def start_trading(self) -> str:
+        """Start the trading bot"""
+        try:
+            if self.trading_bot.trading_active:
+                return self._format_error("Trading is already active")
+            
+            self.trading_bot.trading_active = True
+            return self._format_success("Trading bot started")
+        except Exception as e:
+            return self._format_error(f"Failed to start trading: {str(e)}")
+            
+    async def stop_trading(self) -> str:
+        """Stop the trading bot"""
+        try:
+            if not self.trading_bot.trading_active:
+                return self._format_error("Trading is already stopped")
+                
+            self.trading_bot.trading_active = False
+            return self._format_success("Trading bot stopped")
+        except Exception as e:
+            return self._format_error(f"Failed to stop trading: {str(e)}")
+
+    async def toggle_paper_trading(self, mode: str) -> str:
+        """Toggle between paper and live trading"""
+        try:
+            if mode.lower() not in ['paper', 'live']:
+                return self._format_error("Invalid mode. Use 'paper' or 'live'")
+                
+            is_paper = mode.lower() == 'paper'
+            if is_paper == self.trading_bot.paper_trading:
+                return self._format_error(f"Already in {mode} trading mode")
+                
+            # Extra confirmation for live trading
+            if not is_paper:
+                return self._format_warning(
+                    "⚠️ CAUTION: Switching to live trading will use real funds.\n"
+                    "To confirm, use: !confirm_live"
+                )
+                
+            self.trading_bot.paper_trading = is_paper
+            return self._format_success(f"Switched to {mode} trading mode")
+        except Exception as e:
+            return self._format_error(str(e))
+
+    async def analyze_symbol(self, symbol: str) -> str:
+        """Get detailed analysis for a symbol"""
+        try:
+            if not symbol:
+                return self._format_error("Please specify a symbol")
+                
+            symbol = symbol.upper()
+            analysis = await self.trading_bot.technical_analyzer.get_full_analysis(symbol)
+            conditions = await self.trading_bot.technical_analyzer.check_market_conditions(symbol)
+            
+            return (
+                f"Analysis for {symbol}:\n```"
+                f"📊 Price Action:\n"
+                f"  • Current Price: ${analysis['price']:,.2f}\n"
+                f"  • 24h Change: {analysis['price_change_24h']:.1f}%\n"
+                f"  • Volatility: {analysis['volatility']:.1f}%\n\n"
+                f"📈 Technical Indicators:\n"
+                f"  • Trend: {analysis['trend']['description']}\n"
+                f"  • RSI: {analysis['rsi']:.1f}\n"
+                f"  • Volume: {'Above' if analysis['volume_confirmed'] else 'Below'} Average\n\n"
+                f"⚠️ Risk Metrics:\n"
+                f"  • Signal Strength: {analysis['strength']*100:.1f}%\n"
+                f"  • Market Conditions: {'Favorable' if conditions['suitable_for_trading'] else 'Unfavorable'}\n"
+                f"  • Recommended Position Size: {analysis['position_size']*100:.1f}% of Portfolio"
+                "```"
+            )
+        except Exception as e:
+            return self._format_error(str(e))
+
+    async def get_portfolio(self) -> str:
+        """Get portfolio status and metrics"""
+        try:
+            portfolio = await self.trading_bot.get_portfolio_status()
+            
+            response = (
+                "Portfolio Status:\n```"
+                f"💰 Account Value: ${portfolio['total_value']:,.2f}\n"
+                f"📊 Performance:\n"
+                f"  • Daily P&L: {portfolio['daily_pnl']:.1f}%\n"
+                f"  • Total P&L: {portfolio['total_pnl']:.1f}%\n\n"
+                f"🔍 Risk Metrics:\n"
+                f"  • Portfolio Exposure: {portfolio['exposure']*100:.1f}%\n"
+                f"  • Current Drawdown: {portfolio['current_drawdown']*100:.1f}%\n"
+                f"  • Position Diversity: {portfolio['position_diversity']:.1f}\n\n"
+                f"📈 Active Positions:\n"
+            )
+            
+            # Add position details
+            for symbol, pos in portfolio['positions'].items():
+                response += (
+                    f"  • {symbol}: {pos['size']} @ ${pos['entry_price']:.2f}\n"
+                    f"    P&L: {pos['unrealized_pnl']:.1f}%\n"
+                )
+                
+            response += "```"
+            return response
+            
+        except Exception as e:
+            return self._format_error(str(e))
