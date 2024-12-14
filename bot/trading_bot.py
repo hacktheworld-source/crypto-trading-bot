@@ -828,3 +828,30 @@ class TradingBot:
         except Exception as e:
             await self.log(f"Error removing {symbol}: {str(e)}", level="error")
             return False
+
+    async def test_api_connection(self) -> float:
+        """
+        Test API connection by fetching BTC price.
+        
+        Returns:
+            float: Current BTC price if successful
+            
+        Raises:
+            TradingError: If API test fails
+        """
+        try:
+            # Test authentication
+            if not self.client:
+                raise TradingError("API client not initialized", "API")
+            
+            # Test price fetch
+            btc_price = await self.data_manager.get_current_price('BTC')
+            
+            # Log successful test
+            await self.log("API connection test successful", level="info")
+            
+            return btc_price
+            
+        except Exception as e:
+            await self.log(f"API test failed: {str(e)}", level="error")
+            raise TradingError(f"API connection test failed: {str(e)}", "API")
