@@ -92,8 +92,9 @@ class DataManager:
     async def get_current_price(self, symbol: str) -> float:
         """Get current price for a symbol."""
         try:
-            ticker = await self.get_ticker(symbol)
-            return ticker['price']
+            product_id = f"{symbol}-USD"
+            product = self.client.get_product(product_id)
+            return float(product.price)
         except Exception as e:
             await self.trading_bot.log(f"Error getting current price: {str(e)}", level="error")
             raise TradingError(f"Failed to get current price: {str(e)}", "DATA")
@@ -145,14 +146,14 @@ class DataManager:
         """
         try:
             product_id = f"{symbol}-USD"
-            ticker = self.client.get_product_ticker(product_id=product_id)
+            product = self.client.get_product(product_id)
             
             return {
-                'price': float(ticker.price),
-                'bid': float(ticker.bid),
-                'ask': float(ticker.ask),
-                'volume': float(ticker.volume),
-                'time': datetime.fromisoformat(ticker.time.replace('Z', '+00:00'))
+                'price': float(product.price),
+                'bid': float(product.bid),
+                'ask': float(product.ask),
+                'volume': float(product.volume_24h),
+                'time': datetime.now()
             }
         except Exception as e:
             await self.trading_bot.log(f"Error getting ticker: {str(e)}", level="error")
