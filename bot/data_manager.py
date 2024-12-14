@@ -86,7 +86,7 @@ class DataManager:
                 
                 # Get candles
                 product_id = f"{symbol}-USD"
-                candles = self.client.get_product_candles(
+                candles = self.client.get_candles(
                     product_id=product_id,
                     granularity=self.timeframes[timeframe]['granularity']
                 )
