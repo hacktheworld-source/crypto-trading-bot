@@ -127,20 +127,55 @@ class TechnicalAnalyzer:
         }
 
     async def analyze_trend(self, symbol: str) -> Dict[str, Any]:
-        """Multi-timeframe trend analysis"""
-        daily = await self._analyze_timeframe(symbol, '1d')
-        hourly = await self._analyze_timeframe(symbol, '1h')
+        """
+        Analyze trend across timeframes.
         
-        return {
-            'trend': {
-                'daily': daily['trend'],
-                'hourly': hourly['trend'],
-                'aligned': daily['trend'] == hourly['trend']
-            },
-            'strength': daily['strength'] * 0.6 + hourly['strength'] * 0.4,
-            'support_resistance': await self._get_key_levels(symbol),
-            'volume_confirmed': await self._check_volume_confirmation(symbol)
-        }
+        Args:
+            symbol: Trading pair symbol
+            
+        Returns:
+            Dict containing trend analysis
+        """
+        try:
+            # Get price data for both timeframes
+            daily_data = await self.data_manager.get_price_data(symbol, TimeFrame.DAY_1)
+            hourly_data = await self.data_manager.get_price_data(symbol, TimeFrame.HOUR_1)
+            
+            # Calculate daily trend
+            daily_ma_fast = daily_data['close'].rolling(self.settings['ma_fast']).mean()
+            daily_ma_slow = daily_data['close'].rolling(self.settings['ma_slow']).mean()
+            daily_trend = 1 if daily_ma_fast.iloc[-1] > daily_ma_slow.iloc[-1] else -1
+            
+            # Calculate hourly trend
+            hourly_ma_fast = hourly_data['close'].rolling(self.settings['ma_fast']).mean()
+            hourly_ma_slow = hourly_data['close'].rolling(self.settings['ma_slow']).mean()
+            hourly_trend = 1 if hourly_ma_fast.iloc[-1] > hourly_ma_slow.iloc[-1] else -1
+            
+            # Calculate volume confirmation
+            volume_ma = daily_data['volume'].rolling(self.settings['volume_ma']).mean()
+            volume_confirmed = daily_data['volume'].iloc[-1] > volume_ma.iloc[-1]
+            
+            # Calculate trend strength
+            daily_strength = abs(daily_ma_fast.iloc[-1] - daily_ma_slow.iloc[-1]) / daily_ma_slow.iloc[-1]
+            hourly_strength = abs(hourly_ma_fast.iloc[-1] - hourly_ma_slow.iloc[-1]) / hourly_ma_slow.iloc[-1]
+            
+            # Combine signals
+            strength = (daily_strength * 0.6) + (hourly_strength * 0.4)
+            
+            return {
+                'trend': {
+                    'daily': daily_trend,
+                    'hourly': hourly_trend,
+                    'aligned': daily_trend == hourly_trend
+                },
+                'strength': strength,
+                'volume_confirmed': volume_confirmed,
+                'description': 'Bullish' if daily_trend > 0 else 'Bearish'
+            }
+            
+        except Exception as e:
+            await self.trading_bot.log(f"Timeframe analysis failed: {str(e)}", level="error")
+            raise TradingError(f"Timeframe analysis failed: {str(e)}", "ANALYSIS")
 
     async def identify_key_levels(self, symbol: str) -> Dict[str, List[float]]:
         """Identify key support and resistance levels"""
