@@ -15,7 +15,9 @@ class TradingConfig:
     # Risk Management
     MAX_PORTFOLIO_RISK = 0.02  # 2% max risk per trade
     MAX_DRAWDOWN = 0.15  # 15% maximum drawdown
-    MAX_POSITIONS = 5
+    MIN_POSITIONS = 1
+    MAX_POSITIONS = 10  # Upper limit of 10 positions
+    TARGET_POSITIONS = 7  # Preferred number of positions
     POSITION_SIZE_LIMIT = 0.20  # 20% max position size
     
     # Technical Analysis

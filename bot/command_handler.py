@@ -176,10 +176,26 @@ class CommandHandler:
         """Stop any active trading"""
         return await self.trading_bot.stop_trading()
         
-    async def get_status(self):
-        """Get bot status."""
+    async def get_status(self) -> str:
+        """Enhanced status display with position limits"""
         try:
-            return await self.trading_bot.get_status()
+            status = "🟢 Active" if self.trading_bot.trading_active else "🔴 Inactive"
+            mode = "📝 Paper Trading" if self.trading_bot.paper_trading else "💵 Live Trading"
+            
+            current_positions = len(self.trading_bot.positions)
+            position_status = (
+                f"{current_positions}/{self.trading_bot.config.RISK_MAX_POSITIONS} "
+                f"(Target: {TradingConfig.TARGET_POSITIONS})"
+            )
+            
+            return (
+                f"Trading Bot Status:\n```"
+                f"Status: {status}\n"
+                f"Mode: {mode}\n"
+                f"Positions: {position_status}\n"
+                # ... rest of status display
+                "```"
+            )
         except Exception as e:
             return self._format_error(str(e))
         

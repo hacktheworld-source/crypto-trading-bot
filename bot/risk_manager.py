@@ -1,6 +1,7 @@
 from typing import Dict, Any
 from datetime import datetime
 from bot.exceptions import TradingError, RiskError
+from bot.config import TradingConfig
 
 class RiskManager:
     """Core risk management system"""
@@ -9,26 +10,41 @@ class RiskManager:
         self.trading_bot = trading_bot
         self.config = trading_bot.config
         
-        # Use new config structure
-        self.max_drawdown = self.config.RISK_MAX_DRAWDOWN
+        # Use new config structure with position limits
         self.max_positions = self.config.RISK_MAX_POSITIONS
+        self.target_positions = TradingConfig.TARGET_POSITIONS  # From constants
+        self.min_positions = TradingConfig.MIN_POSITIONS       # From constants
+        
+        # Other risk parameters
+        self.max_drawdown = self.config.RISK_MAX_DRAWDOWN
         self.daily_var = self.config.RISK_DAILY_VAR
         self.max_exposure = self.config.MAX_PORTFOLIO_EXPOSURE
 
     async def can_open_position(self, symbol: str) -> bool:
         """Check if new position meets risk criteria"""
         try:
-            # Check position count
-            if len(self.trading_bot.positions) >= self.max_positions:
+            current_positions = len(self.trading_bot.positions)
+            
+            # Check position count against absolute maximum
+            if current_positions >= TradingConfig.MAX_POSITIONS:
+                await self.trading_bot.log(
+                    f"Maximum position limit ({TradingConfig.MAX_POSITIONS}) reached", 
+                    level="warning"
+                )
                 return False
             
-            # Check daily drawdown
+            # If above target, apply stricter criteria
+            if current_positions >= self.target_positions:
+                # Require stronger signals for additional positions
+                signal_strength = await self.trading_bot.technical_analyzer.get_signal_strength(symbol)
+                if signal_strength < 0.8:  # Require 80% confidence above target position count
+                    return False
+            
+            # Check other risk criteria
             if await self._check_daily_drawdown():
                 return False
             
-            # Check portfolio exposure
-            current_exposure = await self.trading_bot.get_total_exposure()
-            if current_exposure > 0.8:  # 80% max portfolio usage
+            if await self.trading_bot.get_total_exposure() > self.max_exposure:
                 return False
             
             return True

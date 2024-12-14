@@ -421,43 +421,37 @@ class TradingBot:
             raise TradingError(f"Failed to update positions: {str(e)}", "STATE")
 
     async def _should_enter_position(self, symbol: str) -> bool:
-        """
-        Determine if we should enter a position based on comprehensive analysis.
-        
-        Implements the entry rules from documentation:
-        1. Daily trend aligned
-        2. Hourly confirmation
-        3. Risk checks pass
-        4. Volume confirmation
-        5. Price position checks
-        """
+        """Enhanced position entry logic with position count consideration"""
         try:
-            # Get technical analysis
+            current_positions = len(self.positions)
+            
+            # Basic entry conditions
             analysis = await self.technical_analyzer.analyze_trend(symbol)
             current_price = await self.data_manager.get_current_price(symbol)
             
-            # 1. Check trend alignment
-            if not analysis['trend']['aligned']:
-                return False
-                
-            # 2. Check if daily trend is positive
-            if analysis['trend']['daily'] <= 0:
-                return False
-                
-            # 3. Risk checks
+            # Adjust entry criteria based on position count
+            if current_positions >= self.risk_manager.target_positions:
+                # Require stronger signals above target
+                if not (analysis['trend']['aligned'] and 
+                       analysis['trend']['daily'] > 0.5 and  # Stronger trend required
+                       analysis['volume_confirmed']):
+                    return False
+            else:
+                # Normal entry criteria
+                if not (analysis['trend']['aligned'] and 
+                       analysis['trend']['daily'] > 0 and
+                       analysis['volume_confirmed']):
+                    return False
+            
+            # Check risk management
             if not await self.risk_manager.can_open_position(symbol):
                 return False
-                
-            # 4. Volume confirmation
-            if not analysis['volume_confirmed']:
-                return False
-                
-            # 5. Price position checks
+            
+            # Check price conditions
             price_checks = await self._check_price_conditions(symbol, current_price)
             if not price_checks['valid']:
                 return False
-                
-            # All conditions met
+            
             return True
             
         except Exception as e:

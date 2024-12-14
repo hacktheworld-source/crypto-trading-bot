@@ -19,7 +19,7 @@ class TradingConfig:
     # Risk Management
     RISK_MAX_DRAWDOWN: float = float(os.getenv('RISK_MAX_DRAWDOWN', '0.15'))
     RISK_DAILY_VAR: float = float(os.getenv('RISK_DAILY_VAR', '0.02'))
-    RISK_MAX_POSITIONS: int = int(os.getenv('RISK_MAX_POSITIONS', '3'))
+    RISK_MAX_POSITIONS: int = int(os.getenv('RISK_MAX_POSITIONS', '7'))
     RISK_PER_TRADE: float = float(os.getenv('RISK_PER_TRADE', '0.02'))
     MAX_PORTFOLIO_EXPOSURE: float = float(os.getenv('MAX_PORTFOLIO_EXPOSURE', '0.8'))
     
