@@ -12,6 +12,7 @@ class TechnicalAnalyzer:
     def __init__(self, trading_bot):
         self.trading_bot = trading_bot
         self.config = trading_bot.config
+        self.data_manager = trading_bot.data_manager
         
         # Use config timeframes
         self.timeframes = self.config.TIMEFRAMES
@@ -26,6 +27,10 @@ class TechnicalAnalyzer:
             'rsi_period': 14,
             'volume_ma': 20
         }
+
+    async def log(self, message: str, level: str = "info") -> None:
+        """Forward logging to trading bot"""
+        await self.trading_bot.log(message, level)
 
     async def get_signals(self, symbol: str) -> Dict[str, Any]:
         """
@@ -71,7 +76,7 @@ class TechnicalAnalyzer:
             }
             
         except Exception as e:
-            await self.trading_bot.log(f"Signal generation error: {str(e)}", level="error")
+            await self.log(f"Signal generation error: {str(e)}", level="error")
             raise TradingError(f"Failed to generate signals: {str(e)}", "ANALYSIS")
 
     async def _analyze_timeframe(self, data: pd.DataFrame, weight: float) -> Dict[str, Any]:
@@ -106,7 +111,7 @@ class TechnicalAnalyzer:
             return signal
             
         except Exception as e:
-            await self.trading_bot.log(f"Timeframe analysis error: {str(e)}", level="error")
+            await self.log(f"Timeframe analysis error: {str(e)}", level="error")
             raise TradingError(f"Timeframe analysis failed: {str(e)}", "ANALYSIS")
 
     def _combine_signals(self, signals: Dict[str, Dict]) -> Dict[str, Any]:
@@ -174,7 +179,7 @@ class TechnicalAnalyzer:
             }
             
         except Exception as e:
-            await self.trading_bot.log(f"Timeframe analysis failed: {str(e)}", level="error")
+            await self.log(f"Timeframe analysis failed: {str(e)}", level="error")
             raise TradingError(f"Timeframe analysis failed: {str(e)}", "ANALYSIS")
 
     async def identify_key_levels(self, symbol: str) -> Dict[str, List[float]]:

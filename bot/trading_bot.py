@@ -140,13 +140,15 @@ class TradingBot:
             api_secret=self.config.COINBASE_API_SECRET
         )
         
-        # Core components only
+        # Initialize data manager first
         self.data_manager = DataManager(self)
+        
+        # Then initialize analyzers that depend on data_manager
         self.technical_analyzer = TechnicalAnalyzer(self)
         self.risk_manager = RiskManager(self)
-        self.positions = {}
         
-        # Essential state tracking
+        # Core state
+        self.positions = {}
         self.trading_active = False
         self.paper_trading = True
         self.watched_symbols = set()
