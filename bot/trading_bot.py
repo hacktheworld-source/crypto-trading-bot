@@ -751,3 +751,33 @@ class TradingBot:
                 
         except Exception as e:
             logging.error(f"Logging error: {str(e)}")
+
+    async def get_status(self) -> str:
+        """Get current bot status and configuration"""
+        try:
+            # Get basic state
+            status = "🟢 Active" if self.trading_active else "🔴 Inactive"
+            mode = "📝 Paper Trading" if self.paper_trading else "💵 Live Trading"
+            
+            # Get position info
+            active_positions = len(self.positions)
+            watched_coins = len(self.watched_symbols)
+            
+            # Format response
+            return (
+                f"Trading Bot Status:\n```"
+                f"Status: {status}\n"
+                f"Mode: {mode}\n"
+                f"Active Positions: {active_positions}/{self.config.RISK_MAX_POSITIONS}\n"
+                f"Watched Coins: {watched_coins}\n"
+                f"\nRisk Settings:\n"
+                f"• Risk per Trade: {self.config.RISK_PER_TRADE*100:.1f}%\n"
+                f"• Max Drawdown: {self.config.RISK_MAX_DRAWDOWN*100:.1f}%\n"
+                f"• Stop Loss: {self.config.STOP_LOSS_PERCENTAGE:.1f}%\n"
+                f"• Take Profit: {self.config.TAKE_PROFIT_PERCENTAGE:.1f}%"
+                "```"
+            )
+            
+        except Exception as e:
+            await self.log(f"Error getting status: {str(e)}", level="error")
+            return "❌ Error getting bot status"
