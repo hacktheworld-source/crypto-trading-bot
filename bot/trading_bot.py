@@ -8,16 +8,16 @@ import json
 from coinbase.rest import RESTClient
 from typing import Dict, Any, List, Union, Optional, Literal, Callable
 from decimal import Decimal
-from .position import Position
+from .position import Position, PartialExit, ScaleLevel
 import asyncio
 import discord
-from bot.technical_analysis import TechnicalAnalyzer  # Add this import
-from bot.risk_manager import RiskManager  # Add this import
-from bot.data_manager import DataManager  # Add this import
-from bot.exceptions import TradingError
-from bot.config import TradingConfig as Config  # Rename to avoid conflict
 import numpy as np
-from bot.constants import TradingConstants  # Add this import
+from bot.technical_analysis import TechnicalAnalyzer
+from bot.risk_manager import RiskManager
+from bot.data_manager import DataManager
+from bot.exceptions import TradingError
+from bot.config import TradingConfig
+from bot.constants import TradingConstants
 
 # Set up logging
 logging.basicConfig(
