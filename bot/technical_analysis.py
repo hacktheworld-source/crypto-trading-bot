@@ -379,7 +379,7 @@ class TechnicalAnalyzer:
         """Calculate Bollinger Bands for a symbol"""
         try:
             # Get price data
-            data = await self.data_manager.get_price_data(symbol, TimeFrame.DAY_1)
+            data = await self.get_price_data(symbol.upper(), TimeFrame.DAY_1)
             prices = pd.to_numeric(data['close'], errors='coerce')
             
             # Calculate bands
@@ -391,6 +391,10 @@ class TechnicalAnalyzer:
             
             # Calculate bandwidth
             bandwidth = ((upper - lower) / ma) * 100
+            
+            # Ensure we have valid data
+            if pd.isna(upper.iloc[-1]) or pd.isna(lower.iloc[-1]) or pd.isna(ma.iloc[-1]):
+                raise TradingError("Insufficient data for Bollinger Bands calculation", "ANALYSIS")
             
             return {
                 'upper': float(upper.iloc[-1]),
@@ -407,7 +411,7 @@ class TechnicalAnalyzer:
         """Get moving average analysis for a symbol"""
         try:
             # Get price data
-            data = await self.data_manager.get_price_data(symbol, TimeFrame.DAY_1)
+            data = await self.get_price_data(symbol.upper(), TimeFrame.DAY_1)
             prices = pd.to_numeric(data['close'], errors='coerce')
             
             # Calculate MAs
@@ -449,11 +453,11 @@ class TechnicalAnalyzer:
         """Check market conditions for trading"""
         try:
             # Get price data
-            data = await self.data_manager.get_price_data(symbol, TimeFrame.DAY_1)
+            data = await self.get_price_data(symbol.upper(), TimeFrame.DAY_1)
             prices = pd.to_numeric(data['close'], errors='coerce')
             
             # Calculate volatility
-            returns = prices.pct_change()
+            returns = prices.pct_change().dropna()
             volatility = returns.std() * np.sqrt(252)  # Annualized
             is_volatile = volatility > 0.8  # 80% annualized volatility threshold
             
@@ -517,3 +521,108 @@ class TechnicalAnalyzer:
         except Exception as e:
             await self.log(f"Correlation calculation error: {str(e)}", level="error")
             return 0.0  # Return neutral correlation on error
+
+    async def get_full_analysis(self, symbol: str) -> Dict[str, Any]:
+        """
+        Get comprehensive technical analysis for a symbol.
+        
+        Args:
+            symbol: Trading pair symbol
+            
+        Returns:
+            Dict containing full analysis results
+        """
+        try:
+            # Get price data
+            data = await self.data_manager.get_price_data(symbol.upper(), TimeFrame.DAY_1)
+            if data is None or len(data) < 2:
+                raise TradingError("Insufficient price data", "ANALYSIS")
+                
+            prices = pd.to_numeric(data['close'], errors='coerce')
+            current_price = float(prices.iloc[-1])
+            
+            # Calculate price change
+            price_change_24h = ((current_price - float(prices.iloc[-2])) / float(prices.iloc[-2])) * 100
+            
+            # Calculate volatility
+            returns = prices.pct_change().dropna()
+            volatility = returns.std() * np.sqrt(252) * 100  # Annualized
+            
+            # Get technical signals
+            signals = await self.get_signals(symbol)
+            rsi = await self.calculate_rsi(prices)
+            
+            # Calculate position size based on volatility
+            base_position = 1.0
+            vol_adjustment = max(0.5, 1 - (volatility / 100))  # Reduce size for high volatility
+            position_size = base_position * vol_adjustment * signals['confidence']
+            
+            # Determine trend description
+            if signals['trend']['aligned']:
+                trend_desc = "Strong " + ("Uptrend" if signals['trend']['daily'] > 0 else "Downtrend")
+            else:
+                trend_desc = "Mixed - Daily: " + ("Up" if signals['trend']['daily'] > 0 else "Down") + \
+                           ", Hourly: " + ("Up" if signals['trend']['hourly'] > 0 else "Down")
+            
+            return {
+                'price': current_price,
+                'price_change_24h': price_change_24h,
+                'volatility': volatility,
+                'trend': {
+                    'daily': signals['trend']['daily'],
+                    'hourly': signals['trend']['hourly'],
+                    'aligned': signals['trend']['aligned'],
+                    'description': trend_desc
+                },
+                'rsi': float(rsi.iloc[-1]),
+                'volume_confirmed': signals['volume_confirmed'],
+                'strength': signals['confidence'],
+                'position_size': position_size
+            }
+            
+        except Exception as e:
+            await self.log(f"Full analysis error: {str(e)}", level="error")
+            raise TradingError(f"Failed to get full analysis: {str(e)}", "ANALYSIS")
+
+    async def get_price_data(self, symbol: str, timeframe: TimeFrame) -> pd.DataFrame:
+        """Get price data with proper error handling and validation"""
+        try:
+            # Ensure symbol is uppercase
+            symbol = symbol.upper()
+            
+            # Get candle data from Coinbase
+            end = datetime.now()
+            start = end - timedelta(days=90)  # Get 90 days of data
+            
+            response = self.trading_bot.client.get_candles(
+                product_id=f"{symbol}-USD",
+                start=int(start.timestamp()),
+                end=int(end.timestamp()),
+                granularity=timeframe.value
+            )
+            
+            if not response.candles:
+                raise TradingError(f"No data returned for {symbol}", "DATA")
+                
+            # Convert to DataFrame
+            df = pd.DataFrame([
+                {
+                    'timestamp': c.start,
+                    'open': float(c.open),
+                    'high': float(c.high),
+                    'low': float(c.low),
+                    'close': float(c.close),
+                    'volume': float(c.volume)
+                }
+                for c in response.candles
+            ])
+            
+            # Sort by timestamp and set index
+            df = df.sort_values('timestamp')
+            df.set_index('timestamp', inplace=True)
+            
+            return df
+            
+        except Exception as e:
+            await self.log(f"Failed to get price data: {str(e)}", level="error")
+            raise TradingError(f"Failed to get price data: {str(e)}", "DATA")
