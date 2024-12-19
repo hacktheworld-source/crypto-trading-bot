@@ -228,11 +228,17 @@ class TradingBot:
         self.trading_active = False
         self.paper_trading = True
         self.watched_symbols = set()
+        self.last_trade_time = None  # Track last trade timestamp
 
         # Position tracking
         self.positions: Dict[str, Position] = {}
         self.position_history: List[Dict[str, Any]] = []
         self.closed_positions: List[Dict[str, Any]] = []
+
+        # Trading state
+        self.trailing_stop_enabled = config.TRAILING_STOP_ENABLED
+        self.position_scaling_enabled = True  # Can be made configurable
+        self.auto_risk_enabled = True  # Can be made configurable
 
         self.message_formatter = MessageFormatter()
 
