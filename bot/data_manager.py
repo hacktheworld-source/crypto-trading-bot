@@ -28,10 +28,10 @@ class DataManager:
         self._cache: Dict[str, tuple[pd.DataFrame, float]] = {}
         self._cache_lock = asyncio.Lock()
         
-        # Timeframe configurations - only use supported Coinbase granularities
+        # Timeframe configurations - use correct Coinbase API granularity values
         self.timeframes = {
-            TimeFrame.HOUR_1: {'days': 14, 'granularity': 'ONE_HOUR'},    # Short-term analysis
-            TimeFrame.DAY_1: {'days': 90, 'granularity': 'ONE_DAY'}      # Long-term trend
+            TimeFrame.HOUR_1: {'days': 14, 'granularity': 'HOUR'},    # Short-term analysis
+            TimeFrame.DAY_1: {'days': 90, 'granularity': 'DAY'}      # Long-term trend
         }
         
         # Rate limiting
