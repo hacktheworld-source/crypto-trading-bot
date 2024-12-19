@@ -49,9 +49,14 @@ class TradingConstants:
     MAX_LEVERAGE = 3.0
     STOP_LOSS_DEFAULT = 0.05  # 5%
     TAKE_PROFIT_DEFAULT = 0.1  # 10%
+    MAX_PORTFOLIO_RISK = 0.02  # 2% max risk per trade
+    MAX_DRAWDOWN = 0.15  # 15% maximum drawdown
+    MIN_POSITIONS = 1
+    MAX_POSITIONS = 10  # Upper limit of 10 positions
+    TARGET_POSITIONS = 7  # Preferred number of positions
+    POSITION_SIZE_LIMIT = 0.20  # 20% max position size
     
     # Portfolio Management
-    MAX_POSITIONS = 10
     MAX_PORTFOLIO_USAGE = 0.8  # 80% max usage
     POSITION_SIZE_INCREMENT = 0.25  # 25% position size steps
     
