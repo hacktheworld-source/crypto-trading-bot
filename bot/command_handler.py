@@ -72,7 +72,11 @@ class CommandHandler:
             'set_max_positions': self.set_max_positions,
             'set_risk_per_trade': self.set_risk_per_trade,
             'set_max_drawdown': self.set_max_drawdown,
-            'set_daily_var': self.set_daily_var
+            'set_daily_var': self.set_daily_var,
+            'set_trailing_stop': self.set_trailing_stop,
+            'set_take_profit': self.set_take_profit,
+            'signals': self.get_signals,
+            'analyze_symbol': self.analyze_symbol
         }
     
     async def handle_command(self, command: str, *args) -> str:
@@ -297,11 +301,14 @@ class CommandHandler:
             "\n  !balance - Show account balances"
             
             "\n\n📊 Analysis Commands:"
+            "\n  !analyze <symbol> - Get detailed technical analysis"
+            "\n  !signals - View current signals for watched symbols"
+            "\n  !performance - View trading performance metrics"
+            "\n  !portfolio - View portfolio analysis and risk metrics"
             "\n  !rsi <symbol> - Get RSI analysis"
             "\n  !ma <symbol> - Get moving average analysis"
             "\n  !bb <symbol> - Get Bollinger Bands analysis"
             "\n  !volume <symbol> - Get volume analysis"
-            "\n  !sentiment <symbol> - Get market sentiment analysis"
             "\n  !conditions <symbol> - Get market conditions analysis"
             
             "\n\n💼 Portfolio Commands:"
@@ -318,6 +325,15 @@ class CommandHandler:
             "\n  !paper stats - Show paper trading stats"
             "\n  !paper trades - Show paper trade history"
             "\n  !paper positions - Show paper positions"
+            
+            "\n\n🛠️ Configuration Commands:"
+            "\n  !set_risk <percentage> - Set risk per trade (0-5%)"
+            "\n  !set_max_positions <number> - Set maximum positions"
+            "\n  !set_stop_loss <percentage> - Set default stop loss"
+            "\n  !set_take_profit <percentage> - Set default take profit"
+            "\n  !set_trailing_stop <percentage> - Set trailing stop percentage"
+            "\n  !set_max_drawdown <percentage> - Set maximum drawdown limit"
+            "\n  !set_daily_var <percentage> - Set daily Value at Risk limit"
             
             "\n\n🛠️ Utility Commands:"
             "\n  !ping - Test bot connectivity"
@@ -441,31 +457,39 @@ class CommandHandler:
         
     def get_performance(self):
         """Show both real and paper trading performance"""
-        real_stats = self.trading_bot.get_performance_stats()
-        paper_balance = self.trading_bot.get_paper_balance()
-        
-        response = "Trading Performance:\n```"
-        
-        # Real trading performance
-        response += "\nReal Trading:"
-        response += f"\nTotal Trades: {real_stats['total_trades']}"
-        response += f"\nActive Positions: {real_stats['active_positions']}"
-        response += f"\nClosed Positions: {real_stats['closed_positions']}"
-        response += f"\nTotal Profit: ${real_stats['total_profit_usd']:.2f}"
-        if real_stats['total_trades'] > 0:
-            response += f"\nWin Rate: {real_stats['win_rate']:.1f}%"
-            response += f"\nAverage Profit: ${real_stats['average_profit']:.2f}"
-        
-        # Paper trading performance
-        response += "\n\nPaper Trading:"
-        paper_profit = paper_balance['total_value'] - 1000.0
-        paper_profit_pct = (paper_profit / 1000.0) * 100
-        response += f"\nTotal Value: ${paper_balance['total_value']:.2f}"
-        response += f"\nTotal P/L: ${paper_profit:+.2f} ({paper_profit_pct:+.2f}%)"
-        response += f"\nCash Balance: ${paper_balance['cash_balance']:.2f}"
-        
-        response += "```"
-        return response
+        try:
+            real_stats = self.trading_bot.get_performance_stats()
+            paper_balance = self.trading_bot.get_paper_balance()
+            
+            response = "Trading Performance:\n```"
+            
+            # Real trading performance
+            response += "\nReal Trading:"
+            response += f"\nTotal Trades: {real_stats['total_trades']}"
+            response += f"\nActive Positions: {real_stats['active_positions']}"
+            response += f"\nClosed Positions: {real_stats['closed_positions']}"
+            response += f"\nTotal Profit: ${real_stats['total_profit_usd']:.2f}"
+            
+            # Calculate win rate only if there are closed positions
+            if real_stats['closed_positions'] > 0:
+                response += f"\nWin Rate: {real_stats['win_rate']:.1f}%"
+                response += f"\nAverage Profit: ${real_stats['average_profit']:.2f}"
+                response += f"\nSharpe Ratio: {real_stats.get('sharpe_ratio', 'N/A')}"
+            
+            # Paper trading performance
+            response += "\n\nPaper Trading:"
+            initial_balance = self.trading_bot.config.PAPER_BALANCE
+            paper_profit = paper_balance['total_value'] - initial_balance
+            paper_profit_pct = (paper_profit / initial_balance) * 100 if initial_balance > 0 else 0
+            response += f"\nTotal Value: ${paper_balance['total_value']:.2f}"
+            response += f"\nTotal P/L: ${paper_profit:+.2f} ({paper_profit_pct:+.2f}%)"
+            response += f"\nCash Balance: ${paper_balance['cash_balance']:.2f}"
+            
+            response += "```"
+            return response
+            
+        except Exception as e:
+            return self._format_error(f"Failed to get performance stats: {str(e)}")
         
     async def set_risk_params(self, stop_loss: float, take_profit: float, max_position: float):
         try:
@@ -1051,12 +1075,15 @@ class CommandHandler:
     async def get_portfolio_analysis(self) -> str:
         """Get detailed portfolio analysis."""
         try:
+            if not self.trading_bot.positions:
+                return self._format_error("No active positions in portfolio")
+                
             metrics = await self.trading_bot.risk_manager.calculate_portfolio_metrics()
             
-            # Format position correlations
+            # Format position correlations (limit to avoid message size issues)
             corr_matrix = metrics['position_correlations']
-            corr_str = "\nCorrelation Matrix:\n"
-            symbols = sorted(corr_matrix.keys())
+            corr_str = "\nCorrelation Matrix (Top 5):\n"
+            symbols = sorted(corr_matrix.keys())[:5]  # Limit to 5 symbols
             for s1 in symbols:
                 corr_str += f"  {s1}: " + " ".join(f"{corr_matrix[s1][s2]:.2f}" for s2 in symbols) + "\n"
             
@@ -1067,7 +1094,9 @@ class CommandHandler:
                 f"  • Concentration Index: {metrics['risk_concentration']['herfindahl_index']:.2f}\n\n"
                 f"📊 Risk Metrics:\n"
                 f"  • Portfolio Beta: {metrics['risk_metrics']['portfolio_beta']:.2f}\n"
-                f"  • Max Drawdown: {metrics['risk_metrics']['current_drawdown']*100:.1f}%\n\n"
+                f"  • Max Drawdown: {metrics['risk_metrics']['current_drawdown']*100:.1f}%\n"
+                f"  • Sharpe Ratio: {metrics['risk_metrics'].get('sharpe_ratio', 'N/A')}\n"
+                f"  • Value at Risk: {metrics['risk_metrics'].get('value_at_risk', 0)*100:.1f}%\n\n"
                 f"{corr_str}"
                 "```"
             )
@@ -1178,6 +1207,15 @@ class CommandHandler:
                 return self._format_error("Please specify a symbol")
                 
             symbol = symbol.upper()
+            if not self._is_valid_symbol(symbol):
+                return self._format_error(f"Invalid symbol format: {symbol}")
+                
+            # Get current price first to validate symbol
+            try:
+                current_price = await self.trading_bot.price_manager.get_current_price(symbol)
+            except Exception as e:
+                return self._format_error(f"Symbol not found or invalid: {symbol}")
+                
             analysis = await self.trading_bot.technical_analyzer.get_full_analysis(symbol)
             conditions = await self.trading_bot.technical_analyzer.check_market_conditions(symbol)
             
@@ -1198,7 +1236,47 @@ class CommandHandler:
                 "```"
             )
         except Exception as e:
-            return self._format_error(str(e))
+            return self._format_error(f"Analysis failed: {str(e)}")
+            
+    def _is_valid_symbol(self, symbol: str) -> bool:
+        """Validate symbol format"""
+        # Basic validation - should be uppercase, 3-10 chars
+        if not symbol or not isinstance(symbol, str):
+            return False
+        if not 3 <= len(symbol) <= 10:
+            return False
+        if not symbol.isalnum():
+            return False
+        return True
+
+    async def get_signals(self) -> str:
+        """Get current signals for all watched symbols"""
+        try:
+            if not self.trading_bot.watched_symbols:
+                return self._format_error("No symbols in watchlist. Add symbols with !add <symbol>")
+                
+            response = "Current Trading Signals:\n```"
+            for symbol in sorted(self.trading_bot.watched_symbols):
+                try:
+                    signals = await self.trading_bot.technical_analyzer.get_signals(symbol)
+                    trend = signals['trend']
+                    
+                    # Determine signal strength emoji
+                    strength = "🟢" if signals['confidence'] > 0.7 else "🟡" if signals['confidence'] > 0.3 else "🔴"
+                    
+                    response += f"\n{symbol}:"
+                    response += f"\n  • Signal Strength: {strength} ({signals['confidence']*100:.1f}%)"
+                    response += f"\n  • Trend Alignment: {'✅' if trend['aligned'] else '❌'}"
+                    response += f"\n  • Volume Confirmed: {'✅' if signals['volume_confirmed'] else '❌'}"
+                    response += "\n"
+                except Exception as e:
+                    response += f"\n{symbol}: Error - {str(e)}\n"
+            
+            response += "```"
+            return response
+            
+        except Exception as e:
+            return self._format_error(f"Failed to get signals: {str(e)}")
 
     async def get_portfolio(self) -> str:
         """Get portfolio status and metrics"""
