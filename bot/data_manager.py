@@ -77,10 +77,15 @@ class DataManager:
         periods: Optional[int] = None
     ) -> pd.DataFrame:
         """
-        Fetch current price data from exchange.
+        Fetch historical price data from exchange.
         
-        Note: Currently returns single current price point due to API limitations.
-        Future enhancement: Implement historical data fetching.
+        Args:
+            symbol: Trading pair symbol
+            timeframe: TimeFrame enum value
+            periods: Optional number of periods to fetch
+            
+        Returns:
+            DataFrame with OHLCV data
         """
         try:
             async with self.api_lock:
@@ -89,23 +94,54 @@ class DataManager:
                 if now - self.last_request < self.rate_limit:
                     await asyncio.sleep(self.rate_limit - (now - self.last_request))
                 
-                # Get current product data
-                product_id = f"{symbol}-USD"
-                product = self.client.get_product(product_id)
-                self.last_request = time.time()
+                # Get time range based on timeframe
+                end = datetime.now()
+                days = self.timeframes[timeframe]['days']
+                start = end - timedelta(days=days)
                 
-                # Create DataFrame with current price point
-                df = pd.DataFrame([{
-                    'timestamp': datetime.now(),
-                    'open': float(product.price),
-                    'high': float(product.price),
-                    'low': float(product.price),
-                    'close': float(product.price),
-                    'volume': float(product.volume_24h)
-                }])
+                # Map TimeFrame enum to Coinbase granularity
+                granularity_map = {
+                    TimeFrame.MINUTE_1: "ONE_MINUTE",
+                    TimeFrame.MINUTE_5: "FIVE_MINUTE",
+                    TimeFrame.MINUTE_15: "FIFTEEN_MINUTE",
+                    TimeFrame.HOUR_1: "ONE_HOUR",
+                    TimeFrame.HOUR_6: "SIX_HOUR",
+                    TimeFrame.DAY_1: "ONE_DAY"
+                }
                 
+                # Get candles from Coinbase
+                response = self.client.get_candles(
+                    product_id=symbol,
+                    start=int(start.timestamp()),
+                    end=int(end.timestamp()),
+                    granularity=granularity_map[timeframe]
+                )
+                
+                if not response.candles:
+                    raise DataError(f"No data returned for {symbol}")
+                
+                # Convert to DataFrame
+                df = pd.DataFrame([
+                    {
+                        'timestamp': datetime.fromtimestamp(float(candle.start)),
+                        'open': float(candle.open),
+                        'high': float(candle.high),
+                        'low': float(candle.low),
+                        'close': float(candle.close),
+                        'volume': float(candle.volume)
+                    }
+                    for candle in response.candles
+                ])
+                
+                # Sort by timestamp and set index
+                df = df.sort_values('timestamp')
                 df.set_index('timestamp', inplace=True)
                 
+                # Validate data
+                if len(df) < 2:
+                    raise DataError(f"Insufficient data points for {symbol}")
+                
+                self.last_request = time.time()
                 return df
                 
         except Exception as e:

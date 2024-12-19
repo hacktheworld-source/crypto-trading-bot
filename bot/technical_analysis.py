@@ -354,10 +354,26 @@ class TechnicalAnalyzer:
             return {'resistance': [], 'support': []}
 
     async def calculate_rsi(self, prices: pd.Series, period: int = None) -> pd.Series:
-        """Calculate RSI for a price series"""
+        """
+        Calculate RSI for a price series.
+        
+        Args:
+            prices: Price series data
+            period: RSI period (default: from config)
+            
+        Returns:
+            Series containing RSI values
+            
+        Raises:
+            TradingError: If calculation fails
+        """
         try:
             if period is None:
                 period = self.rsi_period
+                
+            # Validate input
+            if len(prices) < period + 1:
+                raise TradingError(f"Insufficient data for RSI calculation. Need at least {period + 1} data points.", "ANALYSIS")
                 
             # Ensure we have a pandas Series
             if not isinstance(prices, pd.Series):
@@ -365,6 +381,9 @@ class TechnicalAnalyzer:
             
             # Convert to float series if needed
             prices = pd.to_numeric(prices, errors='coerce')
+            
+            # Drop any NaN values
+            prices = prices.dropna()
             
             # Calculate price changes
             delta = prices.diff()
@@ -374,12 +393,27 @@ class TechnicalAnalyzer:
             losses = -delta.where(delta < 0, 0)
             
             # Calculate average gains and losses
-            avg_gains = gains.rolling(window=period).mean()
-            avg_losses = losses.rolling(window=period).mean()
+            avg_gains = gains.rolling(window=period, min_periods=period).mean()
+            avg_losses = losses.rolling(window=period, min_periods=period).mean()
             
-            # Calculate RS and RSI
-            rs = avg_gains / avg_losses
+            # Calculate RS and RSI with proper handling of edge cases
+            rs = pd.Series(0, index=prices.index)  # Initialize with zeros
+            
+            # Calculate RS where we have valid data
+            valid_mask = (avg_losses != 0) & avg_gains.notna() & avg_losses.notna()
+            rs[valid_mask] = avg_gains[valid_mask] / avg_losses[valid_mask]
+            
+            # Handle special cases
+            rs[(avg_losses == 0) & (avg_gains != 0)] = 100.0  # All gains
+            rs[(avg_losses == 0) & (avg_gains == 0)] = 0.0    # No movement
+            
+            # Calculate RSI
             rsi = 100 - (100 / (1 + rs))
+            
+            # Handle edge cases
+            rsi[avg_gains == 0] = 0    # No gains = oversold
+            rsi[avg_losses == 0] = 100  # No losses = overbought
+            rsi = rsi.fillna(50)        # Fill any remaining NaN with neutral
             
             return rsi
             
