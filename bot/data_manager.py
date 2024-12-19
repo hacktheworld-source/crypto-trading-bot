@@ -28,10 +28,10 @@ class DataManager:
         self._cache: Dict[str, tuple[pd.DataFrame, float]] = {}
         self._cache_lock = asyncio.Lock()
         
-        # Timeframe configurations - use correct Coinbase API granularity values
+        # Timeframe configurations with correct Coinbase API granularity values
         self.timeframes = {
-            TimeFrame.HOUR_1: {'days': 14, 'granularity': 'HOUR'},    # Short-term analysis
-            TimeFrame.DAY_1: {'days': 90, 'granularity': 'DAY'}      # Long-term trend
+            TimeFrame.HOUR_1: {'days': 14, 'granularity': 'ONE_HOUR'},    # Short-term analysis
+            TimeFrame.DAY_1: {'days': 90, 'granularity': 'ONE_DAY'}      # Long-term trend
         }
         
         # Rate limiting
@@ -192,12 +192,12 @@ class DataManager:
             product_id = self._format_product_id(symbol)
             product = self.client.get_product(product_id)
             
-            # Get 24h stats for volume
+            # Get 24h stats for volume using consistent granularity mapping
             candles = self.client.get_candles(
                 product_id=product_id,
                 start=int((datetime.now() - timedelta(days=1)).timestamp()),
                 end=int(datetime.now().timestamp()),
-                granularity="ONE_HOUR"
+                granularity=self.timeframes[TimeFrame.HOUR_1]['granularity']  # Use consistent mapping
             )
             
             volume_24h = sum(float(candle.volume) for candle in candles.candles)
