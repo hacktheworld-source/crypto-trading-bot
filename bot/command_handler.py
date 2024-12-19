@@ -95,13 +95,22 @@ class CommandHandler:
             # Get data for each coin
             for symbol in sorted(self.trading_bot.watched_symbols):
                 try:
-                    # Get current price and basic info
+                    # Get current price
                     price = await self.trading_bot.data_manager.get_current_price(symbol)
                     
                     try:
-                        # Get 24h price for change calculation
-                        price_data = await self.trading_bot.data_manager.get_price_data(symbol, TimeFrame.DAY_1)
-                        prev_price = float(price_data['close'].iloc[-2])
+                        # Get 24h candle data directly from Coinbase API
+                        end = datetime.now()
+                        start = end - timedelta(days=1)
+                        candles = self.trading_bot.client.get_candles(
+                            product_id=f"{symbol}-USD",
+                            start=int(start.timestamp()),
+                            end=int(end.timestamp()),
+                            granularity="ONE_HOUR"
+                        )
+                        
+                        # Get 24h ago price from the oldest candle
+                        prev_price = float(candles.candles[-1].open)
                         price_change = ((price - prev_price) / prev_price) * 100
                     except Exception:
                         # Fallback to just showing current price if historical data fails
