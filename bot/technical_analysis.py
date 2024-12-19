@@ -633,51 +633,8 @@ class TechnicalAnalyzer:
     async def get_price_data(self, symbol: str, timeframe: TimeFrame) -> pd.DataFrame:
         """Get price data with proper error handling and validation"""
         try:
-            # Ensure symbol is uppercase
-            symbol = symbol.upper()
-            
-            # Get candle data from Coinbase
-            end = datetime.now()
-            start = end - timedelta(days=90)  # Get 90 days of data
-            
-            # Map TimeFrame enum to Coinbase granularity
-            granularity_map = {
-                TimeFrame.MINUTE_1: "ONE_MINUTE",
-                TimeFrame.MINUTE_5: "FIVE_MINUTE",
-                TimeFrame.MINUTE_15: "FIFTEEN_MINUTE",
-                TimeFrame.HOUR_1: "ONE_HOUR",
-                TimeFrame.HOUR_6: "SIX_HOUR",
-                TimeFrame.DAY_1: "ONE_DAY"
-            }
-            
-            response = self.trading_bot.client.get_candles(
-                product_id=f"{symbol}-USD",
-                start=int(start.timestamp()),
-                end=int(end.timestamp()),
-                granularity=granularity_map[timeframe]
-            )
-            
-            if not response.candles:
-                raise TradingError(f"No data returned for {symbol}", "DATA")
-                
-            # Convert to DataFrame
-            df = pd.DataFrame([
-                {
-                    'timestamp': c.start,
-                    'open': float(c.open),
-                    'high': float(c.high),
-                    'low': float(c.low),
-                    'close': float(c.close),
-                    'volume': float(c.volume)
-                }
-                for c in response.candles
-            ])
-            
-            # Sort by timestamp and set index
-            df = df.sort_values('timestamp')
-            df.set_index('timestamp', inplace=True)
-            
-            return df
+            # Use data manager's get_price_data instead of direct API call
+            return await self.data_manager.get_price_data(symbol, timeframe)
             
         except Exception as e:
             await self.log(f"Failed to get price data: {str(e)}", level="error")

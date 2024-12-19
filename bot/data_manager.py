@@ -41,6 +41,13 @@ class DataManager:
         # API lock for thread safety
         self.api_lock = asyncio.Lock()
 
+    def _format_product_id(self, symbol: str) -> str:
+        """Format symbol into valid Coinbase product ID"""
+        symbol = symbol.upper().strip()
+        if not symbol.endswith('-USD'):
+            symbol = f"{symbol}-USD"
+        return symbol
+
     async def get_price_data(
         self, 
         symbol: str, 
@@ -49,6 +56,7 @@ class DataManager:
     ) -> pd.DataFrame:
         """Get price data for specified timeframe with caching"""
         try:
+            symbol = self._format_product_id(symbol)
             cache_key = f"{symbol}_{timeframe.value}"
             
             async with self._cache_lock:
@@ -80,7 +88,7 @@ class DataManager:
         Fetch historical price data from exchange.
         
         Args:
-            symbol: Trading pair symbol
+            symbol: Trading pair symbol (must be in format 'BTC-USD')
             timeframe: TimeFrame enum value
             periods: Optional number of periods to fetch
             
@@ -111,7 +119,7 @@ class DataManager:
                 
                 # Get candles from Coinbase
                 response = self.client.get_candles(
-                    product_id=symbol,
+                    product_id=symbol,  # Already formatted by get_price_data
                     start=int(start.timestamp()),
                     end=int(end.timestamp()),
                     granularity=granularity_map[timeframe]
@@ -151,7 +159,7 @@ class DataManager:
     async def get_current_price(self, symbol: str) -> float:
         """Get current price for a symbol."""
         try:
-            product_id = f"{symbol}-USD"
+            product_id = self._format_product_id(symbol)
             product = self.client.get_product(product_id)
             return float(product.price)
         except Exception as e:
@@ -159,18 +167,9 @@ class DataManager:
             raise TradingError(f"Failed to get current price: {str(e)}", "DATA")
 
     async def get_order_book(self, symbol: str, level: int = 2) -> Dict[str, Any]:
-        """
-        Get order book data.
-        
-        Args:
-            symbol: Trading pair symbol
-            level: Order book level (1=top only, 2=aggregated, 3=full)
-            
-        Returns:
-            Dict containing bids and asks
-        """
+        """Get order book data."""
         try:
-            product_id = f"{symbol}-USD"
+            product_id = self._format_product_id(symbol)
             async with self.api_lock:
                 # Rate limiting
                 now = time.time()
@@ -194,17 +193,9 @@ class DataManager:
             raise TradingError(f"Failed to get order book: {str(e)}", "DATA")
 
     async def get_ticker(self, symbol: str) -> Dict[str, Any]:
-        """
-        Get current ticker data for a symbol.
-        
-        Args:
-            symbol: Trading pair symbol
-            
-        Returns:
-            Dict containing current price, volume, etc.
-        """
+        """Get current ticker data for a symbol."""
         try:
-            product_id = f"{symbol}-USD"
+            product_id = self._format_product_id(symbol)
             product = self.client.get_product(product_id)
             
             # Get 24h stats for volume
