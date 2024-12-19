@@ -36,11 +36,15 @@ class TradingConfig:
     RSI_OVERBOUGHT: float = float(os.getenv('RSI_OVERBOUGHT', '70.0'))
     RSI_OVERSOLD: float = float(os.getenv('RSI_OVERSOLD', '30.0'))
     
-    # Timeframes Configuration
-    TIMEFRAMES: Dict[str, Dict[str, Any]] = field(default_factory=lambda: {
-        '1h': {'weight': 0.4, 'periods': 24},  # Hourly for entry timing
-        '1d': {'weight': 0.6, 'periods': 90}   # Daily for trend direction
+    # Cache Settings
+    CACHE_SIZE: int = int(os.getenv('CACHE_SIZE', '1000'))  # Maximum number of cached items
+    CACHE_TTL: Dict[str, int] = field(default_factory=lambda: {
+        '1h': 1800,   # 30 minutes
+        '1d': 21600   # 6 hours
     })
+    
+    # Rate Limiting
+    RATE_LIMIT: float = float(os.getenv('RATE_LIMIT', '0.1'))  # 100ms between API calls
     
     # Paper Trading
     PAPER_BALANCE: float = float(os.getenv('PAPER_BALANCE', '10000.0'))
@@ -48,10 +52,10 @@ class TradingConfig:
     # Exchange Settings
     EXCHANGE_FEE: float = float(os.getenv('EXCHANGE_FEE', '0.004'))
     
-    # Cache Settings
-    CACHE_TTL: Dict[str, int] = field(default_factory=lambda: {
-        '1h': 1800,   # 30 minutes
-        '1d': 21600   # 6 hours
+    # Timeframes Configuration
+    TIMEFRAMES: Dict[str, Dict[str, Any]] = field(default_factory=lambda: {
+        '1h': {'weight': 0.4, 'periods': 24},  # Hourly for entry timing
+        '1d': {'weight': 0.6, 'periods': 90}   # Daily for trend direction
     })
     
     def to_dict(self) -> Dict[str, Any]:
