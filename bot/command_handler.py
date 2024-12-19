@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 import asyncio
 import pandas as pd
 import logging
-from bot.constants import TradingConstants
+from bot.constants import TradingConstants, TimeFrame
 
 class CommandHandler:
     """
@@ -98,13 +98,17 @@ class CommandHandler:
                     # Get current price and basic info
                     price = await self.trading_bot.data_manager.get_current_price(symbol)
                     
-                    # Get 24h price for change calculation
-                    price_data = await self.trading_bot.data_manager.get_price_data(symbol, TimeFrame.DAY_1)
-                    prev_price = float(price_data['close'].iloc[-2])
-                    price_change = ((price - prev_price) / prev_price) * 100
-                    
+                    try:
+                        # Get 24h price for change calculation
+                        price_data = await self.trading_bot.data_manager.get_price_data(symbol, TimeFrame.DAY_1)
+                        prev_price = float(price_data['close'].iloc[-2])
+                        price_change = ((price - prev_price) / prev_price) * 100
+                    except Exception:
+                        # Fallback to just showing current price if historical data fails
+                        price_change = 0
+                        
                     # Determine trend emoji
-                    trend_emoji = "🟢" if price_change > 0 else "🔴"
+                    trend_emoji = "🟢" if price_change > 0 else "🔴" if price_change < 0 else "⚪"
                     
                     # Add coin info
                     response += (
