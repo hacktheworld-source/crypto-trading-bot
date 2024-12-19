@@ -1,9 +1,11 @@
 import os
 from bot.trading_bot import TradingBot
 from bot.command_handler import CommandHandler
+from bot.config import TradingConfig
 from discord.ext import commands
 import discord
 import logging
+from coinbase.rest import RESTClient
 
 # Add at top of file
 logging.basicConfig(
@@ -12,9 +14,13 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
+# Initialize configuration and client
+config = TradingConfig()
+client = RESTClient(api_key=config.COINBASE_API_KEY, api_secret=config.COINBASE_API_SECRET)
+
 # Initialize Discord bot
 bot = commands.Bot(command_prefix='!', intents=discord.Intents.all())
-trading_bot = TradingBot()
+trading_bot = TradingBot(client=client, config=config)
 command_handler = CommandHandler(trading_bot)
 
 @bot.event
