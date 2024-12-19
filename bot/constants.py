@@ -2,13 +2,9 @@ from typing import Dict, Any
 from enum import Enum
 
 class TimeFrame(Enum):
-    """Trading timeframes"""
-    MINUTE_1 = "ONE_MINUTE"
-    MINUTE_5 = "FIVE_MINUTE"
-    MINUTE_15 = "FIFTEEN_MINUTE"
-    HOUR_1 = "ONE_HOUR"
-    HOUR_6 = "SIX_HOUR"
-    DAY_1 = "ONE_DAY"
+    """Trading timeframes supported by Coinbase"""
+    HOUR_1 = "ONE_HOUR"    # Short-term analysis
+    DAY_1 = "ONE_DAY"      # Long-term trend
 
 class TradingConstants:
     """Trading-related constants"""
@@ -28,11 +24,7 @@ class TradingConstants:
     # Cache settings
     CACHE_SIZE = 1000
     CACHE_TTL = {
-        TimeFrame.MINUTE_1: 300,    # 5 minutes
-        TimeFrame.MINUTE_5: 900,    # 15 minutes
-        TimeFrame.MINUTE_15: 1800,  # 30 minutes
         TimeFrame.HOUR_1: 3600,     # 1 hour
-        TimeFrame.HOUR_6: 21600,    # 6 hours
         TimeFrame.DAY_1: 86400      # 24 hours
     }
     

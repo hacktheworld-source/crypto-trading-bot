@@ -14,8 +14,12 @@ class TechnicalAnalyzer:
         self.config = trading_bot.config
         self.data_manager = trading_bot.data_manager
         
-        # Use config timeframes
-        self.timeframes = self.config.TIMEFRAMES
+        # Use data manager's timeframes for consistency
+        self.timeframes = {
+            TimeFrame.DAY_1: {'weight': 0.6},  # Daily for trend direction
+            TimeFrame.HOUR_1: {'weight': 0.4}   # Hourly for entry timing
+        }
+        
         self.rsi_period = self.config.RSI_PERIOD
         self.rsi_overbought = self.config.RSI_OVERBOUGHT
         self.rsi_oversold = self.config.RSI_OVERSOLD

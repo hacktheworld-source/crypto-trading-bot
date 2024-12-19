@@ -28,10 +28,10 @@ class DataManager:
         self._cache: Dict[str, tuple[pd.DataFrame, float]] = {}
         self._cache_lock = asyncio.Lock()
         
-        # Timeframe configurations
+        # Timeframe configurations - only use supported Coinbase granularities
         self.timeframes = {
-            TimeFrame.HOUR_1: {'days': 14, 'granularity': 'ONE_HOUR'},
-            TimeFrame.DAY_1: {'days': 90, 'granularity': 'ONE_DAY'}
+            TimeFrame.HOUR_1: {'days': 14, 'granularity': 'ONE_HOUR'},    # Short-term analysis
+            TimeFrame.DAY_1: {'days': 90, 'granularity': 'ONE_DAY'}      # Long-term trend
         }
         
         # Rate limiting
@@ -104,25 +104,19 @@ class DataManager:
                 
                 # Get time range based on timeframe
                 end = datetime.now()
-                days = self.timeframes[timeframe]['days']
-                start = end - timedelta(days=days)
+                timeframe_config = self.timeframes.get(timeframe)
+                if not timeframe_config:
+                    raise DataError(f"Unsupported timeframe: {timeframe}")
                 
-                # Map TimeFrame enum to Coinbase granularity
-                granularity_map = {
-                    TimeFrame.MINUTE_1: "ONE_MINUTE",
-                    TimeFrame.MINUTE_5: "FIVE_MINUTE",
-                    TimeFrame.MINUTE_15: "FIFTEEN_MINUTE",
-                    TimeFrame.HOUR_1: "ONE_HOUR",
-                    TimeFrame.HOUR_6: "SIX_HOUR",
-                    TimeFrame.DAY_1: "ONE_DAY"
-                }
+                days = timeframe_config['days']
+                start = end - timedelta(days=days)
                 
                 # Get candles from Coinbase
                 response = self.client.get_candles(
                     product_id=symbol,  # Already formatted by get_price_data
                     start=int(start.timestamp()),
                     end=int(end.timestamp()),
-                    granularity=granularity_map[timeframe]
+                    granularity=timeframe_config['granularity']
                 )
                 
                 if not response.candles:
