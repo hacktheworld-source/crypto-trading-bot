@@ -26,6 +26,76 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
+class MessageFormatter:
+    """Handles consistent message formatting for Discord channels."""
+    
+    @staticmethod
+    def format_notification(message: str, category: str = "info") -> str:
+        """Format notification messages with emojis and proper styling."""
+        emojis = {
+            "success": "✅",
+            "error": "🚨",
+            "warning": "⚠️",
+            "info": "ℹ️",
+            "trade": "📊",
+            "profit": "💰",
+            "loss": "📉",
+            "alert": "🔔"
+        }
+        
+        return f"{emojis.get(category, 'ℹ️')} {message}"
+
+    @staticmethod
+    def format_trade_alert(symbol: str, action: str, price: float, quantity: float) -> str:
+        """Format trade execution alerts."""
+        emoji = "🟢" if action.lower() == "buy" else "🔴"
+        return (
+            f"{emoji} Trade Alert: {action.upper()} {symbol}\n"
+            f"```\n"
+            f"Price: ${price:,.2f}\n"
+            f"Size:  {quantity:.8f} {symbol}\n"
+            f"Time:  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+            "```"
+        )
+
+    @staticmethod
+    def format_position_update(position: 'Position') -> str:
+        """Format position status updates."""
+        profit_emoji = "📈" if position.unrealized_pnl > 0 else "📉"
+        return (
+            f"{profit_emoji} Position Update: {position.symbol}\n"
+            f"```\n"
+            f"Entry:     ${position.entry_price:,.2f}\n"
+            f"Current:   ${position.current_price:,.2f}\n"
+            f"P/L:       {position.unrealized_pnl:+,.2f} USD ({(position.current_price/position.entry_price - 1)*100:+.2f}%)\n"
+            f"Size:      {position.remaining_quantity:.8f} {position.symbol}\n"
+            f"Stop:      ${position.stop_loss:,.2f}\n"
+            f"Target:    ${position.take_profit:,.2f}\n"
+            "```"
+        )
+
+    @staticmethod
+    def format_error(error: str) -> str:
+        """Format error messages."""
+        return (
+            "🚨 Error Alert\n"
+            "```diff\n"
+            f"- {error}\n"
+            "```"
+        )
+
+    @staticmethod
+    def format_risk_alert(message: str, level: str = "warning") -> str:
+        """Format risk management alerts."""
+        emoji = "🚨" if level == "critical" else "⚠️"
+        return (
+            f"{emoji} Risk Alert\n"
+            "```yaml\n"
+            f"Level: {level.upper()}\n"
+            f"Alert: {message}\n"
+            "```"
+        )
+
 class PriceManager:
     """Centralized price data management"""
     def __init__(self, client: RESTClient, cache_size: int, cache_ttl: int, rate_limit: float, 
@@ -157,6 +227,8 @@ class TradingBot:
         self.positions: Dict[str, Position] = {}
         self.position_history: List[Dict[str, Any]] = []
         self.closed_positions: List[Dict[str, Any]] = []
+
+        self.message_formatter = MessageFormatter()
 
     async def analyze_symbol(self, symbol: str) -> Dict[str, Any]:
         """Analyze trading symbol"""
@@ -726,25 +798,32 @@ class TradingBot:
         """Set the Discord logs channel"""
         self.logs_channel = channel
 
-    async def send_notification(self, message: str) -> None:
-        """Send a notification to the Discord channel"""
+    async def send_notification(self, message: str, category: str = "info") -> None:
+        """Send a formatted notification to the Discord channel."""
         try:
             if self.notification_channel:
-                await self.notification_channel.send(message)
+                formatted_message = self.message_formatter.format_notification(message, category)
+                await self.notification_channel.send(formatted_message)
         except Exception as e:
             logging.error(f"Failed to send notification: {str(e)}")
 
     async def log(self, message: str, level: str = "info") -> None:
-        """Log a message and optionally send to Discord logs channel"""
+        """Log a message and optionally send to Discord logs channel."""
         try:
             # Standard logging
             log_func = getattr(logging, level.lower())
             log_func(message)
             
-            # Discord logging
-            if self.logs_channel and level in ["error", "warning"]:
-                prefix = "🚨" if level == "error" else "⚠️"
-                await self.logs_channel.send(f"{prefix} {message}")
+            # Discord logging with prettier formatting
+            if self.logs_channel and level in ["error", "warning", "info"]:
+                if level == "error":
+                    formatted_message = self.message_formatter.format_error(message)
+                elif level == "warning":
+                    formatted_message = self.message_formatter.format_risk_alert(message, "warning")
+                else:
+                    formatted_message = self.message_formatter.format_notification(message, "info")
+                    
+                await self.logs_channel.send(formatted_message)
                 
         except Exception as e:
             logging.error(f"Logging error: {str(e)}")
@@ -1080,3 +1159,47 @@ class TradingBot:
             await self.log(f"Error during exit: {str(exc_val)}", level="error")
             return False  # Re-raise the exception
         return True
+
+    async def execute_entry(self, symbol: str, quantity: float, signals: Dict[str, Any]) -> bool:
+        """Execute entry order with proper notifications."""
+        try:
+            success = await self._execute_order(symbol, quantity, "buy")
+            if success:
+                price = await self.data_manager.get_current_price(symbol)
+                await self.send_notification(
+                    self.message_formatter.format_trade_alert(symbol, "buy", price, quantity),
+                    category="trade"
+                )
+            return success
+        except Exception as e:
+            await self.log(f"Entry execution error: {str(e)}", level="error")
+            return False
+
+    async def execute_exit(self, symbol: str, quantity: float) -> bool:
+        """Execute exit order with proper notifications."""
+        try:
+            success = await self._execute_order(symbol, quantity, "sell")
+            if success:
+                price = await self.data_manager.get_current_price(symbol)
+                await self.send_notification(
+                    self.message_formatter.format_trade_alert(symbol, "sell", price, quantity),
+                    category="trade"
+                )
+            return success
+        except Exception as e:
+            await self.log(f"Exit execution error: {str(e)}", level="error")
+            return False
+
+    async def update_position_metrics(self, position: 'Position') -> None:
+        """Update and notify position metrics."""
+        try:
+            await position.update_metrics(await self.data_manager.get_current_price(position.symbol))
+            
+            # Send position update if significant change
+            if abs(position.unrealized_pnl_change) > 0.02:  # 2% change threshold
+                await self.send_notification(
+                    self.message_formatter.format_position_update(position),
+                    category="trade"
+                )
+        except Exception as e:
+            await self.log(f"Position metrics update error: {str(e)}", level="error")
