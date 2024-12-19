@@ -857,3 +857,226 @@ class TradingBot:
         except Exception as e:
             await self.log(f"API test failed: {str(e)}", level="error")
             raise TradingError(f"API connection test failed: {str(e)}", "API")
+
+    async def get_account_balance(self) -> float:
+        """Get current account balance with proper error handling."""
+        try:
+            if self.paper_trading:
+                return self.config.PAPER_BALANCE
+            
+            # Get account info from Coinbase
+            account = self.client.get_account()
+            return float(account.available)
+            
+        except Exception as e:
+            await self.log(f"Balance fetch error: {str(e)}", level="error")
+            raise TradingError(f"Failed to get balance: {str(e)}", "API")
+
+    async def get_daily_pnl(self) -> float:
+        """Calculate daily profit/loss."""
+        try:
+            today = datetime.now().date()
+            daily_pnl = 0.0
+            
+            # Add closed position P/L
+            for pos in self.position_history:
+                if pos['exit_time'].date() == today:
+                    daily_pnl += pos['total_profit']
+            
+            # Add unrealized P/L
+            for pos in self.positions.values():
+                daily_pnl += pos.unrealized_pnl
+                
+            return daily_pnl
+            
+        except Exception as e:
+            await self.log(f"Daily P/L calculation error: {str(e)}", level="error")
+            raise TradingError(f"Failed to calculate daily P/L: {str(e)}", "CALCULATION")
+
+    async def get_total_exposure(self) -> float:
+        """Calculate total portfolio exposure."""
+        try:
+            total_value = await self._calculate_paper_account_value() if self.paper_trading else await self._get_live_account_value()
+            
+            if not total_value:
+                return 0.0
+                
+            position_value = sum(
+                pos.current_price * pos.remaining_quantity 
+                for pos in self.positions.values()
+            )
+            
+            return position_value / total_value
+            
+        except Exception as e:
+            await self.log(f"Exposure calculation error: {str(e)}", level="error")
+            raise TradingError(f"Failed to calculate exposure: {str(e)}", "CALCULATION")
+
+    async def get_trading_stats(self) -> Dict[str, Any]:
+        """Get comprehensive trading statistics."""
+        try:
+            closed_positions = self.position_history[-100:]  # Last 100 trades
+            
+            if not closed_positions:
+                return {
+                    'total_trades': 0,
+                    'win_rate': 0,
+                    'avg_profit': 0,
+                    'max_drawdown': 0,
+                    'sharpe_ratio': 0
+                }
+                
+            # Calculate core metrics
+            wins = sum(1 for p in closed_positions if p['total_profit'] > 0)
+            total_trades = len(closed_positions)
+            
+            return {
+                'total_trades': total_trades,
+                'win_rate': wins / total_trades if total_trades > 0 else 0,
+                'avg_profit': sum(p['total_profit'] for p in closed_positions) / total_trades,
+                'max_drawdown': await self._calculate_max_drawdown(),
+                'sharpe_ratio': await self._calculate_sharpe_ratio(),
+                'active_positions': len(self.positions),
+                'closed_positions': len(self.position_history)
+            }
+            
+        except Exception as e:
+            await self.log(f"Stats calculation error: {str(e)}", level="error")
+            raise TradingError(f"Failed to calculate trading stats: {str(e)}", "CALCULATION")
+
+    async def _calculate_trade_signal(self, symbol: str) -> Dict[str, Any]:
+        """Calculate comprehensive trade signal with component scores."""
+        try:
+            # Get technical analysis
+            analysis = await self.technical_analyzer.get_signals(symbol)
+            current_price = await self.data_manager.get_current_price(symbol)
+            
+            # Component signals (normalized to -1 to 1 scale)
+            trend_signal = analysis['trend']['daily'] * 0.4  # 40% weight
+            momentum_signal = analysis['signals']['daily']['momentum'] * 0.3  # 30% weight
+            volume_signal = analysis['volume_confirmed'] * 0.2  # 20% weight
+            
+            # Risk component based on volatility and market conditions
+            risk_score = await self._calculate_risk_score(symbol)
+            risk_signal = risk_score * 0.1  # 10% weight
+            
+            # Combine signals
+            total_score = (
+                trend_signal +
+                momentum_signal +
+                volume_signal +
+                risk_signal
+            )
+            
+            return {
+                'symbol': symbol,
+                'price': current_price,
+                'action': 'buy' if total_score > 0.2 else 'sell' if total_score < -0.2 else 'hold',
+                'score': total_score,
+                'signals': {
+                    'trend': trend_signal,
+                    'momentum': momentum_signal,
+                    'volume': volume_signal,
+                    'risk': risk_signal
+                }
+            }
+            
+        except Exception as e:
+            await self.log(f"Signal calculation error: {str(e)}", level="error")
+            raise TradingError(f"Failed to calculate trade signal: {str(e)}", "ANALYSIS")
+
+    async def analyze_market_sentiment(self, symbol: str) -> Dict[str, Any]:
+        """Analyze market sentiment using multiple indicators."""
+        try:
+            # Get technical analysis data
+            analysis = await self.technical_analyzer.get_signals(symbol)
+            
+            # Calculate sentiment score (-10 to 10 scale)
+            sentiment_score = (
+                analysis['trend']['daily'] * 4 +  # Trend weight
+                analysis['signals']['daily']['momentum'] * 3 +  # Momentum weight
+                analysis['volume_confirmed'] * 2 +  # Volume weight
+                (1 if analysis['trend']['aligned'] else -1)  # Timeframe alignment
+            )
+            
+            # Determine momentum across timeframes
+            momentum = {
+                'short_term': 'bullish' if analysis['signals']['hourly']['momentum'] > 0 else 'bearish',
+                'medium_term': 'bullish' if analysis['signals']['daily']['momentum'] > 0 else 'bearish',
+                'long_term': 'bullish' if analysis['trend']['daily'] > 0 else 'bearish'
+            }
+            
+            return {
+                'overall_sentiment': 'bullish' if sentiment_score > 0 else 'bearish',
+                'sentiment_score': sentiment_score,
+                'momentum': momentum,
+                'strength': abs(sentiment_score) / 10,  # Normalized to 0-1
+                'timeframes_aligned': analysis['trend']['aligned']
+            }
+            
+        except Exception as e:
+            await self.log(f"Sentiment analysis error: {str(e)}", level="error")
+            raise TradingError(f"Failed to analyze sentiment: {str(e)}", "ANALYSIS")
+
+    async def _calculate_risk_score(self, symbol: str) -> float:
+        """Calculate risk score for a symbol (-1 to 1 scale)."""
+        try:
+            # Get market conditions
+            conditions = await self.technical_analyzer.check_market_conditions(symbol)
+            
+            # Risk factors
+            volatility_penalty = -0.3 if conditions['is_volatile'] else 0
+            market_bonus = 0.2 if conditions['market_aligned'] else 0
+            activity_score = 0.2 if conditions['is_high_activity'] else -0.1
+            
+            # Combine risk factors
+            risk_score = (
+                volatility_penalty +
+                market_bonus +
+                activity_score
+            )
+            
+            # Normalize to -1 to 1 range
+            return max(min(risk_score, 1.0), -1.0)
+            
+        except Exception as e:
+            await self.log(f"Risk score calculation error: {str(e)}", level="error")
+            return 0.0  # Neutral score on error
+
+    async def cleanup(self) -> None:
+        """Cleanup resources and prepare for shutdown."""
+        try:
+            # Stop trading
+            self.trading_active = False
+            
+            # Close all positions if in paper trading
+            if self.paper_trading:
+                for symbol in list(self.positions.keys()):
+                    current_price = await self.data_manager.get_current_price(symbol)
+                    await self.close_position(symbol, current_price)
+            
+            # Cleanup data manager
+            await self.data_manager._clean_cache()
+            
+            # Close any open resources
+            if hasattr(self, 'client'):
+                self.client = None
+            
+            await self.log("Trading bot cleanup completed", level="info")
+            
+        except Exception as e:
+            await self.log(f"Cleanup error: {str(e)}", level="error")
+
+    async def __aenter__(self):
+        """Async context manager entry."""
+        await self.post_init()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit with cleanup."""
+        await self.cleanup()
+        
+        if exc_type is not None:
+            await self.log(f"Error during exit: {str(exc_val)}", level="error")
+            return False  # Re-raise the exception
+        return True

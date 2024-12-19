@@ -15,6 +15,9 @@ class TradingConfig:
     TAKE_PROFIT_PERCENTAGE: float = float(os.getenv('TAKE_PROFIT_PERCENTAGE', '10.0'))
     TRAILING_STOP_ENABLED: bool = bool(os.getenv('TRAILING_STOP_ENABLED', 'True'))
     TRAILING_STOP_PERCENTAGE: float = float(os.getenv('TRAILING_STOP_PERCENTAGE', '2.0'))
+    MAX_POSITION_HOLD_DAYS: int = int(os.getenv('MAX_POSITION_HOLD_DAYS', '30'))
+    PARTIAL_TP_PERCENTAGE: float = float(os.getenv('PARTIAL_TP_PERCENTAGE', '5.0'))
+    PARTIAL_TP_SIZE: float = float(os.getenv('PARTIAL_TP_SIZE', '0.5'))  # 50% of position
     
     # Risk Management
     RISK_MAX_DRAWDOWN: float = float(os.getenv('RISK_MAX_DRAWDOWN', '0.15'))

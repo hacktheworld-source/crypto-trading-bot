@@ -76,7 +76,12 @@ class DataManager:
         timeframe: TimeFrame,
         periods: Optional[int] = None
     ) -> pd.DataFrame:
-        """Fetch historical price data from exchange"""
+        """
+        Fetch current price data from exchange.
+        
+        Note: Currently returns single current price point due to API limitations.
+        Future enhancement: Implement historical data fetching.
+        """
         try:
             async with self.api_lock:
                 # Rate limiting
@@ -84,36 +89,23 @@ class DataManager:
                 if now - self.last_request < self.rate_limit:
                     await asyncio.sleep(self.rate_limit - (now - self.last_request))
                 
-                # Get candles
+                # Get current product data
                 product_id = f"{symbol}-USD"
-                candles = self.client.get_candles(
-                    product_id=product_id,
-                    granularity=self.timeframes[timeframe]['granularity']
-                )
+                product = self.client.get_product(product_id)
                 self.last_request = time.time()
                 
-                # Convert to DataFrame
-                df = pd.DataFrame(
-                    [
-                        {
-                            'timestamp': datetime.fromtimestamp(float(candle.start)),
-                            'open': float(candle.open),
-                            'high': float(candle.high),
-                            'low': float(candle.low),
-                            'close': float(candle.close),
-                            'volume': float(candle.volume)
-                        }
-                        for candle in candles
-                    ]
-                )
+                # Create DataFrame with current price point
+                df = pd.DataFrame([{
+                    'timestamp': datetime.now(),
+                    'open': float(product.price),
+                    'high': float(product.price),
+                    'low': float(product.price),
+                    'close': float(product.price),
+                    'volume': float(product.volume_24h)
+                }])
                 
-                if not df.empty:
-                    df.set_index('timestamp', inplace=True)
-                    df.sort_index(inplace=True)
-                    
-                    if periods:
-                        df = df.tail(periods)
-                        
+                df.set_index('timestamp', inplace=True)
+                
                 return df
                 
         except Exception as e:
