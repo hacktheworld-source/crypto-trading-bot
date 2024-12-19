@@ -200,20 +200,26 @@ class PriceManager:
             raise TradingError(f"Failed to get cached price data: {str(e)}", error_type='DATA')
 
 class TradingBot:
-    def __init__(self):
-        self.config = Config()
-        self.fee_rate = self.config.EXCHANGE_FEE
+    def __init__(self, client: RESTClient, config: TradingConfig):
+        """Initialize the trading bot with client and config"""
+        self.client = client
+        self.config = config
+        self.start_time = datetime.now()  # Add start time tracking
         
-        # Initialize Coinbase client first
-        self.client = RESTClient(
-            api_key=self.config.COINBASE_API_KEY,
-            api_secret=self.config.COINBASE_API_SECRET
+        # Initialize components
+        self.data_manager = DataManager(self)
+        self.price_manager = PriceManager(
+            client=client,
+            cache_size=config.CACHE_SIZE,
+            cache_ttl=config.CACHE_TTL['1d'],
+            rate_limit=config.RATE_LIMIT,
+            log_callback=self.log
         )
         
-        # Initialize data manager first
-        self.data_manager = DataManager(self)
+        # Initialize other components
+        self.fee_rate = self.config.EXCHANGE_FEE
         
-        # Then initialize analyzers that depend on data_manager
+        # Initialize analyzers that depend on data_manager
         self.technical_analyzer = TechnicalAnalyzer(self)
         self.risk_manager = RiskManager(self)
         
@@ -229,6 +235,24 @@ class TradingBot:
         self.closed_positions: List[Dict[str, Any]] = []
 
         self.message_formatter = MessageFormatter()
+
+    def get_uptime(self) -> str:
+        """Calculate and format the bot's uptime."""
+        uptime = datetime.now() - self.start_time
+        days = uptime.days
+        hours, remainder = divmod(uptime.seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        
+        parts = []
+        if days > 0:
+            parts.append(f"{days}d")
+        if hours > 0:
+            parts.append(f"{hours}h")
+        if minutes > 0:
+            parts.append(f"{minutes}m")
+        parts.append(f"{seconds}s")
+        
+        return " ".join(parts)
 
     async def analyze_symbol(self, symbol: str) -> Dict[str, Any]:
         """Analyze trading symbol"""

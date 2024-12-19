@@ -593,25 +593,75 @@ class CommandHandler:
         return f"Paper trading reset with ${initial_balance:.2f} balance"
         
     async def get_balance(self):
-        """Get real trading account status"""
+        """Get comprehensive account balance information"""
         try:
-            balance = await self.trading_bot.get_account_balance()
-            
             if self.trading_bot.paper_trading:
+                balance = await self.trading_bot.get_account_balance()
+                portfolio_value = balance  # In paper trading, balance is the total value
+                
+                # Get paper trading positions value
+                positions_value = 0
+                positions_info = []
+                for symbol, position in self.trading_bot.paper_positions.items():
+                    current_price = await self.trading_bot.data_manager.get_current_price(symbol)
+                    position_value = position.quantity * current_price
+                    positions_value += position_value
+                    positions_info.append(
+                        f"  • {symbol}: {position.quantity:.8f} (${position_value:,.2f})"
+                    )
+                
+                cash_balance = portfolio_value - positions_value
+                
                 return (
                     "Paper Trading Account:\n```"
-                    f"💰 Balance: ${balance:,.2f}\n"
+                    f"💰 Portfolio Value: ${portfolio_value:,.2f}\n"
+                    f"💵 Cash Balance: ${cash_balance:,.2f}\n"
                     f"📈 Starting Balance: $1,000.00\n"
-                    f"📊 P/L: ${balance - 1000:+,.2f} ({((balance - 1000) / 1000) * 100:+.2f}%)"
-                    "```"
+                    f"📊 Total P/L: ${portfolio_value - 1000:+,.2f} ({((portfolio_value - 1000) / 1000) * 100:+.2f}%)\n"
+                    f"\n📍 Positions:" + (f"\n{''.join(positions_info)}" if positions_info else "\n  • No active positions")
+                    + "```"
                 )
             
             # Real trading balance
-            return (
-                "Real Trading Account:\n```"
-                f"💰 Available Balance: ${balance:,.2f}\n"
-                "```"
-            )
+            try:
+                # Get account balances for all currencies
+                accounts = self.trading_bot.client.get_accounts()
+                total_usd_value = 0
+                balances = []
+                
+                for account in accounts:
+                    balance = float(account.available)
+                    if balance > 0:
+                        if account.currency == 'USD':
+                            usd_value = balance
+                        else:
+                            # Get current price for non-USD currencies
+                            try:
+                                price = await self.trading_bot.data_manager.get_current_price(account.currency)
+                                usd_value = balance * price
+                            except:
+                                usd_value = 0
+                                
+                        if usd_value > 0.01:  # Only show balances worth more than 1 cent
+                            total_usd_value += usd_value
+                            balances.append(
+                                f"  • {account.currency}: {balance:.8f} (${usd_value:,.2f})"
+                            )
+                
+                return (
+                    "Real Trading Account:\n```"
+                    f"💰 Total Portfolio Value: ${total_usd_value:,.2f}\n"
+                    f"\n📍 Balances:\n"
+                    f"{''.join(balances)}"
+                    "```"
+                )
+            except Exception as e:
+                return (
+                    "Real Trading Account:\n```"
+                    f"💰 Available Balance: ${await self.trading_bot.get_account_balance():,.2f}\n"
+                    "⚠️ Detailed balance information unavailable"
+                    "```"
+                )
             
         except Exception as e:
             return self._format_error(f"Failed to get balance: {str(e)}")
@@ -936,7 +986,7 @@ class CommandHandler:
                 f"📊 Band Levels:\n"
                 f"  • Upper Band: ${bb_data['upper']:,.2f}\n"
                 f"  • Middle Band: ${bb_data['middle']:,.2f}\n"
-                f"  �� Lower Band: ${bb_data['lower']:,.2f}\n\n"
+                f"   Lower Band: ${bb_data['lower']:,.2f}\n\n"
                 f"📈 Position Analysis:\n"
                 f"   Current Price: ${current_price:,.2f}\n"
                 f"  • Position: {position_status} ({price_position:.1f}%)\n"
