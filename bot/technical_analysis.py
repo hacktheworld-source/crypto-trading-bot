@@ -88,11 +88,11 @@ class TechnicalAnalyzer:
             rsi = await self.calculate_rsi(data['close'])
             volume = data['volume'].rolling(self.settings['volume_ma']).mean()
             
-            # Generate signals
+            # Generate signals - use proper pandas comparison
             trend_signal = 1 if ma_fast.iloc[-1] > ma_slow.iloc[-1] else -1
             trend_strength = abs(ma_fast.iloc[-1] - ma_slow.iloc[-1]) / ma_slow.iloc[-1]
             
-            momentum_signal = 1 if rsi > 50 else -1
+            momentum_signal = 1 if rsi.iloc[-1] > 50 else -1
             volume_signal = 1 if data['volume'].iloc[-1] > volume.iloc[-1] else -1
             
             # Combine weighted signals
@@ -350,125 +350,132 @@ class TechnicalAnalyzer:
             self.trading_bot.log(f"Swing level identification error: {str(e)}", level="error")
             return {'resistance': [], 'support': []}
 
-    async def calculate_rsi(self, data: pd.Series, period: int = 14) -> pd.Series:
-        """
-        Calculate Relative Strength Index.
-        
-        Args:
-            data: Price series data
-            period: RSI period (default: 14)
+    async def calculate_rsi(self, prices: pd.Series, period: int = None) -> pd.Series:
+        """Calculate RSI for a price series"""
+        if period is None:
+            period = self.rsi_period
             
-        Returns:
-            pd.Series: RSI values
-        """
-        try:
-            delta = data.diff()
-            gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-            loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-            rs = gain / loss
-            return 100 - (100 / (1 + rs))
-        except Exception as e:
-            await self.log(f"RSI calculation error: {str(e)}", level="error")
-            raise TradingError(f"Failed to calculate RSI: {str(e)}", "ANALYSIS")
+        # Convert to float series if needed
+        prices = pd.to_numeric(prices, errors='coerce')
+        
+        # Calculate price changes
+        delta = prices.diff()
+        
+        # Separate gains and losses
+        gains = delta.where(delta > 0, 0)
+        losses = -delta.where(delta < 0, 0)
+        
+        # Calculate average gains and losses
+        avg_gains = gains.rolling(window=period).mean()
+        avg_losses = losses.rolling(window=period).mean()
+        
+        # Calculate RS and RSI
+        rs = avg_gains / avg_losses
+        rsi = 100 - (100 / (1 + rs))
+        
+        return rsi
 
-    async def get_full_analysis(self, symbol: str) -> Dict[str, Any]:
-        """
-        Get comprehensive technical analysis for a symbol.
-        
-        Args:
-            symbol: Trading pair symbol
-            
-        Returns:
-            Dict containing full analysis results
-        """
+    async def calculate_bollinger_bands(self, symbol: str) -> Dict[str, Any]:
+        """Calculate Bollinger Bands for a symbol"""
         try:
             # Get price data
-            price_data = await self.data_manager.get_price_data(symbol, TimeFrame.DAY_1)
-            current_price = float(price_data['close'].iloc[-1])
+            data = await self.data_manager.get_price_data(symbol, TimeFrame.DAY_1)
+            prices = pd.to_numeric(data['close'], errors='coerce')
             
-            # Calculate price change
-            price_change_24h = (
-                (current_price - float(price_data['close'].iloc[-2])) /
-                float(price_data['close'].iloc[-2]) * 100
-            )
+            # Calculate bands
+            ma = prices.rolling(window=20).mean()
+            std = prices.rolling(window=20).std()
             
-            # Calculate volatility
-            returns = price_data['close'].pct_change()
-            volatility = returns.std() * np.sqrt(252) * 100  # Annualized
+            upper = ma + (std * 2)
+            lower = ma - (std * 2)
             
-            # Get technical signals
-            signals = await self.get_signals(symbol)
-            rsi = await self.calculate_rsi(price_data['close'])
-            
-            # Calculate position size based on volatility
-            base_position = 1.0
-            vol_adjustment = max(0.5, 1 - (volatility / 100))  # Reduce size for high volatility
-            position_size = base_position * vol_adjustment * signals['confidence']
+            # Calculate bandwidth
+            bandwidth = ((upper - lower) / ma) * 100
             
             return {
-                'price': current_price,
-                'price_change_24h': price_change_24h,
-                'volatility': volatility,
-                'trend': signals['trend'],
-                'rsi': float(rsi.iloc[-1]),
-                'volume_confirmed': signals['volume_confirmed'],
-                'strength': signals['confidence'],
-                'position_size': position_size
+                'upper': float(upper.iloc[-1]),
+                'middle': float(ma.iloc[-1]),
+                'lower': float(lower.iloc[-1]),
+                'bandwidth': float(bandwidth.iloc[-1])
             }
             
         except Exception as e:
-            await self.log(f"Full analysis error: {str(e)}", level="error")
-            raise TradingError(f"Failed to get full analysis: {str(e)}", "ANALYSIS")
+            await self.log(f"Bollinger Bands calculation error: {str(e)}", level="error")
+            raise TradingError(f"Failed to calculate Bollinger Bands: {str(e)}", "ANALYSIS")
 
-    async def check_market_conditions(self, symbol: str) -> Dict[str, Any]:
-        """
-        Check current market conditions for trading suitability.
-        
-        Args:
-            symbol: Trading pair symbol
-            
-        Returns:
-            Dict containing market condition analysis
-        """
+    async def get_ma_analysis(self, symbol: str) -> str:
+        """Get moving average analysis for a symbol"""
         try:
             # Get price data
-            daily_data = await self.data_manager.get_price_data(symbol, TimeFrame.DAY_1)
-            hourly_data = await self.data_manager.get_price_data(symbol, TimeFrame.HOUR_1)
+            data = await self.data_manager.get_price_data(symbol, TimeFrame.DAY_1)
+            prices = pd.to_numeric(data['close'], errors='coerce')
+            
+            # Calculate MAs
+            ma_fast = prices.rolling(window=self.settings['ma_fast']).mean()
+            ma_slow = prices.rolling(window=self.settings['ma_slow']).mean()
+            
+            # Get current values
+            current_price = float(prices.iloc[-1])
+            fast_ma = float(ma_fast.iloc[-1])
+            slow_ma = float(ma_slow.iloc[-1])
+            
+            # Determine trend
+            trend = "Bullish" if fast_ma > slow_ma else "Bearish"
+            strength = abs(fast_ma - slow_ma) / slow_ma * 100
+            
+            # Price position
+            above_fast = current_price > fast_ma
+            above_slow = current_price > slow_ma
+            
+            return (
+                f"Moving Average Analysis for {symbol}:\n```"
+                f"📊 Price Levels:\n"
+                f"  • Current Price: ${current_price:,.2f}\n"
+                f"  • Fast MA ({self.settings['ma_fast']}): ${fast_ma:,.2f}\n"
+                f"  • Slow MA ({self.settings['ma_slow']}): ${slow_ma:,.2f}\n\n"
+                f"📈 Trend Analysis:\n"
+                f"  • Direction: {trend}\n"
+                f"  • Strength: {strength:.1f}%\n"
+                f"  • Price > Fast MA: {'Yes ✅' if above_fast else 'No ❌'}\n"
+                f"  • Price > Slow MA: {'Yes ✅' if above_slow else 'No ❌'}"
+                "```"
+            )
+            
+        except Exception as e:
+            await self.log(f"MA analysis error: {str(e)}", level="error")
+            raise TradingError(f"Failed to get MA analysis: {str(e)}", "ANALYSIS")
+
+    async def check_market_conditions(self, symbol: str) -> Dict[str, Any]:
+        """Check market conditions for trading"""
+        try:
+            # Get price data
+            data = await self.data_manager.get_price_data(symbol, TimeFrame.DAY_1)
+            prices = pd.to_numeric(data['close'], errors='coerce')
             
             # Calculate volatility
-            returns = daily_data['close'].pct_change()
-            volatility = returns.std() * np.sqrt(252)
-            is_volatile = volatility > 0.03  # 3% daily volatility threshold
+            returns = prices.pct_change()
+            volatility = returns.std() * np.sqrt(252)  # Annualized
+            is_volatile = volatility > 0.8  # 80% annualized volatility threshold
             
-            # Calculate price range
-            high_7d = daily_data['high'].tail(7).max()
-            low_7d = daily_data['low'].tail(7).min()
-            price_range_7d = (high_7d - low_7d) / low_7d * 100
+            # Calculate 7-day price range
+            week_high = prices[-7:].max()
+            week_low = prices[-7:].min()
+            price_range_7d = ((week_high - week_low) / week_low) * 100
             
             # Check trading hours activity
             current_hour = datetime.now().hour
-            is_high_activity = 8 <= current_hour <= 22  # Active trading hours
+            is_high_activity = 8 <= current_hour <= 22  # Assume higher activity during these hours
             
             # Check market alignment
-            btc_correlation = await self._calculate_btc_correlation(symbol)
-            market_aligned = (
-                btc_correlation > 0.5 if symbol != 'BTC' else True
-            )
-            
-            # Overall suitability
-            suitable_for_trading = (
-                not is_volatile and
-                market_aligned and
-                is_high_activity
-            )
+            signals = await self.get_signals(symbol)
+            market_aligned = signals['trend']['aligned']
             
             return {
                 'is_volatile': is_volatile,
-                'price_range_7d': price_range_7d,
+                'price_range_7d': float(price_range_7d),
                 'is_high_activity': is_high_activity,
                 'market_aligned': market_aligned,
-                'suitable_for_trading': suitable_for_trading,
-                'volatility': volatility * 100  # Convert to percentage
+                'suitable_for_trading': not is_volatile and market_aligned and is_high_activity
             }
             
         except Exception as e:

@@ -67,7 +67,8 @@ class CommandHandler:
             'portfolio': self.get_portfolio_analysis,
             'alerts': self.get_risk_alerts,
             'limits': self.show_risk_limits,
-            'analyze': self.analyze_coin,
+            'analyze': self.analyze_symbol,
+            'performance': self.get_performance,
             'set_risk': self.set_stop_loss,
             'set_max_positions': self.set_max_positions,
             'set_risk_per_trade': self.set_risk_per_trade,
@@ -706,24 +707,38 @@ class CommandHandler:
         response += "```"
         return response
         
-    def analyze_coin(self, symbol: str) -> str:
+    async def analyze_coin(self, symbol: str) -> str:
+        """Get detailed technical analysis for a symbol"""
         try:
-            signal = self.trading_bot._calculate_trade_signal(symbol)
+            if not symbol:
+                return self._format_error("Please specify a symbol")
+                
+            symbol = symbol.upper()
+            if not self._is_valid_symbol(symbol):
+                return self._format_error(f"Invalid symbol format: {symbol}")
+                
+            # Get current price first to validate symbol
+            try:
+                current_price = await self.trading_bot.price_manager.get_current_price(symbol)
+            except Exception as e:
+                return self._format_error(f"Symbol not found or invalid: {symbol}")
+                
+            # Get technical analysis data
+            signals = await self.trading_bot.technical_analyzer.get_signals(symbol)
             
             response = f"Analysis for {symbol}:\n```"
-            response += f"\nPrice: ${signal['price']:,.2f}"
-            response += f"\nSignal: {signal['action']}"
-            response += f"\nScore: {signal['score']:.2f}"
+            response += f"\nPrice: ${current_price:,.2f}"
+            response += f"\nSignal: {signals['trend']['daily']}"
+            response += f"\nConfidence: {signals['confidence']*100:.1f}%"
             response += "\n\nSignal Components:"
-            response += f"\n• Trend (0.4x):    {signal['signals']['trend']:>6.1f}"
-            response += f"\n• Momentum (0.3x): {signal['signals']['momentum']:>6.1f}"
-            response += f"\n• Volume (0.2x):   {signal['signals']['volume']:>6.1f}"
-            response += f"\n• Risk (0.1x):     {signal['signals']['risk']:>6.1f}"
+            response += f"\n• Trend: {'Aligned ✅' if signals['trend']['aligned'] else 'Mixed ❌'}"
+            response += f"\n• Volume: {'Confirmed ✅' if signals['volume_confirmed'] else 'Low ❌'}"
+            response += f"\n• Risk: {'Acceptable' if signals['confidence'] > 0.5 else 'High'}"
             response += "```"
             return response
             
         except Exception as e:
-            return f"Error analyzing {symbol}: {str(e)}"
+            return self._format_error(f"Error analyzing {symbol}: {str(e)}")
         
     def set_trailing_stop(self, percentage: float = None, enabled: bool = None, activation: float = None) -> str:
         """Configure trailing stop settings"""
