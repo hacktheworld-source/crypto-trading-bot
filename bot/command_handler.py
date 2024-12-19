@@ -227,32 +227,52 @@ class CommandHandler:
         return await self.trading_bot.stop_trading()
         
     async def get_status(self) -> str:
-        """Enhanced status display with position limits"""
+        """Enhanced status display with comprehensive trading information"""
         try:
+            # Basic status
             status = "🟢 Active" if self.trading_bot.trading_active else "🔴 Inactive"
             mode = "📝 Paper Trading" if self.trading_bot.paper_trading else "💵 Live Trading"
             
+            # Position information
             current_positions = len(self.trading_bot.positions)
-            position_status = (
-                f"{current_positions}/{self.trading_bot.config.RISK_MAX_POSITIONS} "
-                f"(Target: {TradingConstants.TARGET_POSITIONS})"
-            )
+            max_positions = self.trading_bot.config.RISK_MAX_POSITIONS
+            position_status = f"{current_positions}/{max_positions}"
+            
+            # Get account balance
+            try:
+                balance = await self.trading_bot.get_account_balance()
+                balance_str = f"${balance:,.2f}"
+                if self.trading_bot.paper_trading:
+                    pnl = balance - 1000  # Assuming 1000 starting balance
+                    pnl_pct = (pnl / 1000) * 100
+                    balance_str += f" (P/L: {pnl:+,.2f} / {pnl_pct:+.2f}%)"
+            except:
+                balance_str = "Error fetching balance"
             
             return (
                 f"Trading Bot Status:\n```"
-                f"Status: {status}\n"
-                f"Mode: {mode}\n"
-                f"Positions: {position_status}\n"
-                f"Watched Coins: {len(self.trading_bot.watched_symbols)}\n"
-                f"\nRisk Settings:\n"
-                f"• Risk per Trade: {self.trading_bot.config.RISK_PER_TRADE*100:.1f}%\n"
-                f"• Max Drawdown: {self.trading_bot.config.RISK_MAX_DRAWDOWN*100:.1f}%\n"
-                f"• Stop Loss: {self.trading_bot.config.STOP_LOSS_PERCENTAGE:.1f}%\n"
-                f"• Take Profit: {self.trading_bot.config.TAKE_PROFIT_PERCENTAGE:.1f}%"
+                f"🤖 Core Status:\n"
+                f"  • Status: {status}\n"
+                f"  • Mode: {mode}\n"
+                f"  • Balance: {balance_str}\n"
+                f"  • Uptime: {self.trading_bot.get_uptime()}\n\n"
+                f"📊 Trading Activity:\n"
+                f"  • Active Positions: {position_status}\n"
+                f"  • Watched Coins: {len(self.trading_bot.watched_symbols)}\n"
+                f"  • Last Trade: {self.trading_bot.last_trade_time.strftime('%Y-%m-%d %H:%M:%S') if self.trading_bot.last_trade_time else 'Never'}\n\n"
+                f"⚠️ Risk Management:\n"
+                f"  • Risk per Trade: {self.trading_bot.config.RISK_PER_TRADE*100:.1f}%\n"
+                f"  • Max Drawdown: {self.trading_bot.config.RISK_MAX_DRAWDOWN*100:.1f}%\n"
+                f"  • Stop Loss: {self.trading_bot.config.STOP_LOSS_PERCENTAGE:.1f}%\n"
+                f"  • Take Profit: {self.trading_bot.config.TAKE_PROFIT_PERCENTAGE:.1f}%\n\n"
+                f"🔒 Safety Features:\n"
+                f"  • Trailing Stop: {'Enabled' if self.trading_bot.trailing_stop_enabled else 'Disabled'}\n"
+                f"  • Position Scaling: {'Enabled' if self.trading_bot.position_scaling_enabled else 'Disabled'}\n"
+                f"  • Auto Risk Adjust: {'Enabled' if self.trading_bot.auto_risk_enabled else 'Disabled'}"
                 "```"
             )
         except Exception as e:
-            return self._format_error(str(e))
+            return self._format_error(f"Error getting status: {str(e)}")
         
     async def test_api(self, *args):
         try:
@@ -572,21 +592,29 @@ class CommandHandler:
         self.trading_bot.reset_paper_trading(initial_balance)
         return f"Paper trading reset with ${initial_balance:.2f} balance"
         
-    def get_balance(self):
+    async def get_balance(self):
         """Get real trading account status"""
-        balance = self.trading_bot.get_account_balance()
-        
-        response = "Real Trading Account:\n```"
-        
-        # Show individual balances
-        for symbol, data in balance['balances'].items():
-            response += f"\n{symbol}:"
-            response += f"\n  Balance: {data['balance']:.8f}"
-            response += f"\n  Value: ${data['usd_value']:.2f}"
-        
-        response += f"\n\nTotal Portfolio Value: ${balance['total_usd_value']:.2f}"
-        response += "```"
-        return response
+        try:
+            balance = await self.trading_bot.get_account_balance()
+            
+            if self.trading_bot.paper_trading:
+                return (
+                    "Paper Trading Account:\n```"
+                    f"💰 Balance: ${balance:,.2f}\n"
+                    f"📈 Starting Balance: $1,000.00\n"
+                    f"📊 P/L: ${balance - 1000:+,.2f} ({((balance - 1000) / 1000) * 100:+.2f}%)"
+                    "```"
+                )
+            
+            # Real trading balance
+            return (
+                "Real Trading Account:\n```"
+                f"💰 Available Balance: ${balance:,.2f}\n"
+                "```"
+            )
+            
+        except Exception as e:
+            return self._format_error(f"Failed to get balance: {str(e)}")
         
     def get_trades(self):
         """Show real trading history"""
@@ -908,7 +936,7 @@ class CommandHandler:
                 f"📊 Band Levels:\n"
                 f"  • Upper Band: ${bb_data['upper']:,.2f}\n"
                 f"  • Middle Band: ${bb_data['middle']:,.2f}\n"
-                f"  • Lower Band: ${bb_data['lower']:,.2f}\n\n"
+                f"  �� Lower Band: ${bb_data['lower']:,.2f}\n\n"
                 f"📈 Position Analysis:\n"
                 f"   Current Price: ${current_price:,.2f}\n"
                 f"  • Position: {position_status} ({price_position:.1f}%)\n"
