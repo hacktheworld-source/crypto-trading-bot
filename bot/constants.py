@@ -44,6 +44,12 @@ class TradingConstants:
     MA_SLOW = 50
     VOLUME_MA = 20
     
+    # Timeframe weights for analysis
+    TIMEFRAMES = {
+        TimeFrame.DAY_1: {'weight': 0.6, 'periods': 90},  # Daily for trend direction
+        TimeFrame.HOUR_1: {'weight': 0.4, 'periods': 24}  # Hourly for entry timing
+    }
+    
     # Risk Management
     MAX_POSITION_SIZE = 0.1  # 10% of portfolio
     MAX_LEVERAGE = 3.0

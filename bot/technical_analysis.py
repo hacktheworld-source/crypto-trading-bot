@@ -79,7 +79,7 @@ class TechnicalAnalyzer:
             await self.log(f"Signal generation error: {str(e)}", level="error")
             raise TradingError(f"Failed to generate signals: {str(e)}", "ANALYSIS")
 
-    async def _analyze_timeframe(self, data: pd.DataFrame, weight: float) -> Dict[str, Any]:
+    async def _analyze_timeframe(self, data: pd.DataFrame, timeframe: TimeFrame) -> Dict[str, Any]:
         """Analyze single timeframe and return weighted signals"""
         try:
             # Calculate core indicators
@@ -87,6 +87,9 @@ class TechnicalAnalyzer:
             ma_slow = data['close'].rolling(self.settings['ma_slow']).mean()
             rsi = await self.calculate_rsi(data['close'])
             volume = data['volume'].rolling(self.settings['volume_ma']).mean()
+            
+            # Get weights from config
+            weight = self.timeframes[timeframe]['weight']
             
             # Generate signals - use proper pandas comparison
             trend_signal = 1 if ma_fast.iloc[-1] > ma_slow.iloc[-1] else -1
@@ -352,28 +355,37 @@ class TechnicalAnalyzer:
 
     async def calculate_rsi(self, prices: pd.Series, period: int = None) -> pd.Series:
         """Calculate RSI for a price series"""
-        if period is None:
-            period = self.rsi_period
+        try:
+            if period is None:
+                period = self.rsi_period
+                
+            # Ensure we have a pandas Series
+            if not isinstance(prices, pd.Series):
+                prices = pd.Series(prices)
             
-        # Convert to float series if needed
-        prices = pd.to_numeric(prices, errors='coerce')
-        
-        # Calculate price changes
-        delta = prices.diff()
-        
-        # Separate gains and losses
-        gains = delta.where(delta > 0, 0)
-        losses = -delta.where(delta < 0, 0)
-        
-        # Calculate average gains and losses
-        avg_gains = gains.rolling(window=period).mean()
-        avg_losses = losses.rolling(window=period).mean()
-        
-        # Calculate RS and RSI
-        rs = avg_gains / avg_losses
-        rsi = 100 - (100 / (1 + rs))
-        
-        return rsi
+            # Convert to float series if needed
+            prices = pd.to_numeric(prices, errors='coerce')
+            
+            # Calculate price changes
+            delta = prices.diff()
+            
+            # Separate gains and losses
+            gains = delta.where(delta > 0, 0)
+            losses = -delta.where(delta < 0, 0)
+            
+            # Calculate average gains and losses
+            avg_gains = gains.rolling(window=period).mean()
+            avg_losses = losses.rolling(window=period).mean()
+            
+            # Calculate RS and RSI
+            rs = avg_gains / avg_losses
+            rsi = 100 - (100 / (1 + rs))
+            
+            return rsi
+            
+        except Exception as e:
+            await self.log(f"RSI calculation error: {str(e)}", level="error")
+            raise TradingError(f"Failed to calculate RSI: {str(e)}", "ANALYSIS")
 
     async def calculate_bollinger_bands(self, symbol: str) -> Dict[str, Any]:
         """Calculate Bollinger Bands for a symbol"""
@@ -594,11 +606,21 @@ class TechnicalAnalyzer:
             end = datetime.now()
             start = end - timedelta(days=90)  # Get 90 days of data
             
+            # Map TimeFrame enum to Coinbase granularity
+            granularity_map = {
+                TimeFrame.MINUTE_1: "ONE_MINUTE",
+                TimeFrame.MINUTE_5: "FIVE_MINUTE",
+                TimeFrame.MINUTE_15: "FIFTEEN_MINUTE",
+                TimeFrame.HOUR_1: "ONE_HOUR",
+                TimeFrame.HOUR_6: "SIX_HOUR",
+                TimeFrame.DAY_1: "ONE_DAY"
+            }
+            
             response = self.trading_bot.client.get_candles(
                 product_id=f"{symbol}-USD",
                 start=int(start.timestamp()),
                 end=int(end.timestamp()),
-                granularity=timeframe.value
+                granularity=granularity_map[timeframe]
             )
             
             if not response.candles:
