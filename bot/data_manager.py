@@ -171,11 +171,19 @@ class DataManager:
             product_id = f"{symbol}-USD"
             product = self.client.get_product(product_id)
             
+            # Get 24h stats for volume
+            candles = self.client.get_candles(
+                product_id=product_id,
+                start=int((datetime.now() - timedelta(days=1)).timestamp()),
+                end=int(datetime.now().timestamp()),
+                granularity="ONE_HOUR"
+            )
+            
+            volume_24h = sum(float(candle.volume) for candle in candles.candles)
+            
             return {
                 'price': float(product.price),
-                'bid': float(product.bid),
-                'ask': float(product.ask),
-                'volume': float(product.volume_24h),
+                'volume': volume_24h,
                 'time': datetime.now()
             }
         except Exception as e:

@@ -88,34 +88,34 @@ class CommandHandler:
         """List watched coins with their current metrics"""
         try:
             if not self.trading_bot.watched_symbols:
-                return "No coins in watchlist"
+                return self._format_notification("No coins in watchlist", "info")
                 
-            # Header
-            response = "Watched Coins:\n```"
+            response = "📋 Watched Coins:\n```"
             
             # Get data for each coin
             for symbol in sorted(self.trading_bot.watched_symbols):
                 try:
-                    # Get current price and analysis
+                    # Get current price and basic info
                     price = await self.trading_bot.data_manager.get_current_price(symbol)
-                    analysis = await self.trading_bot.technical_analyzer.analyze_trend(symbol)
                     
-                    # Format trend indicators
-                    trend = "🟢" if analysis['trend']['daily'] > 0 else "🔴"
-                    volume = "✅" if analysis['volume_confirmed'] else "❌"
+                    # Get 24h price for change calculation
+                    price_data = await self.trading_bot.data_manager.get_price_data(symbol, TimeFrame.DAY_1)
+                    prev_price = float(price_data['close'].iloc[-2])
+                    price_change = ((price - prev_price) / prev_price) * 100
+                    
+                    # Determine trend emoji
+                    trend_emoji = "🟢" if price_change > 0 else "🔴"
                     
                     # Add coin info
                     response += (
-                        f"\n{symbol}:\n"
+                        f"\n{trend_emoji} {symbol}:\n"
                         f"  • Price: ${price:,.2f}\n"
-                        f"  • Trend: {trend} "
-                        f"({'Bullish' if analysis['trend']['daily'] > 0 else 'Bearish'})\n"
-                        f"  • Volume: {volume}\n"
-                        f"  • Signal Strength: {analysis['strength']*100:.1f}%\n"
+                        f"  • 24h Change: {price_change:+.2f}%\n"
                     )
                     
                 except Exception as e:
-                    response += f"\n{symbol}: Error getting data - {str(e)}\n"
+                    response += f"\n❌ {symbol}: Error fetching data\n"
+                    await self.trading_bot.log(f"Error getting data for {symbol}: {str(e)}", level="error")
                     
             response += "```"
             return response
