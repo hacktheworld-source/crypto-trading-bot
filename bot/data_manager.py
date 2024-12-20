@@ -42,11 +42,40 @@ class DataManager:
         self.api_lock = asyncio.Lock()
 
     def _format_product_id(self, symbol: str) -> str:
-        """Format symbol into valid Coinbase product ID"""
-        symbol = symbol.upper().strip()
-        if not symbol.endswith('-USD'):
-            symbol = f"{symbol}-USD"
-        return symbol
+        """
+        Format symbol into valid Coinbase product ID.
+        
+        Args:
+            symbol: Trading pair symbol (e.g., 'BTC', 'ETH', 'BTC-USD')
+            
+        Returns:
+            Formatted product ID (e.g., 'BTC-USD')
+            
+        Raises:
+            DataError: If symbol is invalid
+        """
+        try:
+            if not symbol:
+                raise DataError("Symbol cannot be empty")
+                
+            # Clean and standardize the symbol
+            symbol = symbol.upper().strip()
+            
+            # Remove USD suffix if present to standardize
+            if symbol.endswith('-USD'):
+                symbol = symbol[:-4]
+            
+            # Validate the cleaned symbol
+            if not symbol.isalnum():
+                raise DataError(f"Invalid symbol format: {symbol}")
+            
+            # Return standardized format
+            return f"{symbol}-USD"
+            
+        except Exception as e:
+            if isinstance(e, DataError):
+                raise
+            raise DataError(f"Invalid symbol: {str(e)}")
 
     async def get_price_data(
         self, 
@@ -223,7 +252,7 @@ class DataManager:
             List of recent trades
         """
         try:
-            product_id = f"{symbol}-USD"
+            product_id = self._format_product_id(symbol)
             trades = self.client.get_trades(product_id=product_id, limit=limit)
             
             return [{
@@ -248,6 +277,7 @@ class DataManager:
             Dict containing volume profile data
         """
         try:
+            symbol = self._format_product_id(symbol)
             df = await self.get_price_data(symbol, timeframe)
             
             # Calculate price levels
