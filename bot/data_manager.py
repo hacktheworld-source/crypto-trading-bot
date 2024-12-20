@@ -123,6 +123,9 @@ class DataManager:
             
         Returns:
             DataFrame with OHLCV data
+            
+        Raises:
+            DataError: With detailed error information
         """
         try:
             async with self.api_lock:
@@ -135,21 +138,45 @@ class DataManager:
                 end = datetime.now()
                 timeframe_config = self.timeframes.get(timeframe)
                 if not timeframe_config:
-                    raise DataError(f"Unsupported timeframe: {timeframe}")
+                    await self.trading_bot.log(
+                        f"Unsupported timeframe: {timeframe.name} ({timeframe.value})", 
+                        level="error"
+                    )
+                    raise DataError(f"Unsupported timeframe: {timeframe.name}")
                 
                 days = timeframe_config['days']
                 start = end - timedelta(days=days)
                 
-                # Get candles from Coinbase
-                response = self.client.get_candles(
-                    product_id=symbol,  # Already formatted by get_price_data
-                    start=int(start.timestamp()),
-                    end=int(end.timestamp()),
-                    granularity=timeframe_config['granularity']
+                # Log the request details for debugging
+                await self.trading_bot.log(
+                    f"Fetching {timeframe.name} data for {symbol} "
+                    f"(granularity: {timeframe_config['granularity']}, "
+                    f"start: {start.isoformat()}, end: {end.isoformat()})",
+                    level="debug"
                 )
                 
+                # Get candles from Coinbase
+                try:
+                    response = self.client.get_candles(
+                        product_id=symbol,  # Already formatted by get_price_data
+                        start=int(start.timestamp()),
+                        end=int(end.timestamp()),
+                        granularity=timeframe_config['granularity']
+                    )
+                except Exception as api_error:
+                    await self.trading_bot.log(
+                        f"Coinbase API error: {str(api_error)} "
+                        f"(symbol: {symbol}, timeframe: {timeframe.name})",
+                        level="error"
+                    )
+                    raise DataError(f"Failed to fetch data from Coinbase: {str(api_error)}")
+                
                 if not response.candles:
-                    raise DataError(f"No data returned for {symbol}")
+                    await self.trading_bot.log(
+                        f"No data returned for {symbol} ({timeframe.name})",
+                        level="error"
+                    )
+                    raise DataError(f"No data available for {symbol}")
                 
                 # Convert to DataFrame
                 df = pd.DataFrame([
@@ -170,13 +197,28 @@ class DataManager:
                 
                 # Validate data
                 if len(df) < 2:
+                    await self.trading_bot.log(
+                        f"Insufficient data points for {symbol} ({timeframe.name}): {len(df)} points",
+                        level="error"
+                    )
                     raise DataError(f"Insufficient data points for {symbol}")
+                
+                await self.trading_bot.log(
+                    f"Successfully fetched {len(df)} data points for {symbol} ({timeframe.name})",
+                    level="debug"
+                )
                 
                 self.last_request = time.time()
                 return df
                 
         except Exception as e:
-            await self.trading_bot.log(f"Data fetch error: {str(e)}", level="error")
+            if isinstance(e, DataError):
+                raise
+            await self.trading_bot.log(
+                f"Data fetch error: {str(e)} "
+                f"(symbol: {symbol}, timeframe: {timeframe.name})",
+                level="error"
+            )
             raise DataError(f"Failed to fetch price data: {str(e)}")
 
     async def get_current_price(self, symbol: str) -> float:

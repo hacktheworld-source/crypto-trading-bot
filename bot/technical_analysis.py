@@ -43,20 +43,43 @@ class TechnicalAnalyzer:
         """
         try:
             # Get data for different timeframes using consistent enum access
-            daily_data = await self.data_manager.get_price_data(symbol, TimeFrame.DAY_1)
-            hourly_data = await self.data_manager.get_price_data(symbol, TimeFrame.HOUR_1)
+            try:
+                daily_data = await self.data_manager.get_price_data(symbol, TimeFrame.DAY_1)
+                hourly_data = await self.data_manager.get_price_data(symbol, TimeFrame.HOUR_1)
+            except DataError as e:
+                await self.log(f"Failed to fetch price data: {str(e)}", level="error")
+                raise TradingError(f"Failed to get price data: {str(e)}", "DATA")
+            except Exception as e:
+                await self.log(f"Unexpected error fetching data: {str(e)}", level="error")
+                raise TradingError(f"Failed to get price data: {str(e)}", "DATA")
             
             # 1. Daily Analysis (60% weight)
-            daily_signals = await self._analyze_timeframe(daily_data, TimeFrame.DAY_1)
+            try:
+                daily_signals = await self._analyze_timeframe(daily_data, TimeFrame.DAY_1)
+            except Exception as e:
+                await self.log(f"Daily analysis failed: {str(e)}", level="error")
+                raise TradingError(f"Failed to analyze daily timeframe: {str(e)}", "ANALYSIS")
             
             # 2. Hourly Analysis (40% weight)
-            hourly_signals = await self._analyze_timeframe(hourly_data, TimeFrame.HOUR_1)
+            try:
+                hourly_signals = await self._analyze_timeframe(hourly_data, TimeFrame.HOUR_1)
+            except Exception as e:
+                await self.log(f"Hourly analysis failed: {str(e)}", level="error")
+                raise TradingError(f"Failed to analyze hourly timeframe: {str(e)}", "ANALYSIS")
             
             # 3. Volume Analysis
-            volume_confirmed = await self._check_volume_confirmation(symbol)
+            try:
+                volume_confirmed = await self._check_volume_confirmation(symbol)
+            except Exception as e:
+                await self.log(f"Volume analysis failed: {str(e)}", level="error")
+                volume_confirmed = False  # Default to false on error
             
             # 4. Support/Resistance
-            key_levels = await self._get_key_levels(symbol)
+            try:
+                key_levels = await self._get_key_levels(symbol)
+            except Exception as e:
+                await self.log(f"Key levels analysis failed: {str(e)}", level="error")
+                key_levels = {'support': [], 'resistance': []}  # Use empty lists on error
             
             # Combine signals with weights from timeframe config
             confidence = (
@@ -80,6 +103,8 @@ class TechnicalAnalyzer:
             }
             
         except Exception as e:
+            if isinstance(e, TradingError):
+                raise
             await self.log(f"Signal generation error: {str(e)}", level="error")
             raise TradingError(f"Failed to generate signals: {str(e)}", "ANALYSIS")
 
