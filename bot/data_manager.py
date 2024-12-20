@@ -86,13 +86,13 @@ class DataManager:
         """Get price data for specified timeframe with caching"""
         try:
             symbol = self._format_product_id(symbol)
-            cache_key = f"{symbol}_{timeframe.value}"
+            cache_key = f"{symbol}_{timeframe.name}"
             
             async with self._cache_lock:
                 # Check cache first
                 if cache_key in self._cache:
                     data, timestamp = self._cache[cache_key]
-                    if (time.time() - timestamp) < self.trading_bot.config.CACHE_TTL[timeframe.value]:
+                    if (time.time() - timestamp) < self.trading_bot.config.CACHE_TTL[timeframe]:
                         return data
                     
                 # Fetch new data

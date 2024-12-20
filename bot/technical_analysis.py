@@ -42,7 +42,7 @@ class TechnicalAnalyzer:
         Returns confidence-weighted signals based on multiple indicators.
         """
         try:
-            # Get data for different timeframes
+            # Get data for different timeframes using consistent enum access
             daily_data = await self.data_manager.get_price_data(symbol, TimeFrame.DAY_1)
             hourly_data = await self.data_manager.get_price_data(symbol, TimeFrame.HOUR_1)
             
@@ -58,10 +58,10 @@ class TechnicalAnalyzer:
             # 4. Support/Resistance
             key_levels = await self._get_key_levels(symbol)
             
-            # Combine signals with weights
+            # Combine signals with weights from timeframe config
             confidence = (
-                daily_signals['strength'] * 0.6 +
-                hourly_signals['strength'] * 0.4
+                daily_signals['strength'] * self.timeframes[TimeFrame.DAY_1]['weight'] +
+                hourly_signals['strength'] * self.timeframes[TimeFrame.HOUR_1]['weight']
             ) * (1 if volume_confirmed else 0.5)
             
             return {
