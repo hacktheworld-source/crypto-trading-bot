@@ -2,7 +2,7 @@ from typing import Dict, List, Optional, Tuple, Any
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
-from bot.exceptions import TradingError
+from bot.exceptions import TradingError, DataError
 from bot.constants import TimeFrame
 import asyncio
 
