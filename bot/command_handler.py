@@ -29,6 +29,7 @@ class CommandHandler:
         """
         self.trading_bot = trading_bot
         self.data_manager = trading_bot.data_manager
+        self.message_formatter = trading_bot.message_formatter
         self.commands = self._initialize_commands()
     
     def _initialize_commands(self) -> Dict[str, callable]:
@@ -39,44 +40,44 @@ class CommandHandler:
             Dict mapping command names to their handler methods
         """
         return {
-            'add': self.add_coin,
-            'addcoin': self.add_coin,
-            'remove': self.remove_coin,
-            'removecoin': self.remove_coin,
-            'list': self.list_coins,
-            'position': self.get_position_details,
-            'metrics': self.get_position_metrics,
-            'testapi': self.test_api,
-            'price': self.get_price,
-            'rsi': self.get_rsi,
-            'ma': self.get_ma_analysis,
-            'volume': self.get_volume_analysis,
-            'sentiment': self.get_sentiment_analysis,
-            'paper': self.handle_paper_commands,
-            'start': self.start_trading,
-            'stop': self.stop_trading,
-            'status': self.get_status,
-            'balance': self.get_balance,
-            'help': self.get_help,
-            'ping': self.ping,
-            'version': self.version,
-            'stats': self.get_stats,
-            'bb': self.get_bb_analysis,
-            'conditions': self.get_market_conditions,
-            'commands': self.get_help,
-            'risk': self.get_risk_analysis,
-            'portfolio': self.get_portfolio_analysis,
-            'alerts': self.get_risk_alerts,
-            'limits': self.show_risk_limits,
-            'performance': self.get_performance,
-            'set_risk': self.set_stop_loss,
-            'set_max_positions': self.set_max_positions,
-            'set_risk_per_trade': self.set_risk_per_trade,
-            'set_max_drawdown': self.set_max_drawdown,
-            'set_daily_var': self.set_daily_var,
-            'set_trailing_stop': self.set_trailing_stop,
-            'set_take_profit': self.set_take_profit,
-            'signals': self.get_signals
+            'add': self._handle_add_coin,
+            'addcoin': self._handle_add_coin,
+            'remove': self._handle_remove_coin,
+            'removecoin': self._handle_remove_coin,
+            'list': self._handle_list_coins,
+            'position': self._handle_position_details,
+            'metrics': self._handle_position_metrics,
+            'testapi': self._handle_test_api,
+            'price': self._handle_price,
+            'rsi': self._handle_rsi,
+            'ma': self._handle_ma_analysis,
+            'volume': self._handle_volume_analysis,
+            'sentiment': self._handle_sentiment_analysis,
+            'paper': self._handle_paper_commands,
+            'start': self._handle_start_trading,
+            'stop': self._handle_stop_trading,
+            'status': self._handle_status,
+            'balance': self._handle_balance,
+            'help': self._handle_help,
+            'ping': self._handle_ping,
+            'version': self._handle_version,
+            'stats': self._handle_stats,
+            'bb': self._handle_bb_analysis,
+            'conditions': self._handle_market_conditions,
+            'commands': self._handle_help,
+            'risk': self._handle_risk_analysis,
+            'portfolio': self._handle_portfolio_analysis,
+            'alerts': self._handle_risk_alerts,
+            'limits': self._handle_risk_limits,
+            'performance': self._handle_performance,
+            'set_risk': self._handle_set_stop_loss,
+            'set_max_positions': self._handle_set_max_positions,
+            'set_risk_per_trade': self._handle_set_risk_per_trade,
+            'set_max_drawdown': self._handle_set_max_drawdown,
+            'set_daily_var': self._handle_set_daily_var,
+            'set_trailing_stop': self._handle_set_trailing_stop,
+            'set_take_profit': self._handle_set_take_profit,
+            'signals': self._handle_signals
         }
     
     async def handle_command(self, command: str, *args: str) -> str:
@@ -97,7 +98,7 @@ class CommandHandler:
             # Get the command handler
             handler = self.commands.get(command.lower())
             if not handler:
-                return f"Unknown command: {command}"
+                return self.message_formatter.format_error(f"Unknown command: {command}")
 
             # Execute the command
             return await handler(*args)
@@ -105,27 +106,61 @@ class CommandHandler:
         except Exception as e:
             error_msg = f"Command failed: {str(e)}"
             await self.trading_bot.log(error_msg, level="error")
-            return error_msg
+            return self.message_formatter.format_error(error_msg)
     
-    async def _handle_help(self, message: Message) -> None:
-        """Send help message with available commands"""
+    async def _handle_help(self, *args) -> str:
+        """Get help message with available commands"""
         help_text = (
             "Available Commands:\n"
             "```\n"
+            "Basic Commands:\n"
             "!help - Show this help message\n"
-            "!price [symbol] - Get current price and 24h change\n"
-            "!signals [symbol] - Get trading signals\n"
-            "!conditions [symbol] - Get market conditions\n"
-            "!rsi [symbol] - Get RSI indicator\n"
-            "!macd [symbol] - Get MACD indicator\n"
-            "!bb [symbol] - Get Bollinger Bands\n"
-            "!volume [symbol] - Get volume analysis\n"
+            "!status - Get bot status\n"
+            "!ping - Check bot response\n"
+            "!version - Show bot version\n"
+            "!testapi - Test API connection\n\n"
+            
+            "Trading Commands:\n"
+            "!add <symbol> - Add coin to watchlist\n"
+            "!remove <symbol> - Remove coin from watchlist\n"
+            "!list - List watched coins\n"
+            "!paper <on|off> - Control paper trading\n"
+            "!start - Start trading\n"
+            "!stop - Stop trading\n\n"
+            
+            "Market Analysis:\n"
+            "!price <symbol> - Get current price\n"
+            "!signals <symbol> - Get trading signals\n"
+            "!conditions <symbol> - Get market conditions\n"
+            "!rsi <symbol> - Get RSI indicator\n"
+            "!bb <symbol> - Get Bollinger Bands\n"
+            "!volume <symbol> - Get volume analysis\n"
+            "!sentiment <symbol> - Get market sentiment\n\n"
+            
+            "Position & Portfolio:\n"
+            "!position [symbol] - Get position details\n"
+            "!metrics - Get trading metrics\n"
+            "!portfolio - Get portfolio analysis\n"
+            "!balance - Get account balance\n"
+            "!performance - Get performance metrics\n\n"
+            
+            "Risk Management:\n"
+            "!risk [symbol] - Get risk analysis\n"
+            "!alerts - Get risk alerts\n"
+            "!limits - Show risk limits\n"
+            "!set_risk <percentage> - Set stop loss\n"
+            "!set_max_positions <count> - Set max positions\n"
+            "!set_risk_per_trade <percentage> - Set risk per trade\n"
+            "!set_max_drawdown <percentage> - Set max drawdown\n"
+            "!set_daily_var <percentage> - Set daily VaR\n"
+            "!set_trailing_stop <percentage> - Set trailing stop\n"
+            "!set_take_profit <percentage> - Set take profit\n"
             "```\n"
-            "Note: [symbol] is optional. Default: BTC-USD"
+            "Note: <required> [optional] parameters. Default symbol: BTC-USD"
         )
-        await message.reply(help_text)
+        return help_text
         
-    async def _handle_price(self, symbol: str, message: Message) -> None:
+    async def _handle_price(self, symbol: str = "BTC-USD") -> str:
         """Handle price command"""
         try:
             # Get current price data
@@ -142,55 +177,169 @@ class CommandHandler:
             price_change = ((current_price - prev_price) / prev_price) * 100
             
             # Format response
-            response = (
+            return (
                 f"**{symbol}**\n"
                 f"Price: ${current_price:,.2f}\n"
                 f"24h Change: {price_change:+.2f}%"
             )
-            await message.reply(response)
             
         except Exception as e:
             raise CommandError(f"Price command failed: {str(e)}")
-            
-    async def _handle_signals(self, symbol: str, message: Message) -> None:
-        """Handle signals command"""
+
+    async def _handle_add_coin(self, symbol: str) -> str:
+        """Add a coin to the watchlist"""
         try:
-            signals = await self.technical_analyzer.get_signals(symbol)
-            
-            # Format response
-            daily = signals['signals']['daily']
-            hourly = signals['signals']['1h']
-            
-            response = (
-                f"**{symbol} Signals**\n"
-                f"```\n"
-                f"Daily Timeframe:\n"
-                f"  Trend: {self._format_signal_strength(daily['trend'])}\n"
-                f"  Momentum: {self._format_signal_strength(daily['momentum'])}\n"
-                f"  RSI: {daily['indicators']['rsi']:.1f}\n"
-                f"  MACD: {daily['indicators']['macd']['value']:.2f}\n\n"
-                f"Hourly Timeframe:\n"
-                f"  Trend: {self._format_signal_strength(hourly['trend'])}\n"
-                f"  Momentum: {self._format_signal_strength(hourly['momentum'])}\n"
-                f"  RSI: {hourly['indicators']['rsi']:.1f}\n"
-                f"  MACD: {hourly['indicators']['macd']['value']:.2f}\n"
-                f"```\n"
-                f"Trend Alignment: {'✅' if signals['trend']['aligned'] else '❌'}"
-            )
-            await message.reply(response)
-            
+            if await self.trading_bot.add_coin(symbol):
+                return self.message_formatter.format_notification(
+                    f"Added {symbol} to watchlist", 
+                    "success"
+                )
+            return self.message_formatter.format_error(f"Failed to add {symbol}")
         except Exception as e:
-            raise CommandError(f"Signals command failed: {str(e)}")
-            
-    async def _handle_conditions(self, symbol: str, message: Message) -> None:
-        """Handle market conditions command"""
+            return self.message_formatter.format_error(str(e))
+
+    async def _handle_remove_coin(self, symbol: str) -> str:
+        """Remove a coin from the watchlist"""
         try:
-            conditions = await self.technical_analyzer.check_market_conditions(symbol)
-            
-            # Format response
-            response = (
-                f"**{symbol} Market Conditions**\n"
-                f"```\n"
+            if await self.trading_bot.remove_coin(symbol):
+                return self.message_formatter.format_notification(
+                    f"Removed {symbol} from watchlist",
+                    "success"
+                )
+            return self.message_formatter.format_error(f"Failed to remove {symbol}")
+        except Exception as e:
+            return self.message_formatter.format_error(str(e))
+
+    async def _handle_list_coins(self) -> str:
+        """List all watched coins"""
+        try:
+            coins = self.trading_bot.watched_symbols
+            if not coins:
+                return "No coins in watchlist"
+            return "Watched Coins:\n```\n" + "\n".join(sorted(coins)) + "\n```"
+        except Exception as e:
+            return self.message_formatter.format_error(str(e))
+
+    async def _handle_position_details(self, symbol: Optional[str] = None) -> str:
+        """Get position details for a symbol or all positions"""
+        try:
+            if symbol:
+                position = self.trading_bot.positions.get(symbol.upper())
+                if not position:
+                    return f"No position found for {symbol}"
+                return self.message_formatter.format_position_update(position)
+            else:
+                positions = self.trading_bot.positions
+                if not positions:
+                    return "No open positions"
+                return "\n".join(
+                    self.message_formatter.format_position_update(pos)
+                    for pos in positions.values()
+                )
+        except Exception as e:
+            return self.message_formatter.format_error(str(e))
+
+    async def _handle_position_metrics(self) -> str:
+        """Get trading metrics"""
+        try:
+            metrics = await self.trading_bot.get_trading_stats()
+            return (
+                "Trading Metrics:\n```\n"
+                f"Total Trades: {metrics['total_trades']}\n"
+                f"Win Rate: {metrics['win_rate']*100:.1f}%\n"
+                f"Average Profit: ${metrics['avg_profit']:.2f}\n"
+                f"Max Drawdown: {metrics['max_drawdown']*100:.1f}%\n"
+                f"Sharpe Ratio: {metrics['sharpe_ratio']:.2f}\n"
+                "```"
+            )
+        except Exception as e:
+            return self.message_formatter.format_error(str(e))
+
+    async def _handle_test_api(self) -> str:
+        """Test API connection"""
+        try:
+            price = await self.trading_bot.test_api_connection()
+            return self.message_formatter.format_notification(
+                f"API connection successful! BTC Price: ${price:,.2f}",
+                "success"
+            )
+        except Exception as e:
+            return self.message_formatter.format_error(f"API test failed: {str(e)}")
+
+    async def _handle_ping(self) -> str:
+        """Simple ping command"""
+        return "Pong! 🏓"
+
+    async def _handle_version(self) -> str:
+        """Get bot version"""
+        return "Crypto Trading Bot v1.0.0"
+
+    async def _handle_status(self) -> str:
+        """Get bot status"""
+        try:
+            return await self.trading_bot.get_status()
+        except Exception as e:
+            return self.message_formatter.format_error(str(e))
+
+    async def _handle_balance(self) -> str:
+        """Get account balance"""
+        try:
+            balance = await self.trading_bot.get_account_balance()
+            return f"Account Balance: ${balance:,.2f}"
+        except Exception as e:
+            return self.message_formatter.format_error(str(e))
+
+    async def _handle_start_trading(self) -> str:
+        """Start the trading bot"""
+        try:
+            if self.trading_bot.trading_active:
+                return "Trading already active"
+            self.trading_bot.trading_active = True
+            return self.message_formatter.format_notification("Trading started", "success")
+        except Exception as e:
+            return self.message_formatter.format_error(str(e))
+
+    async def _handle_stop_trading(self) -> str:
+        """Stop the trading bot"""
+        try:
+            if not self.trading_bot.trading_active:
+                return "Trading already stopped"
+            self.trading_bot.trading_active = False
+            return self.message_formatter.format_notification("Trading stopped", "success")
+        except Exception as e:
+            return self.message_formatter.format_error(str(e))
+
+    def _format_signal_strength(self, value: float) -> str:
+        """Format signal strength as arrows"""
+        if abs(value) < 0.2:
+            return "➡️ Neutral"
+        elif value > 0:
+            return "⬆️ " + ("Strong" if value > 0.5 else "Weak") + " Bullish"
+        else:
+            return "⬇️ " + ("Strong" if value < -0.5 else "Weak") + " Bearish"
+
+    # Core Command Methods
+    async def _handle_signals(self, symbol: str = "BTC-USD") -> str:
+        """Get trading signals"""
+        try:
+            signals = await self.trading_bot.technical_analyzer.get_signals(symbol)
+            return (
+                f"**{symbol} Trading Signals**\n```\n"
+                f"Daily Trend: {self._format_signal_strength(signals['trend']['daily'])}\n"
+                f"Hourly Trend: {self._format_signal_strength(signals['trend']['1h'])}\n"
+                f"Trend Aligned: {'Yes' if signals['trend']['aligned'] else 'No'}\n"
+                f"Strength: {signals['trend']['strength']:.2f}\n"
+                "```"
+            )
+        except Exception as e:
+            return self.message_formatter.format_error(str(e))
+
+    async def _handle_market_conditions(self, symbol: str = "BTC-USD") -> str:
+        """Get market conditions"""
+        try:
+            conditions = await self.trading_bot.technical_analyzer.check_market_conditions(symbol)
+            return (
+                f"**{symbol} Market Conditions**\n```\n"
                 f"Volatility: {conditions['volatility']['value']:.2%}\n"
                 f"Price Range (7d): {conditions['price_action']['range_7d']:.2f}%\n"
                 f"Volume: {conditions['volume']['trend']}\n"
@@ -199,20 +348,16 @@ class CommandHandler:
                 f"  Suitable: {'Yes' if conditions['trading_summary']['suitable'] else 'No'}\n"
                 f"  Confidence: {conditions['trading_summary']['confidence']:.2f}\n"
                 f"  {conditions['trading_summary']['recommendation']}\n"
-                f"```"
+                "```"
             )
-            await message.reply(response)
-            
         except Exception as e:
-            raise CommandError(f"Conditions command failed: {str(e)}")
-            
-    async def _handle_rsi(self, symbol: str, message: Message) -> None:
-        """Handle RSI command"""
+            return self.message_formatter.format_error(str(e))
+
+    async def _handle_rsi(self, symbol: str = "BTC-USD") -> str:
+        """Get RSI analysis"""
         try:
-            data = await self.technical_analyzer.data_manager.get_price_data(
-                symbol, TimeFrame.HOUR_1
-            )
-            rsi = self.technical_analyzer._calculate_rsi(data)
+            data = await self.trading_bot.data_manager.get_price_data(symbol, TimeFrame.HOUR_1)
+            rsi = await self.trading_bot.technical_analyzer.calculate_rsi(data['close'])
             
             current_rsi = float(rsi.iloc[-1])
             prev_rsi = float(rsi.iloc[-2])
@@ -225,119 +370,245 @@ class CommandHandler:
                 else "Neutral"
             )
             
-            response = (
-                f"**{symbol} RSI Analysis**\n"
-                f"```\n"
+            return (
+                f"**{symbol} RSI Analysis**\n```\n"
                 f"Current RSI: {current_rsi:.1f}\n"
                 f"Change: {rsi_change:+.1f}\n"
                 f"Zone: {zone}\n"
-                f"```"
+                "```"
             )
-            await message.reply(response)
-            
         except Exception as e:
-            raise CommandError(f"RSI command failed: {str(e)}")
-            
-    async def _handle_macd(self, symbol: str, message: Message) -> None:
-        """Handle MACD command"""
+            return self.message_formatter.format_error(str(e))
+
+    async def _handle_bb_analysis(self, symbol: str = "BTC-USD") -> str:
+        """Get Bollinger Bands analysis"""
         try:
-            data = await self.technical_analyzer.data_manager.get_price_data(
-                symbol, TimeFrame.HOUR_1
+            bb = await self.trading_bot.technical_analyzer.calculate_bollinger_bands(symbol)
+            return (
+                f"**{symbol} Bollinger Bands**\n```\n"
+                f"Upper: ${bb['upper']:,.2f}\n"
+                f"Middle: ${bb['middle']:,.2f}\n"
+                f"Lower: ${bb['lower']:,.2f}\n"
+                f"Bandwidth: {bb['bandwidth']:.2f}%\n"
+                f"Signal: {bb['signal']}\n"
+                "```"
             )
-            macd = self.technical_analyzer._calculate_macd(data)
-            
-            current_macd = float(macd['macd'].iloc[-1])
-            current_signal = float(macd['signal'].iloc[-1])
-            current_hist = float(macd['histogram'].iloc[-1])
-            
-            # Determine trend
-            trend = (
-                "Bullish" if current_macd > current_signal
-                else "Bearish" if current_macd < current_signal
-                else "Neutral"
-            )
-            
-            response = (
-                f"**{symbol} MACD Analysis**\n"
-                f"```\n"
-                f"MACD: {current_macd:.2f}\n"
-                f"Signal: {current_signal:.2f}\n"
-                f"Histogram: {current_hist:.2f}\n"
-                f"Trend: {trend}\n"
-                f"```"
-            )
-            await message.reply(response)
-            
         except Exception as e:
-            raise CommandError(f"MACD command failed: {str(e)}")
-            
-    async def _handle_bb(self, symbol: str, message: Message) -> None:
-        """Handle Bollinger Bands command"""
+            return self.message_formatter.format_error(str(e))
+
+    async def _handle_volume_analysis(self, symbol: str = "BTC-USD") -> str:
+        """Get volume analysis"""
         try:
-            data = await self.technical_analyzer.data_manager.get_price_data(
-                symbol, TimeFrame.HOUR_1
+            analysis = await self.trading_bot.technical_analyzer.analyze_volume_profile(symbol)
+            return (
+                f"**{symbol} Volume Analysis**\n```\n"
+                f"24h Volume: {analysis['volume']:.2f}\n"
+                f"Trend: {analysis['volume_trend']['description']}\n"
+                f"Strength: {analysis['volume_trend']['strength']}\n"
+                "```"
             )
-            bb = self.technical_analyzer._calculate_bollinger_bands(data)
-            
-            current_price = float(data['close'].iloc[-1])
-            upper = float(bb['upper'].iloc[-1])
-            middle = float(bb['middle'].iloc[-1])
-            lower = float(bb['lower'].iloc[-1])
-            
-            # Calculate price position
-            bb_width = ((upper - lower) / middle) * 100
-            position = (current_price - lower) / (upper - lower) * 100
-            
-            # Determine zone
-            zone = (
-                "Upper Band" if position > 80
-                else "Lower Band" if position < 20
-                else "Middle Band"
-            )
-            
-            response = (
-                f"**{symbol} Bollinger Bands**\n"
-                f"```\n"
-                f"Current Price: ${current_price:,.2f}\n"
-                f"Upper Band: ${upper:,.2f}\n"
-                f"Middle Band: ${middle:,.2f}\n"
-                f"Lower Band: ${lower:,.2f}\n"
-                f"Band Width: {bb_width:.2f}%\n"
-                f"Position: {zone} ({position:.1f}%)\n"
-                f"```"
-            )
-            await message.reply(response)
-            
         except Exception as e:
-            raise CommandError(f"Bollinger Bands command failed: {str(e)}")
-            
-    async def _handle_volume(self, symbol: str, message: Message) -> None:
-        """Handle volume analysis command"""
+            return self.message_formatter.format_error(str(e))
+
+    async def _handle_sentiment_analysis(self, symbol: str = "BTC-USD") -> str:
+        """Get market sentiment analysis"""
         try:
-            data = await self.technical_analyzer.data_manager.get_price_data(
-                symbol, TimeFrame.HOUR_1
+            sentiment = await self.trading_bot.analyze_market_sentiment(symbol)
+            return (
+                f"**{symbol} Sentiment Analysis**\n```\n"
+                f"Overall: {sentiment['overall_sentiment']}\n"
+                f"Score: {sentiment['sentiment_score']:.2f}\n"
+                f"Strength: {sentiment['strength']:.2f}\n"
+                f"Timeframes Aligned: {'Yes' if sentiment['timeframes_aligned'] else 'No'}\n"
+                "```"
             )
-            volume_analysis = self.technical_analyzer._analyze_volume_trend(data)
-            
-            response = (
-                f"**{symbol} Volume Analysis**\n"
-                f"```\n"
-                f"Trend: {volume_analysis['description']}\n"
-                f"Strength: {volume_analysis['strength']}\n"
-                f"Score: {volume_analysis['score']:.2f}\n"
-                f"Trading Conditions: {'Favorable' if volume_analysis['is_favorable'] else 'Unfavorable'}\n"
-                f"```"
-            )
-            await message.reply(response)
-            
         except Exception as e:
-            raise CommandError(f"Volume analysis command failed: {str(e)}")
+            return self.message_formatter.format_error(str(e))
+
+    async def _handle_paper_commands(self, action: str = "status") -> str:
+        """Handle paper trading commands"""
+        try:
+            if action == "on":
+                self.trading_bot.paper_trading = True
+                return self.message_formatter.format_notification("Paper trading enabled", "success")
+            elif action == "off":
+                self.trading_bot.paper_trading = False
+                return self.message_formatter.format_notification("Paper trading disabled", "success")
+            else:
+                return f"Paper Trading: {'Enabled' if self.trading_bot.paper_trading else 'Disabled'}"
+        except Exception as e:
+            return self.message_formatter.format_error(str(e))
+
+    async def _handle_risk_analysis(self, symbol: Optional[str] = None) -> str:
+        """Get risk analysis"""
+        try:
+            if symbol:
+                position = self.trading_bot.positions.get(symbol.upper())
+                if not position:
+                    return f"No position found for {symbol}"
+                risk = await self.trading_bot.risk_manager.check_position_risk(position)
+                return (
+                    f"Risk Analysis for {symbol}:\n```\n"
+                    f"Risk Level: {risk['level']}\n"
+                    f"Acceptable: {'Yes' if risk['acceptable'] else 'No'}\n"
+                    f"Reason: {risk['reason']}\n"
+                    "```"
+                )
+            else:
+                return (
+                    "Portfolio Risk:\n```\n"
+                    f"Max Positions: {self.trading_bot.risk_manager.max_positions}\n"
+                    f"Current Positions: {len(self.trading_bot.positions)}\n"
+                    f"Risk Per Trade: {self.trading_bot.config.RISK_PER_TRADE*100:.1f}%\n"
+                    "```"
+                )
+        except Exception as e:
+            return self.message_formatter.format_error(str(e))
+
+    async def _handle_portfolio_analysis(self) -> str:
+        """Get portfolio analysis"""
+        try:
+            exposure = await self.trading_bot.get_total_exposure()
+            daily_pnl = await self.trading_bot.get_daily_pnl()
+            return (
+                "Portfolio Analysis:\n```\n"
+                f"Total Exposure: {exposure*100:.1f}%\n"
+                f"Daily P/L: ${daily_pnl:,.2f}\n"
+                f"Position Count: {len(self.trading_bot.positions)}\n"
+                "```"
+            )
+        except Exception as e:
+            return self.message_formatter.format_error(str(e))
+
+    async def _handle_risk_alerts(self) -> str:
+        """Get risk alerts"""
+        try:
+            alerts = []
+            for symbol, position in self.trading_bot.positions.items():
+                risk = await self.trading_bot.risk_manager.check_position_risk(position)
+                if not risk['acceptable']:
+                    alerts.append(f"{symbol}: {risk['reason']}")
             
-    def _format_signal_strength(self, value: float) -> str:
-        """Format signal strength as arrows"""
-        if abs(value) < 0.2:
-            return "➡️ Neutral"
-        elif value > 0:
-            return "⬆️ " + ("Strong" if value > 0.5 else "Weak") + " Bullish"
-        else:
-            return "⬇️ " + ("Strong" if value < -0.5 else "Weak") + " Bearish"
+            if not alerts:
+                return "No risk alerts"
+            return "Risk Alerts:\n```\n" + "\n".join(alerts) + "\n```"
+        except Exception as e:
+            return self.message_formatter.format_error(str(e))
+
+    async def _handle_risk_limits(self) -> str:
+        """Show risk limits"""
+        return (
+            "Risk Limits:\n```\n"
+            f"Max Positions: {self.trading_bot.risk_manager.max_positions}\n"
+            f"Risk Per Trade: {self.trading_bot.config.RISK_PER_TRADE*100:.1f}%\n"
+            f"Max Drawdown: {self.trading_bot.config.RISK_MAX_DRAWDOWN*100:.1f}%\n"
+            f"Daily VaR: {self.trading_bot.config.RISK_DAILY_VAR*100:.1f}%\n"
+            "```"
+        )
+
+    async def _handle_performance(self) -> str:
+        """Get performance metrics"""
+        try:
+            metrics = await self.trading_bot.calculate_performance_metrics()
+            return (
+                "Performance Metrics:\n```\n"
+                f"Win Rate: {metrics['win_rate']*100:.1f}%\n"
+                f"Average Profit: ${metrics['avg_profit']:.2f}\n"
+                f"Sharpe Ratio: {metrics['sharpe_ratio']:.2f}\n"
+                f"Max Drawdown: {metrics['max_drawdown']*100:.1f}%\n"
+                f"Total Trades: {metrics['total_trades']}\n"
+                "```"
+            )
+        except Exception as e:
+            return self.message_formatter.format_error(str(e))
+
+    async def _handle_set_stop_loss(self, percentage: str) -> str:
+        """Set stop loss percentage"""
+        try:
+            value = float(percentage)
+            if value <= 0 or value > 20:
+                return self.message_formatter.format_error("Invalid stop loss percentage. Must be between 0 and 20")
+            self.trading_bot.config.STOP_LOSS_PERCENTAGE = value
+            return self.message_formatter.format_notification(f"Stop loss set to {value}%", "success")
+        except ValueError:
+            return self.message_formatter.format_error("Invalid percentage value")
+        except Exception as e:
+            return self.message_formatter.format_error(str(e))
+
+    async def _handle_set_max_positions(self, count: str) -> str:
+        """Set maximum positions"""
+        try:
+            value = int(count)
+            if value <= 0 or value > 20:
+                return self.message_formatter.format_error("Invalid position count. Must be between 1 and 20")
+            self.trading_bot.risk_manager.max_positions = value
+            return self.message_formatter.format_notification(f"Maximum positions set to {value}", "success")
+        except ValueError:
+            return self.message_formatter.format_error("Invalid count value")
+        except Exception as e:
+            return self.message_formatter.format_error(str(e))
+
+    async def _handle_set_risk_per_trade(self, percentage: str) -> str:
+        """Set risk per trade percentage"""
+        try:
+            value = float(percentage)
+            if value <= 0 or value > 5:
+                return self.message_formatter.format_error("Invalid risk percentage. Must be between 0 and 5")
+            self.trading_bot.config.RISK_PER_TRADE = value / 100
+            return self.message_formatter.format_notification(f"Risk per trade set to {value}%", "success")
+        except ValueError:
+            return self.message_formatter.format_error("Invalid percentage value")
+        except Exception as e:
+            return self.message_formatter.format_error(str(e))
+
+    async def _handle_set_max_drawdown(self, percentage: str) -> str:
+        """Set maximum drawdown percentage"""
+        try:
+            value = float(percentage)
+            if value <= 0 or value > 30:
+                return self.message_formatter.format_error("Invalid drawdown percentage. Must be between 0 and 30")
+            self.trading_bot.config.RISK_MAX_DRAWDOWN = value / 100
+            return self.message_formatter.format_notification(f"Maximum drawdown set to {value}%", "success")
+        except ValueError:
+            return self.message_formatter.format_error("Invalid percentage value")
+        except Exception as e:
+            return self.message_formatter.format_error(str(e))
+
+    async def _handle_set_daily_var(self, percentage: str) -> str:
+        """Set daily Value at Risk percentage"""
+        try:
+            value = float(percentage)
+            if value <= 0 or value > 10:
+                return self.message_formatter.format_error("Invalid VaR percentage. Must be between 0 and 10")
+            self.trading_bot.config.RISK_DAILY_VAR = value / 100
+            return self.message_formatter.format_notification(f"Daily VaR set to {value}%", "success")
+        except ValueError:
+            return self.message_formatter.format_error("Invalid percentage value")
+        except Exception as e:
+            return self.message_formatter.format_error(str(e))
+
+    async def _handle_set_trailing_stop(self, percentage: str) -> str:
+        """Set trailing stop percentage"""
+        try:
+            value = float(percentage)
+            if value <= 0 or value > 10:
+                return self.message_formatter.format_error("Invalid trailing stop percentage. Must be between 0 and 10")
+            self.trading_bot.config.TRAILING_STOP_PERCENTAGE = value
+            return self.message_formatter.format_notification(f"Trailing stop set to {value}%", "success")
+        except ValueError:
+            return self.message_formatter.format_error("Invalid percentage value")
+        except Exception as e:
+            return self.message_formatter.format_error(str(e))
+
+    async def _handle_set_take_profit(self, percentage: str) -> str:
+        """Set take profit percentage"""
+        try:
+            value = float(percentage)
+            if value <= 0 or value > 50:
+                return self.message_formatter.format_error("Invalid take profit percentage. Must be between 0 and 50")
+            self.trading_bot.config.TAKE_PROFIT_PERCENTAGE = value
+            return self.message_formatter.format_notification(f"Take profit set to {value}%", "success")
+        except ValueError:
+            return self.message_formatter.format_error("Invalid percentage value")
+        except Exception as e:
+            return self.message_formatter.format_error(str(e))

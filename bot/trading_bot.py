@@ -1011,81 +1011,84 @@ class TradingBot:
             raise TradingError(f"API connection test failed: {str(e)}", "API")
 
     async def get_account_balance(self) -> float:
-        """Get current account balance with proper error handling."""
+        """Get current account balance."""
         try:
             if self.paper_trading:
-                return self.config.PAPER_BALANCE
+                return await self._calculate_paper_account_value()
+            else:
+                return await self._get_live_account_value()
+        except Exception as e:
+            await self.log(f"Failed to get account balance: {str(e)}", level="error")
+            raise TradingError("Failed to get account balance", {"error": str(e)})
+
+    async def _calculate_paper_account_value(self) -> float:
+        """Calculate paper trading account value."""
+        try:
+            # Start with base paper balance
+            total_value = self.config.PAPER_BALANCE
             
-            # Get account info from Coinbase
-            account = self.client.get_account()
-            return float(account.available)
+            # Add unrealized P/L from open positions
+            for position in self.positions.values():
+                total_value += position.unrealized_pnl
+                
+            return total_value
             
         except Exception as e:
-            await self.log(f"Balance fetch error: {str(e)}", level="error")
-            raise TradingError(f"Failed to get balance: {str(e)}", "API")
+            await self.log(f"Paper account value calculation error: {str(e)}", level="error")
+            return 0.0
+
+    async def _get_live_account_value(self) -> float:
+        """Get live trading account value from exchange."""
+        try:
+            account = await self.client.get_account()
+            return float(account['available_balance']['value'])
+        except Exception as e:
+            await self.log(f"Live account value fetch error: {str(e)}", level="error")
+            raise TradingError("Failed to get live account value", {"error": str(e)})
 
     async def get_daily_pnl(self) -> float:
-        """Calculate daily profit/loss."""
+        """Get daily profit/loss."""
         try:
-            today = datetime.now().date()
-            daily_pnl = 0.0
-            
-            # Add closed position P/L
-            for pos in self.position_history:
-                if pos['exit_time'].date() == today:
-                    daily_pnl += pos['total_profit']
-            
-            # Add unrealized P/L
-            for pos in self.positions.values():
-                daily_pnl += pos.unrealized_pnl
-                
-            return daily_pnl
-            
+            return await self._calculate_daily_pnl()
         except Exception as e:
-            await self.log(f"Daily P/L calculation error: {str(e)}", level="error")
-            raise TradingError(f"Failed to calculate daily P/L: {str(e)}", "CALCULATION")
+            await self.log(f"Failed to get daily PnL: {str(e)}", level="error")
+            return 0.0
 
     async def get_total_exposure(self) -> float:
-        """Calculate total portfolio exposure."""
+        """Get total portfolio exposure as a percentage."""
         try:
-            total_value = await self._calculate_paper_account_value() if self.paper_trading else await self._get_live_account_value()
-            
-            if not total_value:
-                return 0.0
-                
-            position_value = sum(
-                pos.current_price * pos.remaining_quantity 
-                for pos in self.positions.values()
-            )
-            
-            return position_value / total_value
-            
+            return await self._calculate_total_exposure()
         except Exception as e:
-            await self.log(f"Exposure calculation error: {str(e)}", level="error")
-            raise TradingError(f"Failed to calculate exposure: {str(e)}", "CALCULATION")
+            await self.log(f"Failed to get total exposure: {str(e)}", level="error")
+            return 0.0
 
     async def get_trading_stats(self) -> Dict[str, Any]:
         """Get comprehensive trading statistics."""
         try:
-            closed_positions = self.position_history[-100:]  # Last 100 trades
-            
-            if not closed_positions:
+            total_trades = len(self.position_history)
+            if total_trades == 0:
                 return {
                     'total_trades': 0,
-                    'win_rate': 0,
-                    'avg_profit': 0,
-                    'max_drawdown': 0,
-                    'sharpe_ratio': 0
+                    'win_rate': 0.0,
+                    'avg_profit': 0.0,
+                    'max_drawdown': 0.0,
+                    'sharpe_ratio': 0.0,
+                    'active_positions': len(self.positions),
+                    'closed_positions': 0
                 }
-                
-            # Calculate core metrics
-            wins = sum(1 for p in closed_positions if p['total_profit'] > 0)
-            total_trades = len(closed_positions)
+            
+            # Calculate win rate
+            winning_trades = sum(1 for pos in self.position_history if pos['total_profit'] > 0)
+            win_rate = winning_trades / total_trades
+            
+            # Calculate average profit
+            total_profit = sum(pos['total_profit'] for pos in self.position_history)
+            avg_profit = total_profit / total_trades
             
             return {
                 'total_trades': total_trades,
-                'win_rate': wins / total_trades if total_trades > 0 else 0,
-                'avg_profit': sum(p['total_profit'] for p in closed_positions) / total_trades,
+                'win_rate': win_rate,
+                'avg_profit': avg_profit,
                 'max_drawdown': await self._calculate_max_drawdown(),
                 'sharpe_ratio': await self._calculate_sharpe_ratio(),
                 'active_positions': len(self.positions),
@@ -1093,8 +1096,8 @@ class TradingBot:
             }
             
         except Exception as e:
-            await self.log(f"Stats calculation error: {str(e)}", level="error")
-            raise TradingError(f"Failed to calculate trading stats: {str(e)}", "CALCULATION")
+            await self.log(f"Failed to get trading stats: {str(e)}", level="error")
+            raise TradingError("Failed to get trading statistics", {"error": str(e)})
 
     async def _calculate_trade_signal(self, symbol: str) -> Dict[str, Any]:
         """Calculate comprehensive trade signal with component scores."""
