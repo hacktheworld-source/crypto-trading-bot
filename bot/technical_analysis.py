@@ -116,9 +116,9 @@ class TechnicalAnalyzer:
                 
                 if bb is not None:
                     current_bb = {
-                        'upper': float(bb['upper'].iloc[-1]),
-                        'middle': float(bb['middle'].iloc[-1]),
-                        'lower': float(bb['lower'].iloc[-1])
+                        'upper': float(bb['upper']),
+                        'middle': float(bb['middle']),
+                        'lower': float(bb['lower'])
                     }
                 else:
                     current_bb = {
@@ -148,6 +148,10 @@ class TechnicalAnalyzer:
                 data
             )
             
+            # Get volume confirmation
+            volume_analysis = self._analyze_volume_trend(data)
+            volume_confirmed = volume_analysis.get('is_favorable', False)
+            
             # Determine signal strength
             signal_strength = abs(trend_score + momentum_score) / 2
             
@@ -155,6 +159,7 @@ class TechnicalAnalyzer:
                 'trend': trend_score,
                 'momentum': momentum_score,
                 'strength': signal_strength,
+                'volume_confirmed': volume_confirmed,
                 'indicators': {
                     'rsi': current_rsi,
                     'macd': {
@@ -173,6 +178,7 @@ class TechnicalAnalyzer:
                 'trend': 0.0,
                 'momentum': 0.0,
                 'strength': 0.0,
+                'volume_confirmed': False,
                 'indicators': {
                     'rsi': 50.0,
                     'macd': {'value': 0.0, 'signal': 0.0, 'histogram': 0.0},
@@ -292,31 +298,20 @@ class TechnicalAnalyzer:
             Dict containing trend analysis
         """
         try:
-            # Get current price data
-            data = await self.data_manager.get_price_data(symbol, TimeFrame.HOUR_1)
-            current_price = float(data['close'].iloc[-1])
+            # Get signals from both timeframes
+            signals = await self.get_signals(symbol)
             
-            # Calculate EMAs for trend determination
-            ema_short = await self._calculate_ema(data['close'], 9)
-            ema_long = await self._calculate_ema(data['close'], 21)
+            # Extract trend information
+            daily_trend = signals['trend']['daily']
+            hourly_trend = signals['trend']['hourly']
+            trend_aligned = signals['trend']['aligned']
+            trend_strength = signals['trend']['strength']
             
-            # Get latest EMA values
-            latest_ema_short = float(ema_short.iloc[-1])
-            latest_ema_long = float(ema_long.iloc[-1])
-            
-            # Determine trend direction
-            daily_trend = 1 if current_price > latest_ema_long else -1
-            hourly_trend = 1 if current_price > latest_ema_short else -1
-            
-            # Calculate trend strength
-            trend_strength = abs(current_price - latest_ema_long) / latest_ema_long * 100
-            
-            # Get volume confirmation
-            volume_analysis = self._analyze_volume_trend(data)
-            volume_confirmed = volume_analysis.get('is_favorable', False)
+            # Get volume confirmation from daily signals
+            volume_confirmed = signals['signals']['daily']['volume_confirmed']
             
             # Determine trend description
-            if daily_trend == hourly_trend:
+            if trend_aligned:
                 description = f"Strong {'Uptrend' if daily_trend > 0 else 'Downtrend'}"
             else:
                 description = "Mixed Trend"
@@ -325,12 +320,11 @@ class TechnicalAnalyzer:
                 'trend': {
                     'daily': daily_trend,
                     'hourly': hourly_trend,
-                    'aligned': daily_trend == hourly_trend
+                    'aligned': trend_aligned
                 },
                 'strength': float(trend_strength),
                 'volume_confirmed': volume_confirmed,
-                'description': description,
-                'volume_trend': volume_analysis.get('description', 'Unknown')
+                'description': description
             }
             
         except Exception as e:
