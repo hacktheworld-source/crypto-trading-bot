@@ -414,4 +414,4 @@ class DataManager:
                 del self.cache[key]
                 
         except Exception as e:
-            self.trading_bot.log(f"Error cleaning cache: {str(e)}", level="error")
+            await self.trading_bot.log(f"Error cleaning cache: {str(e)}", level="error")

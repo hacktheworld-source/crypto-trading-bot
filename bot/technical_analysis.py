@@ -127,8 +127,8 @@ class TechnicalAnalyzer:
                         'lower': current_price * 0.98
                     }
             except (IndexError, ValueError, KeyError, AttributeError) as e:
-                self.trading_bot.log(f"Error getting latest values: {str(e)}", level="error")
-                raise TradingError("Failed to get latest indicator values", "ANALYSIS")
+                await self.trading_bot.log(f"Error getting latest values: {str(e)}", level="error")
+                raise TradingError("Failed to get latest values", "ANALYSIS")
             
             # Calculate trend
             trend_score = self._calculate_trend_score(
@@ -167,7 +167,7 @@ class TechnicalAnalyzer:
             }
             
         except Exception as e:
-            self.trading_bot.log(f"Signal calculation error: {str(e)}", level="error")
+            await self.trading_bot.log(f"Signal calculation error: {str(e)}", level="error")
             # Return neutral signals on error
             return {
                 'trend': 0.0,
@@ -409,7 +409,7 @@ class TechnicalAnalyzer:
             return volume_levels
             
         except Exception as e:
-            self.trading_bot.log(f"Volume profile calculation error: {str(e)}", level="error")
+            await self.trading_bot.log(f"Volume profile calculation error: {str(e)}", level="error")
             return {}
 
     def _find_volume_nodes(self, volume_profile: Dict[str, Any]) -> List[float]:
@@ -433,7 +433,7 @@ class TechnicalAnalyzer:
             return sorted(significant_levels)
             
         except Exception as e:
-            self.trading_bot.log(f"Volume node analysis error: {str(e)}", level="error")
+            await self.trading_bot.log(f"Volume node analysis error: {str(e)}", level="error")
             return []
 
     def _analyze_volume_trend(self, data: pd.DataFrame) -> Dict[str, Any]:
@@ -518,7 +518,7 @@ class TechnicalAnalyzer:
             }
             
         except Exception as e:
-            self.trading_bot.log(f"Pivot point calculation error: {str(e)}", level="error")
+            await self.trading_bot.log(f"Pivot point calculation error: {str(e)}", level="error")
             return {'pivot': 0, 'resistance': [], 'support': []}
 
     def _identify_swing_levels(self, data: pd.DataFrame, window: int = 20) -> Dict[str, List[float]]:
@@ -544,7 +544,7 @@ class TechnicalAnalyzer:
             }
             
         except Exception as e:
-            self.trading_bot.log(f"Swing level identification error: {str(e)}", level="error")
+            await self.trading_bot.log(f"Swing level identification error: {str(e)}", level="error")
             return {'resistance': [], 'support': []}
 
     async def calculate_rsi(self, prices: pd.Series, period: int = None) -> pd.Series:
@@ -1183,7 +1183,7 @@ class TechnicalAnalyzer:
             }
             
         except Exception as e:
-            self.trading_bot.log(f"MACD calculation error: {str(e)}", level="error")
+            await self.trading_bot.log(f"MACD calculation error: {str(e)}", level="error")
             # Return empty series with same index as input data
             empty = pd.Series(0, index=data.index)
             return {'macd': empty, 'signal': empty, 'histogram': empty}
@@ -1202,5 +1202,5 @@ class TechnicalAnalyzer:
         try:
             return data.ewm(span=period, adjust=False).mean()
         except Exception as e:
-            self.trading_bot.log(f"EMA calculation error: {str(e)}", level="error")
+            await self.trading_bot.log(f"EMA calculation error: {str(e)}", level="error")
             return pd.Series(0, index=data.index)
