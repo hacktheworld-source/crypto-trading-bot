@@ -1048,8 +1048,8 @@ class TradingBot:
             if not usd_account:
                 raise TradingError("USD account not found", "ACCOUNT")
                 
-            # Get available balance in USD
-            return float(usd_account.available_balance.value)
+            # Get available balance in USD - access the raw balance value
+            return float(usd_account.available_balance)
             
         except Exception as e:
             await self.log(f"Live account value fetch error: {str(e)}", level="error")
