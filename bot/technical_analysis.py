@@ -298,21 +298,30 @@ class TechnicalAnalyzer:
             Dict containing trend analysis
         """
         try:
-            # Get signals from both timeframes
-            all_signals = await self.get_signals(symbol)
+            # Get price data
+            data = await self.data_manager.get_price_data(symbol, TimeFrame.DAY_1)
+            if data is None or len(data) < 2:
+                raise TradingError("Insufficient price data", "ANALYSIS")
+            
+            # Get signals and volume analysis
+            signals = await self.get_signals(symbol)
+            volume_analysis = self._analyze_volume_trend(data)
             
             # Extract trend information
-            trend_info = all_signals['trend']
-            daily_signals = all_signals['signals']['daily']
-            
-            # Get volume confirmation from daily signals
-            volume_confirmed = daily_signals.get('volume_confirmed', False)
+            trend_info = signals['trend']
             
             # Determine trend description
             if trend_info['aligned']:
-                description = f"Strong {'Uptrend' if trend_info['daily'] > 0 else 'Downtrend'}"
+                base_desc = "Strong" if abs(trend_info['strength']) > 0.5 else "Moderate"
+                direction = "Uptrend" if trend_info['daily'] > 0 else "Downtrend"
+                description = f"{base_desc} {direction}"
             else:
                 description = "Mixed Trend"
+            
+            # Add volume context
+            if volume_analysis['trend'] == "strongly":
+                volume_context = f" with {volume_analysis['description'].lower()} volume"
+                description += volume_context
             
             return {
                 'trend': {
@@ -321,7 +330,11 @@ class TechnicalAnalyzer:
                     'aligned': trend_info['aligned']
                 },
                 'strength': float(trend_info['strength']),
-                'volume_confirmed': volume_confirmed,
+                'volume': {
+                    'trend': volume_analysis['description'],
+                    'strength': volume_analysis['strength'],
+                    'score': volume_analysis['score']
+                },
                 'description': description
             }
             
@@ -335,7 +348,11 @@ class TechnicalAnalyzer:
                     'aligned': False
                 },
                 'strength': 0.0,
-                'volume_confirmed': False,
+                'volume': {
+                    'trend': "Unknown",
+                    'strength': "Average",
+                    'score': 0.0
+                },
                 'description': "Error - Unable to analyze trend"
             }
 

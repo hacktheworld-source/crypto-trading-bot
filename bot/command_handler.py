@@ -88,7 +88,7 @@ class CommandHandler:
             'levels': self._handle_key_levels,
             'patterns': self._handle_price_patterns,
             'vprofile': self._handle_volume_profile,
-            'trend': self._handle_trend_strength,
+            'trend': self._handle_trend,
             'momentum': self._handle_momentum
         }
     
@@ -795,29 +795,29 @@ class CommandHandler:
         except Exception as e:
             return self.message_formatter.format_error(str(e))
 
-    async def _handle_trend_strength(self, symbol: str = "BTC-USD") -> str:
-        """Get trend strength analysis"""
+    async def _handle_trend(self, symbol: str = "BTC-USD") -> str:
+        """Handle trend command"""
         try:
-            signals = await self.technical_analyzer.get_signals(symbol)
+            analysis = await self.trading_bot.technical_analyzer.analyze_trend(symbol)
             
-            # Calculate trend metrics
-            trend_score = signals['trend']['daily']
-            momentum = signals['signals']['daily']['momentum']
-            volume_confirmed = signals['volume_confirmed']
+            # Get trend direction emojis
+            daily_emoji = "🟢" if analysis['trend']['daily'] > 0 else "🔴"
+            hourly_emoji = "🟢" if analysis['trend']['hourly'] > 0 else "🔴"
             
-            # Calculate overall strength
-            strength = abs(trend_score)
-            direction = "Bullish" if trend_score > 0 else "Bearish"
+            # Get volume emoji
+            volume_emoji = "📈" if analysis['volume']['trend'].lower().endswith("increasing") else "📉"
             
             return (
-                f"**{symbol} Trend Strength**\n```\n"
-                f"Direction: {direction}\n"
-                f"Strength: {strength:.2f}\n"
-                f"Momentum: {momentum:+.2f}\n"
-                f"Volume Confirmed: {'Yes' if volume_confirmed else 'No'}\n"
-                f"Multiple Timeframes Aligned: {'Yes' if signals['trend']['aligned'] else 'No'}\n"
+                f"**{symbol} Trend Analysis**\n```\n"
+                f"Overall: {analysis['description']}\n\n"
+                f"Daily Trend: {daily_emoji} {analysis['trend']['daily']:+.2f}\n"
+                f"Hourly Trend: {hourly_emoji} {analysis['trend']['hourly']:+.2f}\n"
+                f"Trend Strength: {analysis['strength']*100:.1f}%\n\n"
+                f"Volume Trend: {volume_emoji} {analysis['volume']['trend']}\n"
+                f"Volume Strength: {analysis['volume']['strength']}\n"
                 "```"
             )
+            
         except Exception as e:
             return self.message_formatter.format_error(str(e))
 
