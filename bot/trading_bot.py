@@ -1105,6 +1105,7 @@ class TradingBot:
             # Process all accounts
             for acc in accounts.accounts:
                 if acc.available_balance and 'value' in acc.available_balance:
+                    # Convert string balance to float before processing
                     balance = float(acc.available_balance['value'])
                     if balance > 0:  # Only process accounts with non-zero balance
                         if acc.currency == 'USD':
