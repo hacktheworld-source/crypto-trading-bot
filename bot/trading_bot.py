@@ -1006,13 +1006,34 @@ class TradingBot:
             await self.log(f"API test failed: {str(e)}", level="error")
             raise TradingError(f"API connection test failed: {str(e)}", "API")
 
-    async def get_account_balance(self) -> float:
-        """Get current account balance."""
+    async def get_account_balance(self) -> str:
+        """Get current account balance with portfolio breakdown."""
         try:
             if self.paper_trading:
-                return await self._calculate_paper_account_value()
+                return f"Paper Trading Balance: ${await self._calculate_paper_account_value():.2f}"
             else:
-                return await self._get_live_account_value()
+                portfolio = await self._get_live_account_value()
+                
+                # Build response string
+                response = [
+                    "Portfolio Breakdown:",
+                    f"Cash Balance: ${portfolio['cash_balance']:.2f}"
+                ]
+                
+                # Add crypto holdings if any exist
+                if portfolio['crypto_holdings']:
+                    response.append("\nCrypto Holdings:")
+                    for holding in portfolio['crypto_holdings']:
+                        response.append(
+                            f"{holding['currency']}: {holding['amount']:.8f} "
+                            f"(${holding['usd_value']:.2f})"
+                        )
+                
+                # Add total value
+                response.append(f"\nTotal Portfolio Value: ${portfolio['total_value']:.2f}")
+                
+                return "\n".join(response)
+                
         except Exception as e:
             await self.log(f"Failed to get account balance: {str(e)}", level="error")
             raise TradingError("Failed to get account balance", {"error": str(e)})
@@ -1033,24 +1054,41 @@ class TradingBot:
             await self.log(f"Paper account value calculation error: {str(e)}", level="error")
             return 0.0
 
-    async def _get_live_account_value(self) -> float:
+    async def _get_live_account_value(self) -> Dict[str, Any]:
         """Get live trading account value from exchange."""
         try:
             # Get account balance using the Coinbase API
-            accounts = self.client.get_accounts()  # This returns synchronously
+            accounts = self.client.get_accounts()
             
-            # Find USD account
-            usd_account = next(
-                (acc for acc in accounts.accounts if acc.currency == 'USD'),
-                None
-            )
+            # Initialize portfolio breakdown
+            portfolio = {
+                'cash_balance': 0.0,
+                'crypto_holdings': [],
+                'total_value': 0.0
+            }
             
-            if not usd_account:
-                raise TradingError("USD account not found", "ACCOUNT")
+            # Process all accounts
+            for acc in accounts.accounts:
+                balance = float(acc.available_balance['value'])
+                if balance > 0:  # Only process accounts with non-zero balance
+                    if acc.currency == 'USD':
+                        portfolio['cash_balance'] = balance
+                        portfolio['total_value'] += balance
+                    elif acc.type == 'ACCOUNT_TYPE_CRYPTO':
+                        # Get current price for crypto
+                        try:
+                            current_price = await self.data_manager.get_current_price(acc.currency)
+                            usd_value = balance * current_price
+                            portfolio['crypto_holdings'].append({
+                                'currency': acc.currency,
+                                'amount': balance,
+                                'usd_value': usd_value
+                            })
+                            portfolio['total_value'] += usd_value
+                        except Exception as e:
+                            await self.log(f"Error getting price for {acc.currency}: {str(e)}", level="error")
             
-            # Get available balance in USD - the value is in the nested available_balance dictionary
-            balance_str = usd_account.available_balance['value']
-            return float(balance_str)
+            return portfolio
             
         except Exception as e:
             await self.log(f"Live account value fetch error: {str(e)}", level="error")
