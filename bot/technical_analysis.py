@@ -200,41 +200,61 @@ class TechnicalAnalyzer:
             Float between -1 and 1 indicating trend strength and direction
         """
         try:
-            # Calculate price momentum
-            price_momentum = (price - bb_middle) / bb_middle
+            # Calculate price momentum relative to EMAs
+            ema_short_dist = (price - ema_short) / ema_short
+            ema_long_dist = (price - ema_long) / ema_long
             
-            # Initialize score components with more granular scoring
+            # More granular EMA scoring
             ema_score = (
-                1.0 if price > ema_short > ema_long else
-                -1.0 if price < ema_short < ema_long else
-                0.5 if price > ema_long else
-                -0.5 if price < ema_long else
+                1.0 if price > ema_short > ema_long and ema_short_dist > 0.002 else
+                -1.0 if price < ema_short < ema_long and ema_short_dist < -0.002 else
+                0.75 if price > ema_short > ema_long else
+                -0.75 if price < ema_short < ema_long else
+                0.5 if price > ema_long and ema_long_dist > 0.001 else
+                -0.5 if price < ema_long and ema_long_dist < -0.001 else
+                0.25 if price > ema_long else
+                -0.25 if price < ema_long else
                 0.0
             )
             
-            # BB score with distance consideration
+            # BB score with more realistic distance scaling
             bb_distance = abs(price - bb_middle) / bb_middle
-            bb_score = (1.0 if price > bb_middle else -1.0) * min(1.0, bb_distance * 10)
+            bb_score = (1.0 if price > bb_middle else -1.0) * min(1.0, bb_distance * 5)
             
-            # MACD score with magnitude consideration
-            macd_score = max(-1.0, min(1.0, macd))
-            
-            # RSI score with more granular zones
-            rsi_score = (
-                1.0 if rsi > 70 else
-                0.5 if rsi > 60 else
-                -0.5 if rsi < 40 else
-                -1.0 if rsi < 30 else
+            # MACD score with signal line consideration
+            macd_abs = abs(macd)
+            macd_score = (
+                1.0 if macd > 0 and macd_abs > 0.002 else
+                -1.0 if macd < 0 and macd_abs > 0.002 else
+                0.5 if macd > 0 else
+                -0.5 if macd < 0 else
                 0.0
+            )
+            
+            # RSI score with more zones for better accuracy
+            rsi_score = (
+                -1.0 if rsi > 75 else    # Extremely overbought
+                -0.75 if rsi > 70 else   # Strongly overbought
+                -0.5 if rsi > 65 else    # Moderately overbought
+                0.5 if rsi < 35 else     # Moderately oversold
+                0.75 if rsi < 30 else    # Strongly oversold
+                1.0 if rsi < 25 else     # Extremely oversold
+                0.25 if rsi > 60 else    # Slight overbought
+                -0.25 if rsi < 40 else   # Slight oversold
+                0.0                      # Neutral
             )
             
             # Weight and combine scores
             weighted_score = (
-                ema_score * 0.35 +      # Trend following
+                ema_score * 0.35 +      # Trend following (primary)
                 bb_score * 0.25 +       # Price position
                 macd_score * 0.25 +     # Momentum
                 rsi_score * 0.15        # Overbought/Oversold
             )
+            
+            # Add minimum threshold for trend signals
+            if abs(weighted_score) < 0.2:
+                weighted_score = 0.0  # Neutral if trend is too weak
             
             # Ensure the score is between -1 and 1
             return max(-1.0, min(1.0, weighted_score))
