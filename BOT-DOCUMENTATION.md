@@ -54,23 +54,21 @@ A professional-grade cryptocurrency trading bot that combines technical analysis
 ### Timeframe Analysis
 ```python
 timeframes = {
-    '1h': {'weight': 0.4},  # Short-term momentum and entry timing
-    '1d': {'weight': 0.6}   # Market structure and trend direction
+    '1h': {'weight': 0.5},  # Short-term momentum and entry timing
+    '1d': {'weight': 0.5}   # Long-term structure and trend
 }
 ```
 
 ### Multi-Timeframe Analysis
-- **Daily Analysis (60%)**
+- **Daily Analysis (50%)**
   - Market structure and key levels
   - Long-term trend direction
   - Support/resistance zones
-  - Overall market bias
 
-- **Hourly Analysis (40%)**
+- **Hourly Analysis (50%)**
   - Entry/exit timing
   - Short-term momentum
   - Volume confirmation
-  - Price action patterns
 
 ### Signal Generation and Analysis
 Each timeframe analysis produces:
@@ -82,10 +80,9 @@ Each timeframe analysis produces:
 ### Signal Weighting
 ```python
 confidence_score = (
-    (daily_trend * 0.6) +      # Primary trend direction
-    (hourly_signal * 0.4) +    # Entry timing and momentum
-    (volume_profile * 0.2) +   # Volume confirmation
-    (price_level * 0.1)        # Support/Resistance
+    (daily_trend * 0.5) +      # Primary trend direction
+    (hourly_signal * 0.3) +    # Entry timing
+    (volume_profile * 0.2)     # Volume confirmation
 )
 ```
 
@@ -93,12 +90,12 @@ confidence_score = (
 A valid entry requires:
 1. Daily trend aligned (primary requirement)
 2. Hourly confirmation (timing)
-2. Risk checks pass:
+3. Risk checks pass:
    - Portfolio exposure < 80%
    - Position count < max_positions
    - Daily drawdown within limits
-3. Volume confirmation
-4. Price position checks:
+4. Volume confirmation
+5. Price position checks:
    - Not near major resistance (2% buffer)
    - Not more than 70% up from daily low
    - RSI between 40-60 (trending) or < 30 (reversal)

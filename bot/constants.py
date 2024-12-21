@@ -42,8 +42,8 @@ class TradingConstants:
     
     # Timeframe weights for analysis
     TIMEFRAMES = {
-        TimeFrame.DAY_1: {'weight': 0.6, 'periods': 90},   # Market structure
-        TimeFrame.HOUR_1: {'weight': 0.4, 'periods': 48}   # Entry timing
+        TimeFrame.DAY_1: {'weight': 0.5, 'periods': 90},   # Market structure
+        TimeFrame.HOUR_1: {'weight': 0.5, 'periods': 48}   # Entry timing
     }
     
     # Risk Management

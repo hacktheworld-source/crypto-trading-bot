@@ -1,11 +1,10 @@
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Tuple, Any, Union
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 from bot.exceptions import TradingError, DataError
 from bot.constants import TimeFrame
 import asyncio
-import talib
 
 class TechnicalAnalyzer:
     """Core technical analysis engine"""
@@ -77,7 +76,7 @@ class TechnicalAnalyzer:
                 },
                 'trend': {
                     'daily': signals_1d['trend'],
-                    '1h': signals_1h['trend'],
+                    'hourly': signals_1h['trend'],
                     'aligned': trend_alignment['aligned'],
                     'strength': trend_alignment['strength']
                 }
@@ -98,58 +97,92 @@ class TechnicalAnalyzer:
         Returns:
             Dict containing signal analysis
         """
-        # Calculate technical indicators
-        rsi = self._calculate_rsi(data)
-        macd = self._calculate_macd(data)
-        bb = self._calculate_bollinger_bands(data)
-        ema_short = self._calculate_ema(data, 9)
-        ema_long = self._calculate_ema(data, 21)
-        
-        # Get latest values
-        current_price = float(data['close'].iloc[-1])
-        current_rsi = float(rsi.iloc[-1])
-        current_macd = float(macd['macd'].iloc[-1])
-        current_signal = float(macd['signal'].iloc[-1])
-        
-        # Calculate trend
-        trend_score = self._calculate_trend_score(
-            current_price,
-            ema_short.iloc[-1],
-            ema_long.iloc[-1],
-            bb['middle'].iloc[-1],
-            current_macd,
-            current_rsi
-        )
-        
-        # Calculate momentum
-        momentum_score = self._calculate_momentum_score(
-            current_rsi,
-            current_macd,
-            current_signal,
-            data
-        )
-        
-        # Determine signal strength
-        signal_strength = abs(trend_score + momentum_score) / 2
-        
-        return {
-            'trend': trend_score,
-            'momentum': momentum_score,
-            'strength': signal_strength,
-            'indicators': {
-                'rsi': current_rsi,
-                'macd': {
-                    'value': current_macd,
-                    'signal': current_signal,
-                    'histogram': float(macd['histogram'].iloc[-1])
-                },
-                'bb': {
-                    'upper': float(bb['upper'].iloc[-1]),
-                    'middle': float(bb['middle'].iloc[-1]),
-                    'lower': float(bb['lower'].iloc[-1])
+        try:
+            # Calculate technical indicators
+            rsi = self._calculate_rsi(data)
+            macd = self._calculate_macd(data)
+            bb = self._calculate_bollinger_bands(data)
+            ema_short = self._calculate_ema(data['close'], 9)
+            ema_long = self._calculate_ema(data['close'], 21)
+            
+            # Get latest values with proper error handling
+            try:
+                current_price = float(data['close'].iloc[-1])
+                current_rsi = float(rsi.iloc[-1]) if rsi is not None else 50.0
+                current_macd = float(macd['macd'].iloc[-1]) if macd is not None else 0.0
+                current_signal = float(macd['signal'].iloc[-1]) if macd is not None else 0.0
+                current_ema_short = float(ema_short.iloc[-1]) if ema_short is not None else current_price
+                current_ema_long = float(ema_long.iloc[-1]) if ema_long is not None else current_price
+                
+                if bb is not None:
+                    current_bb = {
+                        'upper': float(bb['upper'].iloc[-1]),
+                        'middle': float(bb['middle'].iloc[-1]),
+                        'lower': float(bb['lower'].iloc[-1])
+                    }
+                else:
+                    current_bb = {
+                        'upper': current_price * 1.02,
+                        'middle': current_price,
+                        'lower': current_price * 0.98
+                    }
+            except (IndexError, ValueError, KeyError, AttributeError) as e:
+                await self.log(f"Error getting latest values: {str(e)}", level="error")
+                raise TradingError("Failed to get latest indicator values", "ANALYSIS")
+            
+            # Calculate trend
+            trend_score = self._calculate_trend_score(
+                current_price,
+                current_ema_short,
+                current_ema_long,
+                current_bb['middle'],
+                current_macd,
+                current_rsi
+            )
+            
+            # Calculate momentum
+            momentum_score = self._calculate_momentum_score(
+                current_rsi,
+                current_macd,
+                current_signal,
+                data
+            )
+            
+            # Determine signal strength
+            signal_strength = abs(trend_score + momentum_score) / 2
+            
+            return {
+                'trend': trend_score,
+                'momentum': momentum_score,
+                'strength': signal_strength,
+                'indicators': {
+                    'rsi': current_rsi,
+                    'macd': {
+                        'value': current_macd,
+                        'signal': current_signal,
+                        'histogram': float(macd['histogram'].iloc[-1]) if macd is not None else 0.0
+                    },
+                    'bb': current_bb
                 }
             }
-        }
+            
+        except Exception as e:
+            await self.log(f"Signal calculation error: {str(e)}", level="error")
+            # Return neutral signals on error
+            return {
+                'trend': 0.0,
+                'momentum': 0.0,
+                'strength': 0.0,
+                'indicators': {
+                    'rsi': 50.0,
+                    'macd': {'value': 0.0, 'signal': 0.0, 'histogram': 0.0},
+                    'bb': {
+                        'upper': float(data['close'].iloc[-1]) * 1.02,
+                        'middle': float(data['close'].iloc[-1]),
+                        'lower': float(data['close'].iloc[-1]) * 0.98
+                    }
+                }
+            }
         
     def _calculate_trend_score(self, price: float, ema_short: float, 
                              ema_long: float, bb_middle: float,
@@ -578,12 +611,12 @@ class TechnicalAnalyzer:
             await self.log(f"RSI calculation error: {str(e)}", level="error")
             raise TradingError(f"Failed to calculate RSI: {str(e)}", "ANALYSIS")
 
-    async def calculate_bollinger_bands(self, symbol: str, period: int = 20, std_dev: float = 2.0) -> Dict[str, Any]:
+    async def calculate_bollinger_bands(self, data_or_symbol: Union[pd.DataFrame, str], period: int = 20, std_dev: float = 2.0) -> Dict[str, Any]:
         """
-        Calculate Bollinger Bands for a symbol.
+        Calculate Bollinger Bands for a symbol or price data.
         
         Args:
-            symbol: Trading pair symbol
+            data_or_symbol: Either a DataFrame with price data or a symbol string
             period: Moving average period (default: 20)
             std_dev: Standard deviation multiplier (default: 2.0)
             
@@ -594,14 +627,21 @@ class TechnicalAnalyzer:
             TradingError: If calculation fails
         """
         try:
-            # Get price data from data manager
-            data = await self.data_manager.get_price_data(symbol.upper(), TimeFrame.DAY_1)
+            # Handle both DataFrame and symbol input
+            if isinstance(data_or_symbol, str):
+                # Get price data from data manager
+                data = await self.data_manager.get_price_data(
+                    self.data_manager._format_product_id(data_or_symbol.upper()),
+                    TimeFrame.DAY_1
+                )
+            else:
+                data = data_or_symbol
             
             # Use standardized validation helper
             prices = await self._validate_price_data(
                 data=data,
                 min_periods=period + 1,
-                symbol=symbol,
+                symbol=data_or_symbol if isinstance(data_or_symbol, str) else "price data",
                 indicator="Bollinger Bands"
             )
             
@@ -1098,3 +1138,59 @@ class TechnicalAnalyzer:
                 raise
             await self.log(f"Data validation error: {str(e)}", level="error")
             raise TradingError(f"Failed to validate data: {str(e)}", "DATA")
+
+    def _calculate_macd(self, data: pd.DataFrame) -> Dict[str, pd.Series]:
+        """
+        Calculate MACD indicator.
+        
+        Args:
+            data: Price data DataFrame
+            
+        Returns:
+            Dict containing MACD line, signal line, and histogram
+        """
+        try:
+            # Convert to numeric and handle missing values
+            close = pd.to_numeric(data['close'], errors='coerce')
+            
+            # Calculate EMAs
+            ema12 = close.ewm(span=12, adjust=False).mean()
+            ema26 = close.ewm(span=26, adjust=False).mean()
+            
+            # Calculate MACD line
+            macd_line = ema12 - ema26
+            
+            # Calculate signal line
+            signal_line = macd_line.ewm(span=9, adjust=False).mean()
+            
+            # Calculate histogram
+            histogram = macd_line - signal_line
+            
+            return {
+                'macd': macd_line,
+                'signal': signal_line,
+                'histogram': histogram
+            }
+            
+        except Exception as e:
+            self.trading_bot.log(f"MACD calculation error: {str(e)}", level="error")
+            # Return empty series with same index as input data
+            empty = pd.Series(0, index=data.index)
+            return {'macd': empty, 'signal': empty, 'histogram': empty}
+
+    def _calculate_ema(self, data: pd.Series, period: int) -> pd.Series:
+        """
+        Calculate Exponential Moving Average.
+        
+        Args:
+            data: Price series
+            period: EMA period
+            
+        Returns:
+            Series containing EMA values
+        """
+        try:
+            return data.ewm(span=period, adjust=False).mean()
+        except Exception as e:
+            self.trading_bot.log(f"EMA calculation error: {str(e)}", level="error")
+            return pd.Series(0, index=data.index)
