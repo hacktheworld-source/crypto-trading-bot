@@ -387,9 +387,22 @@ class CommandHandler:
     async def _handle_rsi(self, symbol: str = "BTC-USD") -> str:
         """Get RSI analysis"""
         try:
-            data = await self.trading_bot.data_manager.get_price_data(symbol, TimeFrame.HOUR_1)
-            rsi = await self.trading_bot.technical_analyzer.calculate_rsi(data['close'])
+            # Get price data using data manager
+            data = await self.data_manager.get_price_data(
+                self.data_manager._format_product_id(symbol.upper()),
+                TimeFrame.HOUR_1,
+                limit=30  # Only need recent data for RSI
+            )
             
+            if data is None or len(data) < 15:  # Need at least 15 periods for 14-period RSI
+                return self.message_formatter.format_error(
+                    f"Insufficient data for {symbol}. Need at least 15 periods."
+                )
+            
+            # Calculate RSI
+            rsi = await self.technical_analyzer.calculate_rsi(data['close'])
+            
+            # Get current and previous values
             current_rsi = float(rsi.iloc[-1])
             prev_rsi = float(rsi.iloc[-2])
             rsi_change = current_rsi - prev_rsi
@@ -401,13 +414,18 @@ class CommandHandler:
                 else "Neutral"
             )
             
+            # Format response with emoji indicators
+            trend_emoji = "⬆️" if rsi_change > 0 else "⬇️" if rsi_change < 0 else "➡️"
+            zone_emoji = "🔴" if zone == "Overbought" else "🟢" if zone == "Oversold" else "⚪"
+            
             return (
                 f"**{symbol} RSI Analysis**\n```\n"
-                f"Current RSI: {current_rsi:.1f}\n"
+                f"Current RSI: {current_rsi:.1f} {trend_emoji}\n"
                 f"Change: {rsi_change:+.1f}\n"
-                f"Zone: {zone}\n"
+                f"Zone: {zone} {zone_emoji}\n"
                 "```"
             )
+            
         except Exception as e:
             return self.message_formatter.format_error(str(e))
 
