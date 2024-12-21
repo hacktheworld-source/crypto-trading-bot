@@ -315,8 +315,7 @@ class CommandHandler:
     async def _handle_balance(self) -> str:
         """Get account balance"""
         try:
-            balance = await self.trading_bot.get_account_balance()
-            return f"Account Balance: ${balance:,.2f}"
+            return await self.trading_bot.get_account_balance()
         except Exception as e:
             return self.message_formatter.format_error(str(e))
 
