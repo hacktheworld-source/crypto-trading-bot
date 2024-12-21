@@ -677,58 +677,54 @@ class TradingBot:
             await self.log(f"Exit analysis error: {str(e)}", level="error")
             return False
 
-    async def calculate_performance_metrics(self) -> Dict[str, float]:
-        """Calculate comprehensive trading performance metrics"""
+    async def calculate_performance_metrics(self) -> Dict[str, Any]:
+        """Calculate comprehensive performance metrics."""
         try:
-            closed_positions = self.position_history[-100:]  # Last 100 trades
+            total_trades = len(self.position_history)
+            if total_trades == 0:
+                return {
+                    'total_trades': 0,
+                    'win_rate': 0.0,
+                    'avg_profit': 0.0,
+                    'max_drawdown': 0.0,
+                    'sharpe_ratio': 0.0,
+                    'active_positions': len(self.positions),
+                    'closed_positions': 0
+                }
             
-            if not closed_positions:
-                return {}
-                
-            wins = sum(1 for p in closed_positions if p['total_profit'] > 0)
-            total_trades = len(closed_positions)
+            # Calculate win rate
+            winning_trades = sum(1 for pos in self.position_history if pos['total_profit'] > 0)
+            win_rate = winning_trades / total_trades
+            
+            # Calculate average profit
+            total_profit = sum(pos['total_profit'] for pos in self.position_history)
+            avg_profit = total_profit / total_trades
+            
+            # Calculate max drawdown
+            max_drawdown = await self._calculate_max_drawdown()
+            
+            # Calculate Sharpe ratio
+            returns = [pos['total_profit'] / pos['entry_value'] for pos in self.position_history]
+            if returns:
+                avg_return = sum(returns) / len(returns)
+                std_dev = np.std(returns) if len(returns) > 1 else 0
+                sharpe = (avg_return / std_dev) * np.sqrt(252) if std_dev > 0 else 0
+            else:
+                sharpe = 0
             
             return {
-                'win_rate': wins / total_trades if total_trades > 0 else 0,
-                'avg_profit': sum(p['total_profit'] for p in closed_positions) / total_trades,
-                'sharpe_ratio': await self._calculate_sharpe_ratio(),
-                'max_drawdown': await self._calculate_max_drawdown(),
-                'total_trades': total_trades
+                'total_trades': total_trades,
+                'win_rate': win_rate,
+                'avg_profit': avg_profit,
+                'max_drawdown': max_drawdown,
+                'sharpe_ratio': sharpe,
+                'active_positions': len(self.positions),
+                'closed_positions': len(self.position_history)
             }
             
         except Exception as e:
-            await self.log(f"Metrics calculation error: {str(e)}", level="error")
-            return {}
-
-    async def _calculate_sharpe_ratio(self) -> float:
-        """Calculate Sharpe ratio based on position history"""
-        try:
-            if not self.position_history:
-                return 0.0
-                
-            # Get daily returns
-            daily_returns = []
-            for pos in self.position_history[-100:]:  # Last 100 trades
-                days_held = (pos['exit_time'] - pos['entry_time']).days or 1
-                daily_return = (pos['total_profit'] / (pos['entry_price'] * pos['initial_quantity'])) / days_held
-                daily_returns.append(daily_return)
-                
-            if not daily_returns:
-                return 0.0
-                
-            # Calculate Sharpe ratio
-            returns_array = np.array(daily_returns)
-            avg_return = np.mean(returns_array)
-            std_dev = np.std(returns_array)
-            
-            # Annualize (assuming daily returns)
-            sharpe = (avg_return * 252) / (std_dev * np.sqrt(252))
-            
-            return float(sharpe)
-            
-        except Exception as e:
-            await self.log(f"Sharpe ratio calculation error: {str(e)}", level="error")
-            return 0.0
+            await self.log(f"Performance metrics calculation error: {str(e)}", level="error")
+            return None
 
     async def _calculate_max_drawdown(self) -> float:
         """Calculate maximum drawdown from position history"""
@@ -1040,8 +1036,18 @@ class TradingBot:
     async def _get_live_account_value(self) -> float:
         """Get live trading account value from exchange."""
         try:
-            account = await self.client.get_account()
-            return float(account['available_balance']['value'])
+            # Get list of accounts and find the USD account
+            accounts = self.client.list_accounts()
+            usd_account = next(
+                (acc for acc in accounts if acc.currency == 'USD'),
+                None
+            )
+            
+            if not usd_account:
+                raise TradingError("USD account not found", "ACCOUNT")
+                
+            account = self.client.get_account(usd_account.uuid)
+            return float(account.available_balance.value)
         except Exception as e:
             await self.log(f"Live account value fetch error: {str(e)}", level="error")
             raise TradingError("Failed to get live account value", {"error": str(e)})

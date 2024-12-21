@@ -573,13 +573,19 @@ class CommandHandler:
         """Get performance metrics"""
         try:
             metrics = await self.trading_bot.calculate_performance_metrics()
+            if not metrics:
+                return (
+                    "Performance Metrics:\n```\n"
+                    "No trading history available\n"
+                    "```"
+                )
             return (
                 "Performance Metrics:\n```\n"
-                f"Win Rate: {metrics['win_rate']*100:.1f}%\n"
-                f"Average Profit: ${metrics['avg_profit']:.2f}\n"
-                f"Sharpe Ratio: {metrics['sharpe_ratio']:.2f}\n"
-                f"Max Drawdown: {metrics['max_drawdown']*100:.1f}%\n"
-                f"Total Trades: {metrics['total_trades']}\n"
+                f"Win Rate: {metrics.get('win_rate', 0)*100:.1f}%\n"
+                f"Average Profit: ${metrics.get('avg_profit', 0):.2f}\n"
+                f"Sharpe Ratio: {metrics.get('sharpe_ratio', 0):.2f}\n"
+                f"Max Drawdown: {metrics.get('max_drawdown', 0)*100:.1f}%\n"
+                f"Total Trades: {metrics.get('total_trades', 0)}\n"
                 "```"
             )
         except Exception as e:
