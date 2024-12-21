@@ -534,7 +534,7 @@ class TechnicalAnalyzer:
 
     async def calculate_rsi(self, prices: pd.Series, period: int = None) -> pd.Series:
         """
-        Calculate RSI for a price series.
+        Calculate RSI using Wilder's exact method.
         
         Args:
             prices: Price series data
@@ -574,27 +574,38 @@ class TechnicalAnalyzer:
             gains = delta.where(delta > 0, 0)
             losses = -delta.where(delta < 0, 0)
             
-            # Calculate average gains and losses
-            avg_gains = gains.rolling(window=period, min_periods=period).mean()
-            avg_losses = losses.rolling(window=period, min_periods=period).mean()
+            # First average - simple average for initial period
+            first_avg_gain = gains.iloc[:period].mean()
+            first_avg_loss = losses.iloc[:period].mean()
             
-            # Initialize RS series
-            rs = pd.Series(0, index=prices.index)
+            # Initialize lists for gains and losses
+            avg_gains = [first_avg_gain]
+            avg_losses = [first_avg_loss]
             
-            # Calculate RS where we have valid data
-            valid_mask = (avg_losses != 0) & avg_gains.notna() & avg_losses.notna()
-            rs[valid_mask] = avg_gains[valid_mask] / avg_losses[valid_mask]
+            # Calculate subsequent values using Wilder's smoothing
+            for i in range(period, len(gains)):
+                avg_gain = (avg_gains[-1] * (period - 1) + gains.iloc[i]) / period
+                avg_loss = (avg_losses[-1] * (period - 1) + losses.iloc[i]) / period
+                avg_gains.append(avg_gain)
+                avg_losses.append(avg_loss)
+            
+            # Convert to Series
+            avg_gains_series = pd.Series(avg_gains, index=prices.index[period:])
+            avg_losses_series = pd.Series(avg_losses, index=prices.index[period:])
+            
+            # Calculate RS
+            rs = avg_gains_series / avg_losses_series
             
             # Handle special cases
-            rs[(avg_losses == 0) & (avg_gains != 0)] = 100.0  # All gains
-            rs[(avg_losses == 0) & (avg_gains == 0)] = 0.0    # No movement
+            rs[avg_losses_series == 0] = 100.0  # All gains
+            rs[(avg_losses_series == 0) & (avg_gains_series == 0)] = 0.0  # No movement
             
             # Calculate RSI
             rsi = 100 - (100 / (1 + rs))
             
             # Handle edge cases
-            rsi[avg_gains == 0] = 0    # No gains = oversold
-            rsi[avg_losses == 0] = 100  # No losses = overbought
+            rsi[avg_gains_series == 0] = 0    # No gains = oversold
+            rsi[avg_losses_series == 0] = 100  # No losses = overbought
             
             # Fill any remaining NaN with neutral value
             rsi = rsi.fillna(50)
