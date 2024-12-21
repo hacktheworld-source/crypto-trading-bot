@@ -67,7 +67,6 @@ class CommandHandler:
             'portfolio': self.get_portfolio_analysis,
             'alerts': self.get_risk_alerts,
             'limits': self.show_risk_limits,
-            'analyze': self.analyze_symbol,
             'performance': self.get_performance,
             'set_risk': self.set_stop_loss,
             'set_max_positions': self.set_max_positions,
@@ -76,8 +75,7 @@ class CommandHandler:
             'set_daily_var': self.set_daily_var,
             'set_trailing_stop': self.set_trailing_stop,
             'set_take_profit': self.set_take_profit,
-            'signals': self.get_signals,
-            'analyze_symbol': self.analyze_symbol
+            'signals': self.get_signals
         }
     
     async def handle_command(self, command: str, *args) -> str:
@@ -302,7 +300,6 @@ class CommandHandler:
             "\n  !balance - Show account balances"
             
             "\n\n📊 Analysis Commands:"
-            "\n  !analyze <symbol> - Get detailed technical analysis"
             "\n  !signals - View current signals for watched symbols"
             "\n  !performance - View trading performance metrics"
             "\n  !portfolio - View portfolio analysis and risk metrics"
