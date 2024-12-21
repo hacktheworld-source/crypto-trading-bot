@@ -1037,7 +1037,12 @@ class TechnicalAnalyzer:
             
             # Calculate time range based on timeframe
             end = datetime.now()
-            days = 30 if timeframe == TimeFrame.HOUR_1 else 90
+            # Adjust days to stay under 350 candle limit
+            if timeframe == TimeFrame.HOUR_1:
+                days = 14  # 14 days * 24 hours = 336 candles
+            else:  # DAY_1
+                days = 200  # Daily candles, well under limit
+                
             start = end - timedelta(days=days)
             
             # Get candles with proper formatting
