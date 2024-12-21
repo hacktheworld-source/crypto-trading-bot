@@ -640,7 +640,7 @@ class TradingBot:
         1. Stop loss/take profit levels
         2. Trailing stop
         3. Trend reversal
-        4. Time-based exits
+        4. Risk management
         """
         try:
             current_price = await self.data_manager.get_current_price(position.symbol)
@@ -649,16 +649,26 @@ class TradingBot:
             if await position.should_exit(current_price):
                 return True
             
-            # 2. Check trend reversal
-            analysis = await self.technical_analyzer.analyze_trend(position.symbol)
-            if analysis['trend']['daily'] < 0 and position.unrealized_pnl > 0:
+            # 2. Check trend reversal with multiple timeframes
+            signals = await self.technical_analyzer.get_signals(position.symbol)
+            
+            # Exit on strong trend reversal
+            trend_reversal = (
+                signals['trend']['daily'] < -0.5 and position.side == 'long'
+                or signals['trend']['daily'] > 0.5 and position.side == 'short'
+            )
+            
+            if trend_reversal and position.unrealized_pnl > 0:
                 await self.log(f"Trend reversal exit signal for {position.symbol}", level="info")
                 return True
             
-            # 3. Check holding time
-            max_hold_days = self.config.MAX_POSITION_HOLD_DAYS
-            if (datetime.now() - position.entry_time).days > max_hold_days:
-                await self.log(f"Time-based exit for {position.symbol}", level="info")
+            # 3. Check risk metrics
+            risk_check = await self.risk_manager.check_position_risk(position)
+            if not risk_check['acceptable']:
+                await self.log(
+                    f"Risk-based exit for {position.symbol}: {risk_check['reason']}", 
+                    level="info"
+                )
                 return True
             
             return False

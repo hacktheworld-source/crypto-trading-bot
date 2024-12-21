@@ -38,113 +38,203 @@ class TechnicalAnalyzer:
 
     async def get_signals(self, symbol: str) -> Dict[str, Any]:
         """
-        Get comprehensive trading signals across timeframes.
-        Returns confidence-weighted signals based on multiple indicators.
+        Get trading signals for a symbol.
+        
+        Args:
+            symbol: Trading pair symbol
+            
+        Returns:
+            Dict containing signal analysis for different timeframes
+            
+        Raises:
+            TradingError: If signal generation fails
         """
         try:
-            # Get data for different timeframes using consistent enum access
-            try:
-                daily_data = await self.data_manager.get_price_data(symbol, TimeFrame.DAY_1)
-                hourly_data = await self.data_manager.get_price_data(symbol, TimeFrame.HOUR_1)
-            except DataError as e:
-                await self.log(f"Failed to fetch price data: {str(e)}", level="error")
-                raise TradingError(f"Failed to get price data: {str(e)}", "DATA")
-            except Exception as e:
-                await self.log(f"Unexpected error fetching data: {str(e)}", level="error")
-                raise TradingError(f"Failed to get price data: {str(e)}", "DATA")
+            symbol = self.data_manager._format_product_id(symbol.upper())
             
-            # 1. Daily Analysis (60% weight)
-            try:
-                daily_signals = await self._analyze_timeframe(daily_data, TimeFrame.DAY_1)
-            except Exception as e:
-                await self.log(f"Daily analysis failed: {str(e)}", level="error")
-                raise TradingError(f"Failed to analyze daily timeframe: {str(e)}", "ANALYSIS")
+            # Get data for different timeframes
+            data_1d = await self.data_manager.get_price_data(symbol, TimeFrame.DAY_1)
+            data_4h = await self.data_manager.get_price_data(symbol, TimeFrame.HOUR_4)
+            data_1h = await self.data_manager.get_price_data(symbol, TimeFrame.HOUR_1)
             
-            # 2. Hourly Analysis (40% weight)
-            try:
-                hourly_signals = await self._analyze_timeframe(hourly_data, TimeFrame.HOUR_1)
-            except Exception as e:
-                await self.log(f"Hourly analysis failed: {str(e)}", level="error")
-                raise TradingError(f"Failed to analyze hourly timeframe: {str(e)}", "ANALYSIS")
+            if any(data is None for data in [data_1d, data_4h, data_1h]):
+                raise TradingError("Failed to fetch data for signal generation", "DATA")
+                
+            # Calculate signals for each timeframe
+            signals_1d = self._calculate_timeframe_signals(data_1d, "daily")
+            signals_4h = self._calculate_timeframe_signals(data_4h, "4h")
+            signals_1h = self._calculate_timeframe_signals(data_1h, "1h")
             
-            # 3. Volume Analysis
-            try:
-                volume_confirmed = await self._check_volume_confirmation(symbol)
-            except Exception as e:
-                await self.log(f"Volume analysis failed: {str(e)}", level="error")
-                volume_confirmed = False  # Default to false on error
-            
-            # 4. Support/Resistance
-            try:
-                key_levels = await self._get_key_levels(symbol)
-            except Exception as e:
-                await self.log(f"Key levels analysis failed: {str(e)}", level="error")
-                key_levels = {'support': [], 'resistance': []}  # Use empty lists on error
-            
-            # Combine signals with weights from timeframe config
-            confidence = (
-                daily_signals['strength'] * self.timeframes[TimeFrame.DAY_1]['weight'] +
-                hourly_signals['strength'] * self.timeframes[TimeFrame.HOUR_1]['weight']
-            ) * (1 if volume_confirmed else 0.5)
+            # Calculate trend alignment
+            trend_alignment = self._calculate_trend_alignment(
+                signals_1d['trend'],
+                signals_4h['trend'],
+                signals_1h['trend']
+            )
             
             return {
-                'trend': {
-                    'daily': daily_signals['trend'],
-                    'hourly': hourly_signals['trend'],
-                    'aligned': daily_signals['trend'] == hourly_signals['trend']
-                },
-                'volume_confirmed': volume_confirmed,
-                'key_levels': key_levels,
-                'confidence': confidence,
                 'signals': {
-                    'daily': daily_signals,
-                    'hourly': hourly_signals
+                    'daily': signals_1d,
+                    '4h': signals_4h,
+                    '1h': signals_1h
+                },
+                'trend': {
+                    'daily': signals_1d['trend'],
+                    '4h': signals_4h['trend'],
+                    '1h': signals_1h['trend'],
+                    'aligned': trend_alignment['aligned'],
+                    'strength': trend_alignment['strength']
                 }
             }
             
         except Exception as e:
-            if isinstance(e, TradingError):
-                raise
             await self.log(f"Signal generation error: {str(e)}", level="error")
             raise TradingError(f"Failed to generate signals: {str(e)}", "ANALYSIS")
-
-    async def _analyze_timeframe(self, data: pd.DataFrame, timeframe: TimeFrame) -> Dict[str, Any]:
-        """Analyze single timeframe and return weighted signals"""
-        try:
-            # Calculate core indicators
-            ma_fast = data['close'].rolling(self.settings['ma_fast']).mean()
-            ma_slow = data['close'].rolling(self.settings['ma_slow']).mean()
-            rsi = await self.calculate_rsi(data['close'])
-            volume = data['volume'].rolling(self.settings['volume_ma']).mean()
             
-            # Get weights from config
-            weight = self.timeframes[timeframe]['weight']
+    def _calculate_timeframe_signals(self, data: pd.DataFrame, timeframe: str) -> Dict[str, Any]:
+        """
+        Calculate technical signals for a specific timeframe.
+        
+        Args:
+            data: Price data
+            timeframe: Timeframe identifier
             
-            # Generate signals - use proper pandas comparison
-            trend_signal = 1 if ma_fast.iloc[-1] > ma_slow.iloc[-1] else -1
-            trend_strength = abs(ma_fast.iloc[-1] - ma_slow.iloc[-1]) / ma_slow.iloc[-1]
-            
-            momentum_signal = 1 if rsi.iloc[-1] > 50 else -1
-            volume_signal = 1 if data['volume'].iloc[-1] > volume.iloc[-1] else -1
-            
-            # Combine weighted signals
-            signal = {
-                'trend': trend_signal * trend_strength * weight,
-                'momentum': momentum_signal * weight,
-                'volume': volume_signal * weight,
-                'indicators': {
-                    'rsi': float(rsi.iloc[-1]),
-                    'ma_fast': float(ma_fast.iloc[-1]),
-                    'ma_slow': float(ma_slow.iloc[-1]),
-                    'volume_ratio': float(data['volume'].iloc[-1] / volume.iloc[-1])
+        Returns:
+            Dict containing signal analysis
+        """
+        # Calculate technical indicators
+        rsi = self._calculate_rsi(data)
+        macd = self._calculate_macd(data)
+        bb = self._calculate_bollinger_bands(data)
+        ema_short = self._calculate_ema(data, 9)
+        ema_long = self._calculate_ema(data, 21)
+        
+        # Get latest values
+        current_price = float(data['close'].iloc[-1])
+        current_rsi = float(rsi.iloc[-1])
+        current_macd = float(macd['macd'].iloc[-1])
+        current_signal = float(macd['signal'].iloc[-1])
+        
+        # Calculate trend
+        trend_score = self._calculate_trend_score(
+            current_price,
+            ema_short.iloc[-1],
+            ema_long.iloc[-1],
+            bb['middle'].iloc[-1],
+            current_macd,
+            current_rsi
+        )
+        
+        # Calculate momentum
+        momentum_score = self._calculate_momentum_score(
+            current_rsi,
+            current_macd,
+            current_signal,
+            data
+        )
+        
+        # Determine signal strength
+        signal_strength = abs(trend_score + momentum_score) / 2
+        
+        return {
+            'trend': trend_score,
+            'momentum': momentum_score,
+            'strength': signal_strength,
+            'indicators': {
+                'rsi': current_rsi,
+                'macd': {
+                    'value': current_macd,
+                    'signal': current_signal,
+                    'histogram': float(macd['histogram'].iloc[-1])
+                },
+                'bb': {
+                    'upper': float(bb['upper'].iloc[-1]),
+                    'middle': float(bb['middle'].iloc[-1]),
+                    'lower': float(bb['lower'].iloc[-1])
                 }
             }
+        }
+        
+    def _calculate_trend_score(self, price: float, ema_short: float, 
+                             ema_long: float, bb_middle: float,
+                             macd: float, rsi: float) -> float:
+        """
+        Calculate trend score based on multiple indicators.
+        
+        Returns:
+            Float between -1 and 1 indicating trend strength and direction
+        """
+        # Initialize score components
+        ema_score = 1 if price > ema_short > ema_long else -1 if price < ema_short < ema_long else 0
+        bb_score = 1 if price > bb_middle else -1 if price < bb_middle else 0
+        macd_score = 1 if macd > 0 else -1 if macd < 0 else 0
+        rsi_score = 1 if rsi > 60 else -1 if rsi < 40 else 0
+        
+        # Weight and combine scores
+        weighted_score = (
+            ema_score * 0.4 +
+            bb_score * 0.2 +
+            macd_score * 0.2 +
+            rsi_score * 0.2
+        )
+        
+        return max(-1.0, min(1.0, weighted_score))
+        
+    def _calculate_momentum_score(self, rsi: float, macd: float, 
+                                signal: float, data: pd.DataFrame) -> float:
+        """
+        Calculate momentum score based on multiple indicators.
+        
+        Returns:
+            Float between -1 and 1 indicating momentum strength and direction
+        """
+        # RSI momentum
+        rsi_score = 0
+        if rsi > 70:
+            rsi_score = -1
+        elif rsi < 30:
+            rsi_score = 1
+        else:
+            rsi_score = (rsi - 50) / 20  # Scaled score between -1 and 1
             
-            return signal
-            
-        except Exception as e:
-            await self.log(f"Timeframe analysis error: {str(e)}", level="error")
-            raise TradingError(f"Timeframe analysis failed: {str(e)}", "ANALYSIS")
+        # MACD momentum
+        macd_score = 1 if macd > signal else -1 if macd < signal else 0
+        
+        # Price momentum (using returns)
+        returns = data['close'].pct_change()
+        recent_returns = returns.iloc[-3:]  # Last 3 periods
+        momentum_score = np.sign(recent_returns.mean()) * min(1.0, abs(recent_returns.mean() * 100))
+        
+        # Combine scores with weights
+        weighted_score = (
+            rsi_score * 0.4 +
+            macd_score * 0.3 +
+            momentum_score * 0.3
+        )
+        
+        return max(-1.0, min(1.0, weighted_score))
+        
+    def _calculate_trend_alignment(self, daily_trend: float, h4_trend: float, 
+                                 h1_trend: float) -> Dict[str, Any]:
+        """
+        Calculate trend alignment across timeframes.
+        
+        Returns:
+            Dict containing alignment analysis
+        """
+        # Check if trends are aligned (same direction)
+        trends = [daily_trend, h4_trend, h1_trend]
+        all_positive = all(t > 0 for t in trends)
+        all_negative = all(t < 0 for t in trends)
+        
+        # Calculate alignment strength
+        strength = abs(sum(trends) / 3)  # Average magnitude
+        
+        return {
+            'aligned': all_positive or all_negative,
+            'strength': strength,
+            'direction': 'bullish' if all_positive else 'bearish' if all_negative else 'mixed'
+        }
 
     def _combine_signals(self, signals: Dict[str, Dict]) -> Dict[str, Any]:
         """Combine signals from all timeframes into one decision"""
@@ -304,30 +394,62 @@ class TechnicalAnalyzer:
             return []
 
     def _analyze_volume_trend(self, data: pd.DataFrame) -> Dict[str, Any]:
-        """Analyze volume trend and characteristics"""
-        try:
-            volume_ma = data['volume'].rolling(self.settings['volume_ma']).mean()
-            current_volume = data['volume'].iloc[-1]
-            avg_volume = volume_ma.iloc[-1]
+        """
+        Analyze volume trend using multiple metrics.
+        
+        Args:
+            data: Price and volume data
             
-            # Calculate trend
-            volume_change = (current_volume - avg_volume) / avg_volume
-            
-            return {
-                'trend': 'increasing' if volume_change > 0.1 else 'decreasing' if volume_change < -0.1 else 'neutral',
-                'strength': abs(volume_change),
-                'current_ratio': current_volume / avg_volume,
-                'is_above_average': current_volume > avg_volume
-            }
-            
-        except Exception as e:
-            self.trading_bot.log(f"Volume trend analysis error: {str(e)}", level="error")
-            return {
-                'trend': 'neutral',
-                'strength': 0,
-                'current_ratio': 1,
-                'is_above_average': False
-            }
+        Returns:
+            Dict containing volume analysis
+        """
+        # Calculate volume metrics
+        volume = data['volume']
+        volume_ma = volume.rolling(window=20).mean()
+        volume_std = volume.rolling(window=20).std()
+        
+        # Get recent volume data
+        current_volume = volume.iloc[-1]
+        recent_volumes = volume.iloc[-5:]  # Last 5 periods
+        
+        # Calculate z-score
+        z_score = (current_volume - float(volume_ma.iloc[-1])) / float(volume_std.iloc[-1])
+        
+        # Calculate trend
+        volume_trend = recent_volumes.mean() / float(volume_ma.iloc[-1])
+        
+        # Determine volume characteristics
+        is_favorable = volume_trend > 1.0 and z_score > -1.0
+        
+        # Score from -1 to 1
+        score = min(1.0, max(-1.0, z_score / 2))
+        
+        # Get descriptive strength
+        if abs(z_score) > 2:
+            strength = "Very High" if z_score > 0 else "Very Low"
+        elif abs(z_score) > 1:
+            strength = "High" if z_score > 0 else "Low"
+        else:
+            strength = "Average"
+        
+        # Get trend description
+        if volume_trend > 1.2:
+            description = "Strongly Increasing"
+        elif volume_trend > 1.0:
+            description = "Moderately Increasing"
+        elif volume_trend < 0.8:
+            description = "Strongly Decreasing"
+        elif volume_trend < 1.0:
+            description = "Moderately Decreasing"
+        else:
+            description = "Stable"
+        
+        return {
+            'score': score,
+            'strength': strength,
+            'description': description,
+            'is_favorable': is_favorable
+        }
 
     def _calculate_pivot_points(self, data: pd.DataFrame) -> Dict[str, List[float]]:
         """Calculate pivot points and support/resistance levels"""
@@ -400,13 +522,6 @@ class TechnicalAnalyzer:
             if period is None:
                 period = self.rsi_period
                 
-            # Validate input
-            if len(prices) < period + 1:
-                raise TradingError(
-                    f"Insufficient data for RSI calculation. Need at least {period + 1} data points.", 
-                    "ANALYSIS"
-                )
-                
             # Ensure we have a pandas Series
             if not isinstance(prices, pd.Series):
                 prices = pd.Series(prices)
@@ -416,6 +531,13 @@ class TechnicalAnalyzer:
             
             # Drop any NaN values
             prices = prices.dropna()
+            
+            # Validate data length
+            if len(prices) < period + 1:
+                raise TradingError(
+                    f"Insufficient data for RSI calculation. Need at least {period + 1} data points.",
+                    "ANALYSIS"
+                )
             
             # Calculate price changes
             delta = prices.diff()
@@ -428,8 +550,8 @@ class TechnicalAnalyzer:
             avg_gains = gains.rolling(window=period, min_periods=period).mean()
             avg_losses = losses.rolling(window=period, min_periods=period).mean()
             
-            # Calculate RS and RSI with proper handling of edge cases
-            rs = pd.Series(0, index=prices.index)  # Initialize with zeros
+            # Initialize RS series
+            rs = pd.Series(0, index=prices.index)
             
             # Calculate RS where we have valid data
             valid_mask = (avg_losses != 0) & avg_gains.notna() & avg_losses.notna()
@@ -445,11 +567,19 @@ class TechnicalAnalyzer:
             # Handle edge cases
             rsi[avg_gains == 0] = 0    # No gains = oversold
             rsi[avg_losses == 0] = 100  # No losses = overbought
-            rsi = rsi.fillna(50)        # Fill any remaining NaN with neutral
+            
+            # Fill any remaining NaN with neutral value
+            rsi = rsi.fillna(50)
+            
+            # Validate final output
+            if pd.isna(rsi.iloc[-1]):
+                raise TradingError("Invalid RSI calculation result", "ANALYSIS")
             
             return rsi
             
         except Exception as e:
+            if isinstance(e, TradingError):
+                raise
             await self.log(f"RSI calculation error: {str(e)}", level="error")
             raise TradingError(f"Failed to calculate RSI: {str(e)}", "ANALYSIS")
 
@@ -472,24 +602,15 @@ class TechnicalAnalyzer:
             # Get price data from data manager
             data = await self.data_manager.get_price_data(symbol.upper(), TimeFrame.DAY_1)
             
-            # Validate input data
-            if data is None or len(data) < period + 1:
-                raise TradingError(
-                    f"Insufficient data for Bollinger Bands calculation. Need at least {period + 1} data points.",
-                    "ANALYSIS"
-                )
+            # Use standardized validation helper
+            prices = await self._validate_price_data(
+                data=data,
+                min_periods=period + 1,
+                symbol=symbol,
+                indicator="Bollinger Bands"
+            )
             
-            # Convert to numeric and handle missing values
-            prices = pd.to_numeric(data['close'], errors='coerce')
-            prices = prices.dropna()
-            
-            if len(prices) < period + 1:
-                raise TradingError(
-                    f"Insufficient valid price data after cleaning. Need at least {period + 1} points.",
-                    "ANALYSIS"
-                )
-            
-            # Calculate bands
+            # Calculate bands with proper minimum periods
             ma = prices.rolling(window=period, min_periods=period).mean()
             std = prices.rolling(window=period, min_periods=period).std()
             
@@ -500,28 +621,33 @@ class TechnicalAnalyzer:
             bandwidth = ((upper - lower) / ma) * 100
             percent_b = (prices - lower) / (upper - lower) * 100
             
-            # Get latest values
-            latest_upper = float(upper.iloc[-1])
-            latest_middle = float(ma.iloc[-1])
-            latest_lower = float(lower.iloc[-1])
-            latest_bandwidth = float(bandwidth.iloc[-1])
-            latest_percent_b = float(percent_b.iloc[-1])
+            # Get latest values with proper error handling
+            try:
+                latest_values = {
+                    'upper': float(upper.iloc[-1]),
+                    'middle': float(ma.iloc[-1]),
+                    'lower': float(lower.iloc[-1]),
+                    'bandwidth': float(bandwidth.iloc[-1]),
+                    'percent_b': float(percent_b.iloc[-1])
+                }
+            except (IndexError, ValueError) as e:
+                raise TradingError(f"Failed to get latest values: {str(e)}", "ANALYSIS")
             
             # Validate output
-            if any(pd.isna([latest_upper, latest_middle, latest_lower, latest_bandwidth, latest_percent_b])):
+            if any(pd.isna(val) for val in latest_values.values()):
                 raise TradingError("Invalid results in Bollinger Bands calculation", "ANALYSIS")
             
-            return {
-                'upper': latest_upper,
-                'middle': latest_middle,
-                'lower': latest_lower,
-                'bandwidth': latest_bandwidth,
-                'percent_b': latest_percent_b,
-                'volatility': 'High' if latest_bandwidth > 5 else 'Normal',
-                'signal': self._get_bb_signal(latest_percent_b)
-            }
+            # Add analysis components
+            latest_values.update({
+                'volatility': 'High' if latest_values['bandwidth'] > 5 else 'Normal',
+                'signal': self._get_bb_signal(latest_values['percent_b'])
+            })
+            
+            return latest_values
             
         except Exception as e:
+            if isinstance(e, TradingError):
+                raise
             await self.log(f"Bollinger Bands calculation error: {str(e)}", level="error")
             raise TradingError(f"Failed to calculate Bollinger Bands: {str(e)}", "ANALYSIS")
             
@@ -539,44 +665,81 @@ class TechnicalAnalyzer:
             return "Neutral"
 
     async def get_ma_analysis(self, symbol: str) -> str:
-        """Get moving average analysis for a symbol"""
+        """
+        Get moving average analysis for a symbol.
+        
+        Args:
+            symbol: Trading pair symbol
+            
+        Returns:
+            str: Formatted MA analysis
+            
+        Raises:
+            TradingError: If calculation fails
+        """
         try:
-            # Get price data
-            data = await self.get_price_data(symbol.upper(), TimeFrame.DAY_1)
-            prices = pd.to_numeric(data['close'], errors='coerce')
+            # Get price data from data manager
+            data = await self.data_manager.get_price_data(symbol.upper(), TimeFrame.DAY_1)
             
-            # Calculate MAs
-            ma_fast = prices.rolling(window=self.settings['ma_fast']).mean()
-            ma_slow = prices.rolling(window=self.settings['ma_slow']).mean()
+            # Use standardized validation helper
+            prices = await self._validate_price_data(
+                data=data,
+                min_periods=self.settings['ma_slow'] + 1,
+                symbol=symbol,
+                indicator="Moving Average"
+            )
             
-            # Get current values
-            current_price = float(prices.iloc[-1])
-            fast_ma = float(ma_fast.iloc[-1])
-            slow_ma = float(ma_slow.iloc[-1])
+            # Calculate MAs with proper minimum periods
+            ma_fast = prices.rolling(window=self.settings['ma_fast'], min_periods=self.settings['ma_fast']).mean()
+            ma_slow = prices.rolling(window=self.settings['ma_slow'], min_periods=self.settings['ma_slow']).mean()
             
-            # Determine trend
-            trend = "Bullish" if fast_ma > slow_ma else "Bearish"
-            strength = abs(fast_ma - slow_ma) / slow_ma * 100
+            # Get latest values with proper error handling
+            try:
+                latest_values = {
+                    'current_price': float(prices.iloc[-1]),
+                    'fast_ma': float(ma_fast.iloc[-1]),
+                    'slow_ma': float(ma_slow.iloc[-1])
+                }
+            except (IndexError, ValueError) as e:
+                raise TradingError(f"Failed to get latest values: {str(e)}", "ANALYSIS")
             
-            # Price position
-            above_fast = current_price > fast_ma
-            above_slow = current_price > slow_ma
+            # Validate results
+            if any(pd.isna(val) for val in latest_values.values()):
+                raise TradingError("Invalid results in MA calculation", "ANALYSIS")
+            
+            # Calculate trend and strength
+            trend = "Bullish" if latest_values['fast_ma'] > latest_values['slow_ma'] else "Bearish"
+            strength = abs(latest_values['fast_ma'] - latest_values['slow_ma']) / latest_values['slow_ma'] * 100
+            
+            # Calculate price position
+            above_fast = latest_values['current_price'] > latest_values['fast_ma']
+            above_slow = latest_values['current_price'] > latest_values['slow_ma']
+            
+            # Add trend emoji
+            trend_emoji = "🟢" if trend == "Bullish" else "🔴"
+            
+            # Calculate momentum
+            momentum = "Strong" if strength > 5 else \
+                      "Moderate" if strength > 2 else \
+                      "Weak"
             
             return (
                 f"Moving Average Analysis for {symbol}:\n```"
                 f"📊 Price Levels:\n"
-                f"  • Current Price: ${current_price:,.2f}\n"
-                f"  • Fast MA ({self.settings['ma_fast']}): ${fast_ma:,.2f}\n"
-                f"  • Slow MA ({self.settings['ma_slow']}): ${slow_ma:,.2f}\n\n"
+                f"  • Current Price: ${latest_values['current_price']:,.2f}\n"
+                f"  • Fast MA ({self.settings['ma_fast']}): ${latest_values['fast_ma']:,.2f}\n"
+                f"  • Slow MA ({self.settings['ma_slow']}): ${latest_values['slow_ma']:,.2f}\n\n"
                 f"📈 Trend Analysis:\n"
-                f"  • Direction: {trend}\n"
-                f"  • Strength: {strength:.1f}%\n"
+                f"  • Direction: {trend} {trend_emoji}\n"
+                f"  • Strength: {strength:.1f}% ({momentum})\n"
                 f"  • Price > Fast MA: {'Yes ✅' if above_fast else 'No ❌'}\n"
                 f"  • Price > Slow MA: {'Yes ✅' if above_slow else 'No ❌'}"
                 "```"
             )
             
         except Exception as e:
+            if isinstance(e, TradingError):
+                raise
             await self.log(f"MA analysis error: {str(e)}", level="error")
             raise TradingError(f"Failed to get MA analysis: {str(e)}", "ANALYSIS")
 
@@ -622,13 +785,13 @@ class TechnicalAnalyzer:
             current_price = float(data['close'].iloc[-1])
             atr = self._calculate_atr(data, period=14)
             
-            # Calculate market activity score
+            # Calculate volume analysis
             volume_ma = data['volume'].rolling(window=20).mean()
             current_volume = float(data['volume'].iloc[-1])
             volume_ratio = current_volume / float(volume_ma.iloc[-1])
             
-            # Check if volume is above average
-            is_high_volume = volume_ratio > 1.2
+            # Volume trend analysis (more sophisticated than just high/low)
+            volume_trend = self._analyze_volume_trend(data)
             
             # Get market alignment
             signals = await self.get_signals(symbol)
@@ -638,7 +801,7 @@ class TechnicalAnalyzer:
             strength = {
                 'trend': signals['trend']['daily'],
                 'momentum': signals['signals']['daily']['momentum'],
-                'volume': 1 if is_high_volume else -1
+                'volume': volume_trend['score']  # Use volume trend score
             }
             
             # Overall market score (-1 to 1)
@@ -661,14 +824,15 @@ class TechnicalAnalyzer:
                 },
                 'volume': {
                     'ratio': float(volume_ratio),
-                    'is_high': is_high_volume
+                    'trend': volume_trend['description'],
+                    'strength': volume_trend['strength']
                 },
                 'market_alignment': {
                     'aligned': market_aligned,
                     'score': float(market_score)
                 },
                 'trading_summary': {
-                    'suitable': not is_volatile and market_aligned and is_high_volume,
+                    'suitable': not is_volatile and market_aligned and volume_trend['is_favorable'],
                     'confidence': abs(market_score),
                     'recommendation': self._get_market_recommendation(market_score, is_volatile)
                 }
@@ -804,12 +968,138 @@ class TechnicalAnalyzer:
             await self.log(f"Full analysis error: {str(e)}", level="error")
             raise TradingError(f"Failed to get full analysis: {str(e)}", "ANALYSIS")
 
+    def _get_coinbase_granularity(self, timeframe: TimeFrame) -> str:
+        """
+        Get properly formatted Coinbase granularity string.
+        
+        Args:
+            timeframe: TimeFrame enum value
+            
+        Returns:
+            str: Coinbase API granularity string
+            
+        Raises:
+            ValidationError: If timeframe is invalid
+        """
+        granularity_map = {
+            TimeFrame.HOUR_1: "ONE_HOUR",
+            TimeFrame.DAY_1: "ONE_DAY"
+        }
+        
+        if timeframe not in granularity_map:
+            raise ValidationError(f"Invalid timeframe: {timeframe}")
+            
+        return granularity_map[timeframe]
+        
     async def get_price_data(self, symbol: str, timeframe: TimeFrame) -> pd.DataFrame:
         """Get price data with proper error handling and validation"""
         try:
-            # Use data manager's get_price_data instead of direct API call
-            return await self.data_manager.get_price_data(symbol, timeframe)
+            # Format symbol
+            symbol = self.data_manager._format_product_id(symbol.upper())
+            
+            # Get proper granularity
+            granularity = self._get_coinbase_granularity(timeframe)
+            
+            # Calculate time range based on timeframe
+            end = datetime.now()
+            days = 30 if timeframe == TimeFrame.HOUR_1 else 90
+            start = end - timedelta(days=days)
+            
+            # Get candles with proper formatting
+            response = self.client.get_candles(
+                product_id=symbol,
+                start=int(start.timestamp()),
+                end=int(end.timestamp()),
+                granularity=granularity
+            )
+            
+            if not response or not response.candles:
+                raise DataError(f"No data returned for {symbol}")
+            
+            # Process candle data
+            candles_data = []
+            for candle in response.candles:
+                try:
+                    candles_data.append({
+                        'timestamp': datetime.fromtimestamp(float(candle.start)),
+                        'open': float(candle.open),
+                        'high': float(candle.high),
+                        'low': float(candle.low),
+                        'close': float(candle.close),
+                        'volume': float(candle.volume)
+                    })
+                except (ValueError, AttributeError) as e:
+                    await self.log(f"Error processing candle: {str(e)}", level="error")
+                    continue
+            
+            if not candles_data:
+                raise DataError(f"Failed to process any candle data for {symbol}")
+            
+            # Create DataFrame and validate
+            df = pd.DataFrame(candles_data)
+            df = df.sort_values('timestamp')
+            df.set_index('timestamp', inplace=True)
+            
+            return df
             
         except Exception as e:
             await self.log(f"Failed to get price data: {str(e)}", level="error")
             raise TradingError(f"Failed to get price data: {str(e)}", "DATA")
+
+    async def _validate_price_data(
+        self, 
+        data: pd.DataFrame, 
+        min_periods: int,
+        symbol: str,
+        indicator: str
+    ) -> pd.Series:
+        """
+        Validate and clean price data for indicator calculations.
+        
+        Args:
+            data: Raw price data DataFrame
+            min_periods: Minimum required periods
+            symbol: Symbol being analyzed
+            indicator: Name of indicator for error messages
+            
+        Returns:
+            pd.Series: Cleaned and validated price series
+            
+        Raises:
+            TradingError: If data validation fails
+        """
+        try:
+            # Check for None or empty DataFrame
+            if data is None or data.empty:
+                raise TradingError(
+                    f"No data available for {symbol}",
+                    "DATA"
+                )
+            
+            # Check minimum length
+            if len(data) < min_periods:
+                raise TradingError(
+                    f"Insufficient data for {indicator} calculation. "
+                    f"Need at least {min_periods} data points, got {len(data)}.",
+                    "ANALYSIS"
+                )
+            
+            # Convert to numeric and handle missing values
+            prices = pd.to_numeric(data['close'], errors='coerce')
+            prices = prices.dropna()
+            
+            # Validate after cleaning
+            if len(prices) < min_periods:
+                raise TradingError(
+                    f"Insufficient valid price data after cleaning for {indicator}. "
+                    f"Need at least {min_periods} points, got {len(prices)}.",
+                    "ANALYSIS"
+                )
+            
+            return prices
+            
+        except Exception as e:
+            if isinstance(e, TradingError):
+                raise
+            await self.log(f"Data validation error: {str(e)}", level="error")
+            raise TradingError(f"Failed to validate data: {str(e)}", "DATA")

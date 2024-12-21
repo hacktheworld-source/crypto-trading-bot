@@ -37,7 +37,7 @@ A professional-grade cryptocurrency trading bot that combines technical analysis
    - Technical: Trend reversal
    - Risk: Stop loss hit
    - Profit: Trailing stop triggered
-   - Time: Max holding period exceeded
+   - Risk Management: Position risk exceeds threshold
 
 ## System Architecture
 
@@ -54,41 +54,34 @@ A professional-grade cryptocurrency trading bot that combines technical analysis
 ### Timeframe Analysis
 ```python
 timeframes = {
-    '1h': {'weight': 0.4},  # Entry timing and momentum
-    '1d': {'weight': 0.6}   # Overall trend direction
+    '1h': {'weight': 0.4},  # Short-term momentum and volatility
+    '4h': {'weight': 0.3},  # Medium-term trend confirmation
+    '1d': {'weight': 0.3}   # Long-term market structure
 }
 ```
 
-#### Daily Analysis (60%)
-- Determines overall trend direction
-- Sets trading bias (long/short/neutral)
-- Identifies key support/resistance
+### Multi-Timeframe Analysis
+- **Daily Analysis (30%)**
+  - Market structure and key levels
+  - Long-term trend direction
+  - Support/resistance zones
 
-#### Hourly Analysis (40%)
-- Entry and exit timing
-- Volume confirmation
-- Short-term momentum
+- **4-Hour Analysis (30%)**
+  - Trend confirmation
+  - Market momentum
+  - Volume patterns
+
+- **Hourly Analysis (40%)**
+  - Entry/exit timing
+  - Short-term momentum
+  - Volume confirmation
 
 ### Signal Generation and Analysis
 Each timeframe analysis produces:
-- Trend Direction: Moving Average Crossovers (20/50)
-- Momentum: RSI as confirmation only
-- Volume Profile: Relative to 20-period average
-- Support/Resistance: Key price levels
-- Final Confidence Score: Weighted combination
-
-Example Signal:
-```python
-{
-    'symbol': 'BTC',
-    'action': 'buy',
-    'confidence': 0.75,
-    'signals': {
-        '1d': {'trend': 1, 'momentum': 0.7, 'volume': 1.1},  # Trend bias
-        '1h': {'trend': 1, 'momentum': 0.8, 'volume': 1.2}   # Entry timing
-    }
-}
-```
+- Trend Direction: EMA Crossovers (9/21)
+- Momentum: RSI and MACD
+- Volume Profile: Z-score and trend analysis
+- Volatility: ATR and Bollinger Bands
 
 ### Signal Weighting
 ```python

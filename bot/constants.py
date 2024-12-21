@@ -3,8 +3,9 @@ from enum import Enum
 
 class TimeFrame(Enum):
     """Trading timeframes supported by Coinbase"""
-    HOUR_1 = "ONE_HOUR"    # Short-term analysis
-    DAY_1 = "ONE_DAY"      # Long-term trend
+    HOUR_1 = "ONE_HOUR"    # Short-term momentum
+    HOUR_4 = "FOUR_HOURS"  # Medium-term trend
+    DAY_1 = "ONE_DAY"      # Long-term structure
 
 class TradingConstants:
     """Trading-related constants"""
@@ -24,22 +25,24 @@ class TradingConstants:
     # Cache settings
     CACHE_SIZE = 1000
     CACHE_TTL = {
-        TimeFrame.HOUR_1: 1800,     # 30 minutes
-        TimeFrame.DAY_1: 21600      # 6 hours
+        TimeFrame.HOUR_1: 300,      # 5 minutes
+        TimeFrame.HOUR_4: 900,      # 15 minutes
+        TimeFrame.DAY_1: 3600       # 1 hour
     }
     
     # Technical Analysis
     RSI_PERIOD = 14
     RSI_OVERBOUGHT = 70
     RSI_OVERSOLD = 30
-    MA_FAST = 20
-    MA_SLOW = 50
+    EMA_SHORT = 9
+    EMA_LONG = 21
     VOLUME_MA = 20
     
     # Timeframe weights for analysis
     TIMEFRAMES = {
-        TimeFrame.DAY_1: {'weight': 0.6, 'periods': 90},  # Daily for trend direction
-        TimeFrame.HOUR_1: {'weight': 0.4, 'periods': 24}  # Hourly for entry timing
+        TimeFrame.DAY_1: {'weight': 0.3, 'periods': 90},   # Market structure
+        TimeFrame.HOUR_4: {'weight': 0.3, 'periods': 60},  # Trend confirmation
+        TimeFrame.HOUR_1: {'weight': 0.4, 'periods': 48}   # Entry timing
     }
     
     # Risk Management
@@ -58,7 +61,7 @@ class TradingConstants:
     MAX_PORTFOLIO_USAGE = 0.8  # 80% max usage
     POSITION_SIZE_INCREMENT = 0.25  # 25% position size steps
     
-    # Fees
+    # Fees (Coinbase Advanced Trade)
     MAKER_FEE = 0.004  # 0.4%
     TAKER_FEE = 0.006  # 0.6%
     
