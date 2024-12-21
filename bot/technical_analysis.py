@@ -60,8 +60,8 @@ class TechnicalAnalyzer:
                 raise TradingError("Failed to fetch data for signal generation", "DATA")
                 
             # Calculate signals for each timeframe
-            signals_1d = self._calculate_timeframe_signals(data_1d, "daily")
-            signals_1h = self._calculate_timeframe_signals(data_1h, "1h")
+            signals_1d = await self._calculate_timeframe_signals(data_1d, "daily")
+            signals_1h = await self._calculate_timeframe_signals(data_1h, "1h")
             
             # Calculate trend alignment
             trend_alignment = self._calculate_trend_alignment(
@@ -86,7 +86,7 @@ class TechnicalAnalyzer:
             await self.log(f"Signal generation error: {str(e)}", level="error")
             raise TradingError(f"Failed to generate signals: {str(e)}", "ANALYSIS")
             
-    def _calculate_timeframe_signals(self, data: pd.DataFrame, timeframe: str) -> Dict[str, Any]:
+    async def _calculate_timeframe_signals(self, data: pd.DataFrame, timeframe: str) -> Dict[str, Any]:
         """
         Calculate technical signals for a specific timeframe.
         
@@ -99,9 +99,9 @@ class TechnicalAnalyzer:
         """
         try:
             # Calculate technical indicators
-            rsi = self._calculate_rsi(data)
+            rsi = await self.calculate_rsi(data['close'])
             macd = self._calculate_macd(data)
-            bb = self._calculate_bollinger_bands(data)
+            bb = await self.calculate_bollinger_bands(data)
             ema_short = self._calculate_ema(data['close'], 9)
             ema_long = self._calculate_ema(data['close'], 21)
             
@@ -127,7 +127,7 @@ class TechnicalAnalyzer:
                         'lower': current_price * 0.98
                     }
             except (IndexError, ValueError, KeyError, AttributeError) as e:
-                await self.log(f"Error getting latest values: {str(e)}", level="error")
+                self.trading_bot.log(f"Error getting latest values: {str(e)}", level="error")
                 raise TradingError("Failed to get latest indicator values", "ANALYSIS")
             
             # Calculate trend
@@ -167,7 +167,7 @@ class TechnicalAnalyzer:
             }
             
         except Exception as e:
-            await self.log(f"Signal calculation error: {str(e)}", level="error")
+            self.trading_bot.log(f"Signal calculation error: {str(e)}", level="error")
             # Return neutral signals on error
             return {
                 'trend': 0.0,
