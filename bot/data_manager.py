@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 import asyncio
 from coinbase.rest import RESTClient
 from bot.exceptions import TradingError, DataError
-from bot.constants import TimeFrame
+from bot.constants import TimeFrame, TradingConstants
 import time
 
 class DataManager:
@@ -83,41 +83,11 @@ class DataManager:
         timeframe: TimeFrame,
         periods: Optional[int] = None
     ) -> pd.DataFrame:
-        """Get price data for specified timeframe with caching"""
-        try:
-            symbol = self._format_product_id(symbol)
-            cache_key = f"{symbol}_{timeframe.name}"
-            
-            async with self._cache_lock:
-                # Check cache first
-                if cache_key in self._cache:
-                    data, timestamp = self._cache[cache_key]
-                    if (time.time() - timestamp) < self.trading_bot.config.CACHE_TTL[timeframe]:
-                        return data
-                    
-                # Fetch new data
-                data = await self._fetch_price_data(symbol, timeframe, periods)
-                
-                # Update cache
-                self._cache[cache_key] = (data, time.time())
-                
-                return data
-                
-        except Exception as e:
-            await self.trading_bot.log(f"Price data fetch error: {str(e)}", level="error")
-            raise DataError(f"Failed to get price data: {str(e)}")
-
-    async def _fetch_price_data(
-        self, 
-        symbol: str, 
-        timeframe: TimeFrame,
-        periods: Optional[int] = None
-    ) -> pd.DataFrame:
         """
-        Fetch historical price data from exchange.
+        Get price data for specified timeframe with caching.
         
         Args:
-            symbol: Trading pair symbol (must be in format 'BTC-USD')
+            symbol: Trading pair symbol (e.g., 'BTC', 'ETH')
             timeframe: TimeFrame enum value
             periods: Optional number of periods to fetch
             
@@ -125,109 +95,127 @@ class DataManager:
             DataFrame with OHLCV data
             
         Raises:
-            DataError: With detailed error information
+            DataError: If data cannot be fetched or is invalid
         """
         try:
-            async with self.api_lock:
-                # Rate limiting
-                now = time.time()
-                if now - self.last_request < self.rate_limit:
-                    await asyncio.sleep(self.rate_limit - (now - self.last_request))
+            # Validate inputs
+            if not isinstance(timeframe, TimeFrame):
+                raise DataError(f"Invalid timeframe type: {type(timeframe)}")
+            
+            symbol = self._format_product_id(symbol)
+            cache_key = f"{symbol}_{timeframe.name}"
+            
+            async with self._cache_lock:
+                # Check cache first
+                if cache_key in self._cache:
+                    data, timestamp = self._cache[cache_key]
+                    ttl = TradingConstants.CACHE_TTL.get(timeframe, 3600)
+                    if (time.time() - timestamp) < ttl:
+                        return data
                 
-                # Get time range based on timeframe
-                end = datetime.now()
-                timeframe_config = self.timeframes.get(timeframe)
-                if not timeframe_config:
-                    await self.trading_bot.log(
-                        f"Unsupported timeframe: {timeframe.name}", 
-                        level="error"
+                # Acquire rate limit
+                await self.trading_bot.rate_limiter.acquire()
+                
+                # Fetch new data
+                data = await self._fetch_price_data(symbol, timeframe, periods)
+                
+                # Validate data
+                if data is None or data.empty:
+                    raise DataError(f"No data returned for {symbol}")
+                
+                if len(data) < TradingConstants.MIN_DATA_POINTS:
+                    raise DataError(
+                        f"Insufficient data points for {symbol}: "
+                        f"got {len(data)}, need {TradingConstants.MIN_DATA_POINTS}"
                     )
-                    raise DataError(f"Unsupported timeframe: {timeframe.name}")
                 
-                # Increase the data range to ensure we have enough points
-                days = max(timeframe_config['days'], 30)  # Ensure at least 30 days of data
-                start = end - timedelta(days=days)
+                # Update cache
+                self._cache[cache_key] = (data, time.time())
                 
-                # Log the request details for debugging
-                await self.trading_bot.log(
-                    f"Fetching {timeframe.name} data for {symbol} "
-                    f"(granularity: {timeframe_config['granularity']}, "
-                    f"start: {start.isoformat()}, end: {end.isoformat()})",
-                    level="debug"
-                )
+                # Clean cache if needed
+                if len(self._cache) > TradingConstants.CACHE_SIZE:
+                    oldest_key = min(self._cache.items(), key=lambda x: x[1][1])[0]
+                    del self._cache[oldest_key]
                 
-                # Get candles from Coinbase using the correct method name
+                return data
+                
+        except Exception as e:
+            error_msg = f"Failed to get price data for {symbol}: {str(e)}"
+            await self.trading_bot.log(error_msg, level="error")
+            raise DataError(error_msg)
+
+    async def _fetch_price_data(
+        self, 
+        symbol: str, 
+        timeframe: TimeFrame,
+        periods: Optional[int] = None
+    ) -> pd.DataFrame:
+        """Fetch historical price data from exchange."""
+        try:
+            # Get timeframe configuration
+            timeframe_config = self.timeframes.get(timeframe)
+            if not timeframe_config:
+                raise DataError(f"Unsupported timeframe: {timeframe.name}")
+            
+            # Calculate time range
+            end = datetime.now()
+            days = max(timeframe_config['days'], 30)  # Ensure enough data for analysis
+            start = end - timedelta(days=days)
+            
+            # Log request details
+            await self.trading_bot.log(
+                f"Fetching {timeframe.name} data for {symbol} "
+                f"(granularity: {timeframe_config['granularity']})",
+                level="debug"
+            )
+            
+            # Get candles from Coinbase
+            response = self.client.get_candles(
+                product_id=symbol,
+                start=int(start.timestamp()),
+                end=int(end.timestamp()),
+                granularity=timeframe_config['granularity']
+            )
+            
+            if not response or not response.candles:
+                raise DataError(f"No data returned for {symbol}")
+            
+            # Process candle data
+            candles_data = []
+            for candle in response.candles:
                 try:
-                    response = self.client.get_candles(
-                        product_id=symbol,
-                        start=int(start.timestamp()),
-                        end=int(end.timestamp()),
-                        granularity=timeframe_config['granularity']  # Use string value directly
-                    )
-                    
-                    if not response or not response.candles:
-                        raise DataError(f"No data returned for {symbol}")
-                        
-                    # Convert to DataFrame with proper error handling
-                    candles_data = []
-                    for candle in response.candles:
-                        try:
-                            candles_data.append({
-                                'timestamp': datetime.fromtimestamp(float(candle.start)),
-                                'open': float(candle.open),
-                                'high': float(candle.high),
-                                'low': float(candle.low),
-                                'close': float(candle.close),
-                                'volume': float(candle.volume)
-                            })
-                        except (ValueError, AttributeError) as e:
-                            await self.trading_bot.log(
-                                f"Error processing candle data: {str(e)}", 
-                                level="error"
-                            )
-                            continue
-                    
-                    if not candles_data:
-                        raise DataError(f"Failed to process any candle data for {symbol}")
-                        
-                    df = pd.DataFrame(candles_data)
-                    
-                except Exception as api_error:
+                    candles_data.append({
+                        'timestamp': datetime.fromtimestamp(float(candle.start)),
+                        'open': float(candle.open),
+                        'high': float(candle.high),
+                        'low': float(candle.low),
+                        'close': float(candle.close),
+                        'volume': float(candle.volume)
+                    })
+                except (ValueError, AttributeError) as e:
                     await self.trading_bot.log(
-                        f"Coinbase API error: {str(api_error)} "
-                        f"(symbol: {symbol}, timeframe: {timeframe.name})",
+                        f"Error processing candle: {str(e)}", 
                         level="error"
                     )
-                    raise DataError(f"Failed to fetch data from Coinbase: {str(api_error)}")
-                
-                # Ensure minimum data points for technical analysis
-                if len(df) < 15:  # RSI needs at least 15 points
-                    await self.trading_bot.log(
-                        f"Insufficient data points for {symbol} ({timeframe.name}): {len(df)} points",
-                        level="error"
-                    )
-                    raise DataError(f"Insufficient data points for {symbol} (need at least 15, got {len(df)})")
-                
-                # Sort by timestamp and set index
-                df = df.sort_values('timestamp')
-                df.set_index('timestamp', inplace=True)
-                
-                await self.trading_bot.log(
-                    f"Successfully fetched {len(df)} data points for {symbol} ({timeframe.name})",
-                    level="debug"
-                )
-                
-                self.last_request = time.time()
-                return df
-                
+                    continue
+            
+            if not candles_data:
+                raise DataError(f"Failed to process any candle data for {symbol}")
+            
+            # Create DataFrame and validate
+            df = pd.DataFrame(candles_data)
+            df = df.sort_values('timestamp')
+            df.set_index('timestamp', inplace=True)
+            
+            if len(df) < 15:  # Minimum required for most indicators
+                raise DataError(f"Insufficient data points for {symbol}: {len(df)}")
+            
+            return df
+            
         except Exception as e:
             if isinstance(e, DataError):
                 raise
-            await self.trading_bot.log(
-                f"Data fetch error: {str(e)} "
-                f"(symbol: {symbol}, timeframe: {timeframe.name})",
-                level="error"
-            )
+            await self.trading_bot.log(f"Data fetch error: {str(e)}", level="error")
             raise DataError(f"Failed to fetch price data: {str(e)}")
 
     async def get_current_price(self, symbol: str) -> float:

@@ -199,6 +199,33 @@ class PriceManager:
             self.log(f"Error getting cached price data: {str(e)}", level="error")
             raise TradingError(f"Failed to get cached price data: {str(e)}", error_type='DATA')
 
+class RateLimiter:
+    """Rate limiter for API calls"""
+    
+    def __init__(self, max_requests: int, time_window: float):
+        self.max_requests = max_requests
+        self.time_window = time_window
+        self.requests = []
+        self._lock = asyncio.Lock()
+    
+    async def acquire(self):
+        """Wait if necessary and acquire rate limit slot"""
+        async with self._lock:
+            now = time.time()
+            
+            # Remove old requests
+            self.requests = [req for req in self.requests if now - req < self.time_window]
+            
+            # Wait if at limit
+            if len(self.requests) >= self.max_requests:
+                wait_time = self.requests[0] + self.time_window - now
+                if wait_time > 0:
+                    await asyncio.sleep(wait_time)
+                self.requests = self.requests[1:]
+            
+            # Add new request
+            self.requests.append(now)
+
 class TradingBot:
     def __init__(self, client: RESTClient, config: TradingConfig):
         """Initialize the trading bot with client and config"""
@@ -241,6 +268,12 @@ class TradingBot:
         self.auto_risk_enabled = True  # Can be made configurable
 
         self.message_formatter = MessageFormatter()
+
+        # Add rate limiter
+        self.rate_limiter = RateLimiter(
+            max_requests=TradingConstants.MAX_REQUESTS_PER_SECOND,
+            time_window=1.0
+        )
 
     def get_uptime(self) -> str:
         """Calculate and format the bot's uptime."""

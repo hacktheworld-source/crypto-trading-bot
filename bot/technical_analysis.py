@@ -402,7 +402,10 @@ class TechnicalAnalyzer:
                 
             # Validate input
             if len(prices) < period + 1:
-                raise TradingError(f"Insufficient data for RSI calculation. Need at least {period + 1} data points.", "ANALYSIS")
+                raise TradingError(
+                    f"Insufficient data for RSI calculation. Need at least {period + 1} data points.", 
+                    "ANALYSIS"
+                )
                 
             # Ensure we have a pandas Series
             if not isinstance(prices, pd.Series):
@@ -450,37 +453,90 @@ class TechnicalAnalyzer:
             await self.log(f"RSI calculation error: {str(e)}", level="error")
             raise TradingError(f"Failed to calculate RSI: {str(e)}", "ANALYSIS")
 
-    async def calculate_bollinger_bands(self, symbol: str) -> Dict[str, Any]:
-        """Calculate Bollinger Bands for a symbol"""
+    async def calculate_bollinger_bands(self, symbol: str, period: int = 20, std_dev: float = 2.0) -> Dict[str, Any]:
+        """
+        Calculate Bollinger Bands for a symbol.
+        
+        Args:
+            symbol: Trading pair symbol
+            period: Moving average period (default: 20)
+            std_dev: Standard deviation multiplier (default: 2.0)
+            
+        Returns:
+            Dict containing upper, middle, lower bands and bandwidth
+            
+        Raises:
+            TradingError: If calculation fails
+        """
         try:
-            # Get price data
-            data = await self.get_price_data(symbol.upper(), TimeFrame.DAY_1)
+            # Get price data from data manager
+            data = await self.data_manager.get_price_data(symbol.upper(), TimeFrame.DAY_1)
+            
+            # Validate input data
+            if data is None or len(data) < period + 1:
+                raise TradingError(
+                    f"Insufficient data for Bollinger Bands calculation. Need at least {period + 1} data points.",
+                    "ANALYSIS"
+                )
+            
+            # Convert to numeric and handle missing values
             prices = pd.to_numeric(data['close'], errors='coerce')
+            prices = prices.dropna()
+            
+            if len(prices) < period + 1:
+                raise TradingError(
+                    f"Insufficient valid price data after cleaning. Need at least {period + 1} points.",
+                    "ANALYSIS"
+                )
             
             # Calculate bands
-            ma = prices.rolling(window=20).mean()
-            std = prices.rolling(window=20).std()
+            ma = prices.rolling(window=period, min_periods=period).mean()
+            std = prices.rolling(window=period, min_periods=period).std()
             
-            upper = ma + (std * 2)
-            lower = ma - (std * 2)
+            upper = ma + (std * std_dev)
+            lower = ma - (std * std_dev)
             
-            # Calculate bandwidth
+            # Calculate bandwidth and %B
             bandwidth = ((upper - lower) / ma) * 100
+            percent_b = (prices - lower) / (upper - lower) * 100
             
-            # Ensure we have valid data
-            if pd.isna(upper.iloc[-1]) or pd.isna(lower.iloc[-1]) or pd.isna(ma.iloc[-1]):
-                raise TradingError("Insufficient data for Bollinger Bands calculation", "ANALYSIS")
+            # Get latest values
+            latest_upper = float(upper.iloc[-1])
+            latest_middle = float(ma.iloc[-1])
+            latest_lower = float(lower.iloc[-1])
+            latest_bandwidth = float(bandwidth.iloc[-1])
+            latest_percent_b = float(percent_b.iloc[-1])
+            
+            # Validate output
+            if any(pd.isna([latest_upper, latest_middle, latest_lower, latest_bandwidth, latest_percent_b])):
+                raise TradingError("Invalid results in Bollinger Bands calculation", "ANALYSIS")
             
             return {
-                'upper': float(upper.iloc[-1]),
-                'middle': float(ma.iloc[-1]),
-                'lower': float(lower.iloc[-1]),
-                'bandwidth': float(bandwidth.iloc[-1])
+                'upper': latest_upper,
+                'middle': latest_middle,
+                'lower': latest_lower,
+                'bandwidth': latest_bandwidth,
+                'percent_b': latest_percent_b,
+                'volatility': 'High' if latest_bandwidth > 5 else 'Normal',
+                'signal': self._get_bb_signal(latest_percent_b)
             }
             
         except Exception as e:
             await self.log(f"Bollinger Bands calculation error: {str(e)}", level="error")
             raise TradingError(f"Failed to calculate Bollinger Bands: {str(e)}", "ANALYSIS")
+            
+    def _get_bb_signal(self, percent_b: float) -> str:
+        """Get trading signal based on %B value"""
+        if percent_b > 100:
+            return "Strong Sell"
+        elif percent_b > 80:
+            return "Overbought"
+        elif percent_b < 0:
+            return "Strong Buy"
+        elif percent_b < 20:
+            return "Oversold"
+        else:
+            return "Neutral"
 
     async def get_ma_analysis(self, symbol: str) -> str:
         """Get moving average analysis for a symbol"""
@@ -525,42 +581,130 @@ class TechnicalAnalyzer:
             raise TradingError(f"Failed to get MA analysis: {str(e)}", "ANALYSIS")
 
     async def check_market_conditions(self, symbol: str) -> Dict[str, Any]:
-        """Check market conditions for trading"""
+        """
+        Check market conditions for trading.
+        
+        Args:
+            symbol: Trading pair symbol
+            
+        Returns:
+            Dict containing market condition analysis
+            
+        Raises:
+            TradingError: If analysis fails
+        """
         try:
             # Format symbol and get price data
             symbol = self.data_manager._format_product_id(symbol.upper())
             data = await self.data_manager.get_price_data(symbol, TimeFrame.DAY_1)
-            prices = pd.to_numeric(data['close'], errors='coerce')
             
-            # Calculate volatility
-            returns = prices.pct_change().dropna()
+            if data is None or len(data) < 30:  # Need at least 30 days for proper analysis
+                raise TradingError(
+                    f"Insufficient data for market analysis. Need at least 30 days of data.",
+                    "ANALYSIS"
+                )
+            
+            # Calculate volatility (30-day)
+            returns = data['close'].pct_change().dropna()
             volatility = returns.std() * np.sqrt(252)  # Annualized
-            is_volatile = volatility > 0.8  # 80% annualized volatility threshold
             
-            # Calculate 7-day price range
-            week_high = prices[-7:].max()
-            week_low = prices[-7:].min()
+            # Define volatility thresholds based on market type
+            is_crypto = symbol.endswith('-USD')
+            volatility_threshold = 0.8 if is_crypto else 0.4  # Higher threshold for crypto
+            is_volatile = volatility > volatility_threshold
+            
+            # Calculate price ranges
+            week_high = data['high'][-7:].max()
+            week_low = data['low'][-7:].min()
             price_range_7d = ((week_high - week_low) / week_low) * 100
             
-            # Check trading hours activity
-            current_hour = datetime.now().hour
-            is_high_activity = 8 <= current_hour <= 22  # Assume higher activity during these hours
+            # Get current price and ATR
+            current_price = float(data['close'].iloc[-1])
+            atr = self._calculate_atr(data, period=14)
             
-            # Check market alignment
+            # Calculate market activity score
+            volume_ma = data['volume'].rolling(window=20).mean()
+            current_volume = float(data['volume'].iloc[-1])
+            volume_ratio = current_volume / float(volume_ma.iloc[-1])
+            
+            # Check if volume is above average
+            is_high_volume = volume_ratio > 1.2
+            
+            # Get market alignment
             signals = await self.get_signals(symbol)
             market_aligned = signals['trend']['aligned']
             
+            # Calculate market strength
+            strength = {
+                'trend': signals['trend']['daily'],
+                'momentum': signals['signals']['daily']['momentum'],
+                'volume': 1 if is_high_volume else -1
+            }
+            
+            # Overall market score (-1 to 1)
+            market_score = (
+                strength['trend'] * 0.4 +
+                strength['momentum'] * 0.4 +
+                strength['volume'] * 0.2
+            )
+            
             return {
-                'is_volatile': is_volatile,
-                'price_range_7d': float(price_range_7d),
-                'is_high_activity': is_high_activity,
-                'market_aligned': market_aligned,
-                'suitable_for_trading': not is_volatile and market_aligned and is_high_activity
+                'volatility': {
+                    'value': float(volatility),
+                    'is_high': is_volatile,
+                    'threshold': volatility_threshold
+                },
+                'price_action': {
+                    'range_7d': float(price_range_7d),
+                    'atr': float(atr.iloc[-1]) if not pd.isna(atr.iloc[-1]) else 0,
+                    'current_price': current_price
+                },
+                'volume': {
+                    'ratio': float(volume_ratio),
+                    'is_high': is_high_volume
+                },
+                'market_alignment': {
+                    'aligned': market_aligned,
+                    'score': float(market_score)
+                },
+                'trading_summary': {
+                    'suitable': not is_volatile and market_aligned and is_high_volume,
+                    'confidence': abs(market_score),
+                    'recommendation': self._get_market_recommendation(market_score, is_volatile)
+                }
             }
             
         except Exception as e:
             await self.log(f"Market conditions check error: {str(e)}", level="error")
             raise TradingError(f"Failed to check market conditions: {str(e)}", "ANALYSIS")
+            
+    def _calculate_atr(self, data: pd.DataFrame, period: int = 14) -> pd.Series:
+        """Calculate Average True Range"""
+        high = data['high']
+        low = data['low']
+        close = data['close']
+        
+        tr1 = high - low
+        tr2 = abs(high - close.shift())
+        tr3 = abs(low - close.shift())
+        
+        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+        return tr.rolling(window=period).mean()
+        
+    def _get_market_recommendation(self, score: float, is_volatile: bool) -> str:
+        """Get market recommendation based on score and volatility"""
+        if is_volatile:
+            return "High Risk - Reduce Position Sizes"
+        elif score > 0.6:
+            return "Strong Buy Zone"
+        elif score > 0.2:
+            return "Accumulate"
+        elif score < -0.6:
+            return "Strong Sell Zone"
+        elif score < -0.2:
+            return "Reduce Exposure"
+        else:
+            return "Neutral - Monitor"
 
     async def _calculate_btc_correlation(self, symbol: str) -> float:
         """

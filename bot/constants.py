@@ -24,8 +24,8 @@ class TradingConstants:
     # Cache settings
     CACHE_SIZE = 1000
     CACHE_TTL = {
-        TimeFrame.HOUR_1: 3600,     # 1 hour
-        TimeFrame.DAY_1: 86400      # 24 hours
+        TimeFrame.HOUR_1: 1800,     # 30 minutes
+        TimeFrame.DAY_1: 21600      # 6 hours
     }
     
     # Technical Analysis

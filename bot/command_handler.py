@@ -177,33 +177,65 @@ class CommandHandler:
     async def get_rsi(self, symbol: str):
         """Get RSI value for a symbol with interpretation"""
         try:
+            if not symbol:
+                return self._format_error("Please provide a symbol (e.g., !rsi BTC)")
+            
             symbol = symbol.upper()
+            
             # Get price data from data manager
-            data = await self.trading_bot.data_manager.get_price_data(symbol, TimeFrame.DAY_1)
+            try:
+                data = await self.trading_bot.data_manager.get_price_data(symbol, TimeFrame.DAY_1)
+            except DataError as e:
+                return self._format_error(f"Failed to get price data: {str(e)}")
             
-            if data is None or len(data) < 15:  # Ensure minimum data points
-                return self._format_error("Insufficient price data for RSI calculation")
+            if data is None or len(data) < TradingConstants.MIN_DATA_POINTS:
+                return self._format_error(
+                    f"Insufficient price data for {symbol}. "
+                    f"Need at least {TradingConstants.MIN_DATA_POINTS} data points."
+                )
             
-            # Calculate RSI using technical analyzer
-            rsi = await self.trading_bot.technical_analyzer.calculate_rsi(data['close'])
-            current_price = float(data['close'].iloc[-1])
+            try:
+                # Calculate RSI using technical analyzer
+                rsi = await self.trading_bot.technical_analyzer.calculate_rsi(data['close'])
+                current_price = float(data['close'].iloc[-1])
+                
+                # Get RSI thresholds from config
+                oversold = self.trading_bot.config.RSI_OVERSOLD
+                overbought = self.trading_bot.config.RSI_OVERBOUGHT
+                
+                # Add RSI interpretation with emojis
+                current_rsi = float(rsi.iloc[-1])
+                if current_rsi > overbought:
+                    rsi_status = "Overbought 🔴"
+                    rsi_desc = "(Potential sell signal)"
+                elif current_rsi < oversold:
+                    rsi_status = "Oversold 🟢"
+                    rsi_desc = "(Potential buy signal)"
+                else:
+                    rsi_status = "Neutral ⚪"
+                    rsi_desc = "(No clear signal)"
+                
+                # Format response with more detail
+                return (
+                    f"RSI Analysis for {symbol}:\n```"
+                    f"📊 Technical Analysis:\n"
+                    f"  • Current Price: ${current_price:,.2f}\n"
+                    f"  • RSI (14): {current_rsi:.2f}\n"
+                    f"  • Status: {rsi_status} {rsi_desc}\n"
+                    f"  • Thresholds: {oversold} / {overbought}\n\n"
+                    f"📈 RSI Trend:\n"
+                    f"  • 1h Change: {current_rsi - float(rsi.iloc[-2]):+.2f}\n"
+                    f"  • 24h Range: {float(rsi.iloc[-24:].min()):.1f} - {float(rsi.iloc[-24:].max()):.1f}"
+                    "```"
+                )
+                
+            except TradingError as e:
+                return self._format_error(f"RSI calculation failed: {str(e)}")
             
-            # Add RSI interpretation
-            rsi_status = "Overbought 🔴" if rsi.iloc[-1] > 70 else \
-                        "Oversold 🟢" if rsi.iloc[-1] < 30 else \
-                        "Neutral ⚪"
-            
-            return (
-                f"RSI Analysis for {symbol}:\n```"
-                f"📊 Technical Analysis:\n"
-                f"  • Price: ${current_price:,.2f}\n"
-                f"  • RSI: {rsi.iloc[-1]:.2f} ({rsi_status})\n"
-                f"  • Thresholds: {self.trading_bot.config.RSI_OVERSOLD} / {self.trading_bot.config.RSI_OVERBOUGHT}"
-                "```"
-            )
         except Exception as e:
-            return self._format_error(str(e))
-            
+            await self.trading_bot.log(f"RSI command error: {str(e)}", level="error")
+            return self._format_error(f"An error occurred: {str(e)}")
+        
     def set_trade_amount(self, amount):
         if self.trading_bot.set_trade_amount(amount):
             return f"Successfully set trade amount to ${amount}"
@@ -528,7 +560,7 @@ class CommandHandler:
             return f"Sentiment Analysis for {symbol}:\n```" \
                    f"📊 Market Sentiment:\n" \
                    f"  • Overall: {analysis['overall_sentiment']}\n" \
-                   f"  • Score: {analysis['sentiment_score']:+.2f} ({strength} {analysis['overall_sentiment']})\n\n" \
+                   f"  ��� Score: {analysis['sentiment_score']:+.2f} ({strength} {analysis['overall_sentiment']})\n\n" \
                    f"📈 Momentum Analysis:\n" \
                    f"  • Short-term:  {analysis['momentum']['short_term'].title()} {short_arrow}\n" \
                    f"  • Medium-term: {analysis['momentum']['medium_term'].title()} {mid_arrow}\n" \
@@ -881,32 +913,63 @@ class CommandHandler:
             return self._format_error(str(e))
 
     async def get_market_conditions(self, *args) -> str:
-        """Get market conditions analysis for a symbol"""
+        """Get comprehensive market conditions analysis"""
         try:
             if not args:
                 return self._format_error("Please specify a symbol: !conditions <symbol>")
                 
             symbol = args[0].upper()
-            conditions = await self.trading_bot.technical_analyzer.check_market_conditions(symbol)
             
-            # Get BTC correlation if not BTC
-            correlation = await self.trading_bot.technical_analyzer._calculate_btc_correlation(symbol) if symbol != 'BTC' else 1.0
+            try:
+                conditions = await self.trading_bot.technical_analyzer.check_market_conditions(symbol)
+                correlation = await self.trading_bot.technical_analyzer._calculate_btc_correlation(symbol)
+            except TradingError as e:
+                return self._format_error(f"Analysis failed: {str(e)}")
+            
+            # Format volatility status
+            vol = conditions['volatility']
+            vol_status = f"{'High ⚠️' if vol['is_high'] else 'Normal ✅'} ({vol['value']*100:.1f}%)"
+            
+            # Format volume status
+            vol_data = conditions['volume']
+            volume_status = f"{'High 📈' if vol_data['is_high'] else 'Low 📉'} ({vol_data['ratio']:.2f}x avg)"
+            
+            # Format market alignment
+            market = conditions['market_alignment']
+            align_status = f"{'Aligned ✅' if market['aligned'] else 'Mixed ⚠️'} ({market['score']*100:.1f}%)"
+            
+            # Get recommendation emoji
+            rec = conditions['trading_summary']['recommendation']
+            rec_emoji = {
+                "Strong Buy Zone": "🟢",
+                "Accumulate": "🟢",
+                "Neutral - Monitor": "⚪",
+                "Reduce Exposure": "🔴",
+                "Strong Sell Zone": "🔴",
+                "High Risk - Reduce Position Sizes": "⚠️"
+            }.get(rec, "⚪")
             
             return (
                 f"Market Conditions Analysis for {symbol}:\n```"
-                f"📊 Trading Conditions:\n"
-                f"  • Volatility: {'High ⚠️' if conditions['is_volatile'] else 'Normal ✅'}\n"
-                f"  • Price Range (7d): {conditions['price_range_7d']:.1f}%\n"
-                f"  • Market Hours: {'Active 🟢' if conditions['is_high_activity'] else 'Quiet 🔴'}\n\n"
-                f"📈 Market Alignment:\n"
-                f"  • BTC Correlation: {correlation:.2f}\n"
-                f"  • Market Aligned: {'Yes ✅' if conditions['market_aligned'] else 'No ⚠️'}\n"
-                f"  • Suitable for Trading: {'Yes ✅' if conditions['suitable_for_trading'] else 'No ❌'}"
+                f"📊 Market Environment:\n"
+                f"  • Volatility: {vol_status}\n"
+                f"  • Volume: {volume_status}\n"
+                f"  • Market Alignment: {align_status}\n"
+                f"  • BTC Correlation: {correlation:.2f}\n\n"
+                f"📈 Price Action:\n"
+                f"  • Current Price: ${conditions['price_action']['current_price']:,.2f}\n"
+                f"  • 7-Day Range: {conditions['price_action']['range_7d']:.1f}%\n"
+                f"  • ATR: ${conditions['price_action']['atr']:,.2f}\n\n"
+                f"🎯 Trading Summary:\n"
+                f"  • Confidence: {conditions['trading_summary']['confidence']*100:.1f}%\n"
+                f"  • Suitable for Trading: {'Yes ✅' if conditions['trading_summary']['suitable'] else 'No ❌'}\n"
+                f"  • Recommendation: {rec} {rec_emoji}"
                 "```"
             )
             
         except Exception as e:
-            return self._format_error(str(e))
+            await self.trading_bot.log(f"Market conditions command error: {str(e)}", level="error")
+            return self._format_error(f"An error occurred: {str(e)}")
 
     async def get_risk_alerts(self) -> str:
         """Get current risk alerts"""
@@ -1013,35 +1076,51 @@ class CommandHandler:
         """
         return f"{self.SUCCESS_PREFIX}{message}"
         
-    async def get_bb_analysis(self, symbol: str):
-        """Get Bollinger Bands analysis"""
+    async def get_bb_analysis(self, symbol: str) -> str:
+        """Get Bollinger Bands analysis with interpretation"""
         try:
+            if not symbol:
+                return self._format_error("Please provide a symbol (e.g., !bb BTC)")
+                
             symbol = symbol.upper()
-            bb_data = await self.trading_bot.technical_analyzer.calculate_bollinger_bands(symbol)
-            current_price = await self.trading_bot.price_manager.get_current_price(symbol)
             
-            # Calculate price position
-            price_position = (current_price - bb_data['lower']) / (bb_data['upper'] - bb_data['lower']) * 100
-            position_status = "Overbought ⚠️" if price_position > 80 else \
-                             "Oversold 🔥" if price_position < 20 else \
-                             "Neutral ⚖️"
+            # Get BB analysis
+            try:
+                bb_data = await self.trading_bot.technical_analyzer.calculate_bollinger_bands(symbol)
+                current_price = await self.trading_bot.price_manager.get_current_price(symbol)
+            except TradingError as e:
+                return self._format_error(f"Analysis failed: {str(e)}")
+            
+            # Get signal emoji
+            signal_emoji = {
+                "Strong Buy": "🟢",
+                "Oversold": "🟢",
+                "Neutral": "⚪",
+                "Overbought": "🔴",
+                "Strong Sell": "🔴"
+            }.get(bb_data['signal'], "⚪")
+            
+            # Format volatility
+            volatility_emoji = "⚠️" if bb_data['volatility'] == "High" else "✅"
             
             return (
-                f"Bollinger Bands Analysis for {symbol}:\n"
-                "```\n"
-                f"📊 Band Levels:\n"
+                f"Bollinger Bands Analysis for {symbol}:\n```"
+                f"📊 Price Levels:\n"
+                f"  • Current Price: ${current_price:,.2f}\n"
                 f"  • Upper Band: ${bb_data['upper']:,.2f}\n"
                 f"  • Middle Band: ${bb_data['middle']:,.2f}\n"
-                f"   Lower Band: ${bb_data['lower']:,.2f}\n\n"
-                f"📈 Position Analysis:\n"
-                f"   Current Price: ${current_price:,.2f}\n"
-                f"  • Position: {position_status} ({price_position:.1f}%)\n"
-                f"  • Bandwidth: {bb_data['bandwidth']:.1f}%\n"
+                f"  • Lower Band: ${bb_data['lower']:,.2f}\n\n"
+                f"📈 Analysis:\n"
+                f"  • Position (%B): {bb_data['percent_b']:.1f}%\n"
+                f"  • Signal: {bb_data['signal']} {signal_emoji}\n"
+                f"  • Bandwidth: {bb_data['bandwidth']:.1f}% ({bb_data['volatility']} {volatility_emoji})"
                 "```"
             )
+            
         except Exception as e:
-            return self._format_error(str(e))
-        
+            await self.trading_bot.log(f"BB analysis command error: {str(e)}", level="error")
+            return self._format_error(f"An error occurred: {str(e)}")
+
     async def get_risk_analysis(self, symbol: str = None) -> str:
         """
         Get risk analysis for portfolio or specific position.
