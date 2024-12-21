@@ -126,15 +126,15 @@ class CommandHandler:
             "Available Commands:\n"
             "```\n"
             "Basic Commands:\n"
-            "!help - Show this help message\n"
+            "!help, !commands - Show this help message\n"
             "!status - Get bot status\n"
             "!ping - Check bot response\n"
             "!version - Show bot version\n"
             "!testapi - Test API connection\n\n"
             
             "Trading Commands:\n"
-            "!add <symbol1> [symbol2 ...] - Add one or more coins to watchlist\n"
-            "!remove <symbol1> [symbol2 ...] - Remove one or more coins from watchlist\n"
+            "!add, !addcoin <symbol1> [symbol2 ...] - Add one or more coins to watchlist\n"
+            "!remove, !removecoin <symbol1> [symbol2 ...] - Remove one or more coins from watchlist\n"
             "!list - List watched coins\n"
             "!paper <on|off> - Control paper trading\n"
             "!start - Start trading\n"
@@ -151,9 +151,7 @@ class CommandHandler:
             "!levels <symbol> - Get support/resistance levels\n"
             "!patterns <symbol> - Get price action patterns\n"
             "!volume <symbol> - Get basic volume analysis\n"
-            "!vprofile <symbol> - Get detailed volume profile\n\n"
-            
-            "Market Analysis:\n"
+            "!vprofile <symbol> - Get detailed volume profile\n"
             "!signals <symbol> - Get all trading signals\n"
             "!conditions <symbol> - Get market conditions\n"
             "!sentiment <symbol> - Get market sentiment\n\n"
@@ -161,6 +159,7 @@ class CommandHandler:
             "Position & Portfolio:\n"
             "!position [symbol] - Get position details\n"
             "!metrics - Get trading metrics\n"
+            "!stats - Get trading statistics\n"
             "!portfolio - Get portfolio analysis\n"
             "!balance - Get account balance\n"
             "!performance - Get performance metrics\n\n"
@@ -387,18 +386,18 @@ class CommandHandler:
     async def _handle_rsi(self, symbol: str = "BTC-USD") -> str:
         """Get RSI analysis"""
         try:
-            # Get price data using data manager
+            # Get daily data for more accurate RSI that matches Coinbase
             data = await self.data_manager.get_price_data(
                 self.data_manager._format_product_id(symbol.upper()),
-                TimeFrame.HOUR_1
+                TimeFrame.DAY_1
             )
             
-            if data is None or len(data) < 15:  # Need at least 15 periods for 14-period RSI
+            if data is None or len(data) < 30:  # Need 30 days for accurate RSI
                 return self.message_formatter.format_error(
-                    f"Insufficient data for {symbol}. Need at least 15 periods."
+                    f"Insufficient data for {symbol}. Need at least 30 days."
                 )
             
-            # Calculate RSI
+            # Calculate RSI using daily data
             rsi = await self.technical_analyzer.calculate_rsi(data['close'])
             
             # Get current and previous values
@@ -417,11 +416,17 @@ class CommandHandler:
             trend_emoji = "⬆️" if rsi_change > 0 else "⬇️" if rsi_change < 0 else "➡️"
             zone_emoji = "🔴" if zone == "Overbought" else "🟢" if zone == "Oversold" else "⚪"
             
+            # Add 30-day high/low context
+            rsi_high = float(rsi.iloc[-30:].max())
+            rsi_low = float(rsi.iloc[-30:].min())
+            
             return (
-                f"**{symbol} RSI Analysis**\n```\n"
+                f"**{symbol} RSI Analysis (30D)**\n```\n"
                 f"Current RSI: {current_rsi:.1f} {trend_emoji}\n"
                 f"Change: {rsi_change:+.1f}\n"
                 f"Zone: {zone} {zone_emoji}\n"
+                f"30D High: {rsi_high:.1f}\n"
+                f"30D Low: {rsi_low:.1f}\n"
                 "```"
             )
             
