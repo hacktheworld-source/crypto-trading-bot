@@ -589,9 +589,10 @@ class TechnicalAnalyzer:
                 avg_gains.append(avg_gain)
                 avg_losses.append(avg_loss)
             
-            # Convert to Series
-            avg_gains_series = pd.Series(avg_gains, index=prices.index[period:])
-            avg_losses_series = pd.Series(avg_losses, index=prices.index[period:])
+            # Create Series with proper index alignment
+            rsi_index = prices.index[period:]  # Get the correct index starting from period
+            avg_gains_series = pd.Series(avg_gains, index=rsi_index)
+            avg_losses_series = pd.Series(avg_losses, index=rsi_index)
             
             # Calculate RS
             rs = avg_gains_series / avg_losses_series
