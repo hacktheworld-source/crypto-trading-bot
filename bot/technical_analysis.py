@@ -1032,9 +1032,6 @@ class TechnicalAnalyzer:
             # Format symbol
             symbol = self.data_manager._format_product_id(symbol.upper())
             
-            # Get proper granularity
-            granularity = self._get_coinbase_granularity(timeframe)
-            
             # Calculate time range based on timeframe
             end = datetime.now()
             # Adjust days to stay under 350 candle limit
@@ -1045,42 +1042,18 @@ class TechnicalAnalyzer:
                 
             start = end - timedelta(days=days)
             
-            # Get candles with proper formatting
-            response = self.client.get_candles(
-                product_id=symbol,
-                start=int(start.timestamp()),
-                end=int(end.timestamp()),
-                granularity=granularity
+            # Use data manager to get price data
+            data = await self.data_manager.get_price_data(
+                symbol,
+                timeframe,
+                start=start,
+                end=end
             )
             
-            if not response or not response.candles:
+            if data is None or data.empty:
                 raise DataError(f"No data returned for {symbol}")
             
-            # Process candle data
-            candles_data = []
-            for candle in response.candles:
-                try:
-                    candles_data.append({
-                        'timestamp': datetime.fromtimestamp(float(candle.start)),
-                        'open': float(candle.open),
-                        'high': float(candle.high),
-                        'low': float(candle.low),
-                        'close': float(candle.close),
-                        'volume': float(candle.volume)
-                    })
-                except (ValueError, AttributeError) as e:
-                    await self.log(f"Error processing candle: {str(e)}", level="error")
-                    continue
-            
-            if not candles_data:
-                raise DataError(f"Failed to process any candle data for {symbol}")
-            
-            # Create DataFrame and validate
-            df = pd.DataFrame(candles_data)
-            df = df.sort_values('timestamp')
-            df.set_index('timestamp', inplace=True)
-            
-            return df
+            return data
             
         except Exception as e:
             await self.log(f"Failed to get price data: {str(e)}", level="error")
