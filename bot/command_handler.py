@@ -185,7 +185,7 @@ class CommandHandler:
         try:
             # Get current price data
             data = await self.technical_analyzer.data_manager.get_price_data(
-                symbol, TimeFrame.HOUR_1, limit=25
+                symbol, TimeFrame.HOUR_1
             )
             
             if data is None or len(data) < 2:
@@ -198,9 +198,10 @@ class CommandHandler:
             
             # Format response
             return (
-                f"**{symbol}**\n"
+                f"**{symbol}**\n```\n"
                 f"Price: ${current_price:,.2f}\n"
-                f"24h Change: {price_change:+.2f}%"
+                f"24h Change: {price_change:+.2f}%\n"
+                "```"
             )
             
         except Exception as e:
@@ -353,12 +354,17 @@ class CommandHandler:
         """Get trading signals"""
         try:
             signals = await self.trading_bot.technical_analyzer.get_signals(symbol)
+            daily = signals['signals']['daily']
+            hourly = signals['signals']['1h']
+            
             return (
                 f"**{symbol} Trading Signals**\n```\n"
-                f"Daily Trend: {self._format_signal_strength(signals['trend']['daily'])}\n"
-                f"Hourly Trend: {self._format_signal_strength(signals['trend']['1h'])}\n"
+                f"Daily Trend: {daily['trend']:+.2f}\n"
+                f"Daily Momentum: {daily['momentum']:+.2f}\n"
+                f"Hourly Trend: {hourly['trend']:+.2f}\n"
+                f"Hourly Momentum: {hourly['momentum']:+.2f}\n"
                 f"Trend Aligned: {'Yes' if signals['trend']['aligned'] else 'No'}\n"
-                f"Strength: {signals['trend']['strength']:.2f}\n"
+                f"Signal Strength: {signals['trend']['strength']:.2f}\n"
                 "```"
             )
         except Exception as e:
@@ -452,31 +458,35 @@ class CommandHandler:
     async def _handle_volume_analysis(self, symbol: str = "BTC-USD") -> str:
         """Get volume analysis"""
         try:
-            analysis = await self.trading_bot.technical_analyzer.analyze_volume_profile(symbol)
+            analysis = await self.technical_analyzer.analyze_volume_profile(symbol)
+            volume_trend = analysis['volume_trend']
+            
             return (
                 f"**{symbol} Volume Analysis**\n```\n"
-                f"24h Volume: {analysis['volume']:.2f}\n"
-                f"Trend: {analysis['volume_trend']['description']}\n"
-                f"Strength: {analysis['volume_trend']['strength']}\n"
+                f"Trend: {volume_trend['description']}\n"
+                f"Strength: {volume_trend['strength']}\n"
+                f"Score: {volume_trend['score']:+.2f}\n"
                 "```"
             )
         except Exception as e:
-            return self.message_formatter.format_error(str(e))
+            return self.message_formatter.format_error(f"Failed to analyze volume: {str(e)}")
 
     async def _handle_sentiment_analysis(self, symbol: str = "BTC-USD") -> str:
         """Get market sentiment analysis"""
         try:
-            sentiment = await self.trading_bot.analyze_market_sentiment(symbol)
+            analysis = await self.technical_analyzer.get_full_analysis(symbol)
+            
             return (
-                f"**{symbol} Sentiment Analysis**\n```\n"
-                f"Overall: {sentiment['overall_sentiment']}\n"
-                f"Score: {sentiment['sentiment_score']:.2f}\n"
-                f"Strength: {sentiment['strength']:.2f}\n"
-                f"Timeframes Aligned: {'Yes' if sentiment['timeframes_aligned'] else 'No'}\n"
+                f"**{symbol} Market Sentiment**\n```\n"
+                f"Price Change 24h: {analysis['price_change_24h']:+.2f}%\n"
+                f"Volatility: {analysis['volatility']:.2f}%\n"
+                f"Trend: {analysis['trend']['description']}\n"
+                f"RSI: {analysis['rsi']:.1f}\n"
+                f"Strength: {analysis['strength']:.2f}\n"
                 "```"
             )
         except Exception as e:
-            return self.message_formatter.format_error(str(e))
+            return self.message_formatter.format_error(f"Failed to analyze sentiment: {str(e)}")
 
     async def _handle_paper_commands(self, action: str = "status") -> str:
         """Handle paper trading commands"""
@@ -694,9 +704,8 @@ class CommandHandler:
     async def _handle_macd_analysis(self, symbol: str = "BTC-USD") -> str:
         """Get MACD analysis"""
         try:
-            macd = await self.technical_analyzer._calculate_macd(
-                await self.data_manager.get_price_data(symbol, TimeFrame.HOUR_1)
-            )
+            data = await self.data_manager.get_price_data(symbol, TimeFrame.HOUR_1)
+            macd = self.technical_analyzer._calculate_macd(data)
             
             current_macd = float(macd['macd'].iloc[-1])
             current_signal = float(macd['signal'].iloc[-1])

@@ -296,21 +296,36 @@ class TechnicalAnalyzer:
             data = await self.data_manager.get_price_data(symbol, TimeFrame.HOUR_1)
             current_price = float(data['close'].iloc[-1])
             
-            # Get ticker for volume info
-            ticker = await self.data_manager.get_ticker(symbol)
-            volume_confirmed = float(ticker['volume']) > 0  # Simple volume check
+            # Calculate EMAs for trend determination
+            ema_short = self._calculate_ema(data['close'], 9)
+            ema_long = self._calculate_ema(data['close'], 21)
             
-            # For now, use simple trend determination
-            # Future enhancement: Implement proper trend analysis when historical data is available
+            # Determine trend direction
+            daily_trend = 1 if current_price > float(ema_long.iloc[-1]) else -1
+            hourly_trend = 1 if current_price > float(ema_short.iloc[-1]) else -1
+            
+            # Calculate trend strength
+            trend_strength = abs(current_price - float(ema_long.iloc[-1])) / float(ema_long.iloc[-1]) * 100
+            
+            # Get volume confirmation
+            volume_analysis = self._analyze_volume_trend(data)
+            volume_confirmed = volume_analysis['is_favorable']
+            
+            # Determine trend description
+            if daily_trend == hourly_trend:
+                description = f"Strong {'Uptrend' if daily_trend > 0 else 'Downtrend'}"
+            else:
+                description = "Mixed Trend"
+            
             return {
                 'trend': {
-                    'daily': 1,  # Placeholder
-                    'hourly': 1,  # Placeholder
-                    'aligned': True
+                    'daily': daily_trend,
+                    'hourly': hourly_trend,
+                    'aligned': daily_trend == hourly_trend
                 },
-                'strength': 0.5,  # Placeholder
+                'strength': trend_strength,
                 'volume_confirmed': volume_confirmed,
-                'description': 'Current Price Only'
+                'description': description
             }
             
         except Exception as e:
