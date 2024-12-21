@@ -121,8 +121,8 @@ class CommandHandler:
             "!testapi - Test API connection\n\n"
             
             "Trading Commands:\n"
-            "!add <symbol> - Add coin to watchlist\n"
-            "!remove <symbol> - Remove coin from watchlist\n"
+            "!add <symbol1> [symbol2 ...] - Add one or more coins to watchlist\n"
+            "!remove <symbol1> [symbol2 ...] - Remove one or more coins from watchlist\n"
             "!list - List watched coins\n"
             "!paper <on|off> - Control paper trading\n"
             "!start - Start trading\n"
@@ -186,29 +186,39 @@ class CommandHandler:
         except Exception as e:
             raise CommandError(f"Price command failed: {str(e)}")
 
-    async def _handle_add_coin(self, symbol: str) -> str:
-        """Add a coin to the watchlist"""
-        try:
-            if await self.trading_bot.add_coin(symbol):
-                return self.message_formatter.format_notification(
-                    f"Added {symbol} to watchlist", 
-                    "success"
-                )
-            return self.message_formatter.format_error(f"Failed to add {symbol}")
-        except Exception as e:
-            return self.message_formatter.format_error(str(e))
+    async def _handle_add_coin(self, *symbols: str) -> str:
+        """Add one or more coins to the watchlist"""
+        if not symbols:
+            return self.message_formatter.format_error("Please specify at least one symbol")
+            
+        results = []
+        for symbol in symbols:
+            try:
+                if await self.trading_bot.add_coin(symbol):
+                    results.append(f"✅ Added {symbol}")
+                else:
+                    results.append(f"❌ Failed to add {symbol}")
+            except Exception as e:
+                results.append(f"❌ Error adding {symbol}: {str(e)}")
+                
+        return "\n".join(results)
 
-    async def _handle_remove_coin(self, symbol: str) -> str:
-        """Remove a coin from the watchlist"""
-        try:
-            if await self.trading_bot.remove_coin(symbol):
-                return self.message_formatter.format_notification(
-                    f"Removed {symbol} from watchlist",
-                    "success"
-                )
-            return self.message_formatter.format_error(f"Failed to remove {symbol}")
-        except Exception as e:
-            return self.message_formatter.format_error(str(e))
+    async def _handle_remove_coin(self, *symbols: str) -> str:
+        """Remove one or more coins from the watchlist"""
+        if not symbols:
+            return self.message_formatter.format_error("Please specify at least one symbol")
+            
+        results = []
+        for symbol in symbols:
+            try:
+                if await self.trading_bot.remove_coin(symbol):
+                    results.append(f"✅ Removed {symbol}")
+                else:
+                    results.append(f"❌ Failed to remove {symbol}")
+            except Exception as e:
+                results.append(f"❌ Error removing {symbol}: {str(e)}")
+                
+        return "\n".join(results)
 
     async def _handle_list_coins(self) -> str:
         """List all watched coins"""
