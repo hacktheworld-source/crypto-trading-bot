@@ -299,37 +299,45 @@ class TechnicalAnalyzer:
         """
         try:
             # Get signals from both timeframes
-            signals = await self.get_signals(symbol)
+            all_signals = await self.get_signals(symbol)
             
             # Extract trend information
-            daily_trend = signals['trend']['daily']
-            hourly_trend = signals['trend']['hourly']
-            trend_aligned = signals['trend']['aligned']
-            trend_strength = signals['trend']['strength']
+            trend_info = all_signals['trend']
+            daily_signals = all_signals['signals']['daily']
             
             # Get volume confirmation from daily signals
-            volume_confirmed = signals['signals']['daily']['volume_confirmed']
+            volume_confirmed = daily_signals.get('volume_confirmed', False)
             
             # Determine trend description
-            if trend_aligned:
-                description = f"Strong {'Uptrend' if daily_trend > 0 else 'Downtrend'}"
+            if trend_info['aligned']:
+                description = f"Strong {'Uptrend' if trend_info['daily'] > 0 else 'Downtrend'}"
             else:
                 description = "Mixed Trend"
             
             return {
                 'trend': {
-                    'daily': daily_trend,
-                    'hourly': hourly_trend,
-                    'aligned': trend_aligned
+                    'daily': trend_info['daily'],
+                    'hourly': trend_info['hourly'],
+                    'aligned': trend_info['aligned']
                 },
-                'strength': float(trend_strength),
+                'strength': float(trend_info['strength']),
                 'volume_confirmed': volume_confirmed,
                 'description': description
             }
             
         except Exception as e:
             await self.log(f"Trend analysis failed: {str(e)}", level="error")
-            raise TradingError(f"Trend analysis failed: {str(e)}", "ANALYSIS")
+            # Return neutral values on error
+            return {
+                'trend': {
+                    'daily': 0.0,
+                    'hourly': 0.0,
+                    'aligned': False
+                },
+                'strength': 0.0,
+                'volume_confirmed': False,
+                'description': "Error - Unable to analyze trend"
+            }
 
     async def identify_key_levels(self, symbol: str) -> Dict[str, List[float]]:
         """Identify key support and resistance levels"""
