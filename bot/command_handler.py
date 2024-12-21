@@ -828,7 +828,7 @@ class CommandHandler:
             
             # Calculate momentum indicators
             rsi = await self.technical_analyzer.calculate_rsi(data['close'])
-            macd = await self.technical_analyzer._calculate_macd(data)
+            macd = self.technical_analyzer._calculate_macd(data)
             
             # Get current values
             current_rsi = float(rsi.iloc[-1])

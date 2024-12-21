@@ -100,7 +100,7 @@ class TechnicalAnalyzer:
         try:
             # Calculate technical indicators
             rsi = await self.calculate_rsi(data['close'])
-            macd = await self._calculate_macd(data)
+            macd = self._calculate_macd(data)
             bb = await self.calculate_bollinger_bands(data)
             ema_short = await self._calculate_ema(data['close'], 9)
             ema_long = await self._calculate_ema(data['close'], 21)
@@ -1253,7 +1253,7 @@ class TechnicalAnalyzer:
             await self.log(f"Data validation error: {str(e)}", level="error")
             raise TradingError(f"Failed to validate data: {str(e)}", "DATA")
 
-    async def _calculate_macd(self, data: pd.DataFrame) -> Dict[str, pd.Series]:
+    def _calculate_macd(self, data: pd.DataFrame) -> Dict[str, pd.Series]:
         """
         Calculate MACD indicator.
         
@@ -1287,7 +1287,7 @@ class TechnicalAnalyzer:
             }
             
         except Exception as e:
-            await self.log(f"MACD calculation error: {str(e)}", level="error")
+            self.trading_bot.log_sync(f"MACD calculation error: {str(e)}", level="error")
             # Return empty series with same index as input data
             empty = pd.Series(0, index=data.index)
             return {'macd': empty, 'signal': empty, 'histogram': empty}
