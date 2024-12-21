@@ -178,19 +178,29 @@ class CommandHandler:
         """Get RSI value for a symbol with interpretation"""
         try:
             symbol = symbol.upper()
-            current_price = await self.trading_bot.price_manager.get_current_price(symbol)
-            rsi = await self.trading_bot.technical_analyzer.calculate_rsi(symbol)
+            # Get price data from data manager
+            data = await self.trading_bot.data_manager.get_price_data(symbol, TimeFrame.DAY_1)
+            
+            if data is None or len(data) < 15:  # Ensure minimum data points
+                return self._format_error("Insufficient price data for RSI calculation")
+            
+            # Calculate RSI using technical analyzer
+            rsi = await self.trading_bot.technical_analyzer.calculate_rsi(data['close'])
+            current_price = float(data['close'].iloc[-1])
             
             # Add RSI interpretation
-            rsi_status = "Overbought" if rsi > 70 else \
-                        "Oversold" if rsi < 30 else \
-                        "Neutral"
+            rsi_status = "Overbought 🔴" if rsi.iloc[-1] > 70 else \
+                        "Oversold 🟢" if rsi.iloc[-1] < 30 else \
+                        "Neutral ⚪"
             
-            return f"Analysis for {symbol}:\n```" \
-                   f"📊 Technical Analysis:\n" \
-                   f"  • Price: ${current_price:,.2f}\n" \
-                   f"  • RSI: {rsi:.2f} ({rsi_status})\n" \
-                   f"  • Threshold: {self.trading_bot.rsi_oversold} / {self.trading_bot.rsi_overbought}```"
+            return (
+                f"RSI Analysis for {symbol}:\n```"
+                f"📊 Technical Analysis:\n"
+                f"  • Price: ${current_price:,.2f}\n"
+                f"  • RSI: {rsi.iloc[-1]:.2f} ({rsi_status})\n"
+                f"  • Thresholds: {self.trading_bot.config.RSI_OVERSOLD} / {self.trading_bot.config.RSI_OVERBOUGHT}"
+                "```"
+            )
         except Exception as e:
             return self._format_error(str(e))
             
