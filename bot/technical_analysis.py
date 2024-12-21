@@ -313,7 +313,7 @@ class TechnicalAnalyzer:
             
             # Get volume confirmation
             volume_analysis = self._analyze_volume_trend(data)
-            volume_confirmed = volume_analysis['is_favorable']
+            volume_confirmed = volume_analysis.get('is_favorable', False)
             
             # Determine trend description
             if daily_trend == hourly_trend:
@@ -327,9 +327,10 @@ class TechnicalAnalyzer:
                     'hourly': hourly_trend,
                     'aligned': daily_trend == hourly_trend
                 },
-                'strength': trend_strength,
+                'strength': float(trend_strength),
                 'volume_confirmed': volume_confirmed,
-                'description': description
+                'description': description,
+                'volume_trend': volume_analysis.get('description', 'Unknown')
             }
             
         except Exception as e:
@@ -450,53 +451,67 @@ class TechnicalAnalyzer:
         Returns:
             Dict containing volume analysis
         """
-        # Calculate volume metrics
-        volume = data['volume']
-        volume_ma = volume.rolling(window=20).mean()
-        volume_std = volume.rolling(window=20).std()
-        
-        # Get recent volume data
-        current_volume = volume.iloc[-1]
-        recent_volumes = volume.iloc[-5:]  # Last 5 periods
-        
-        # Calculate z-score
-        z_score = (current_volume - float(volume_ma.iloc[-1])) / float(volume_std.iloc[-1])
-        
-        # Calculate trend
-        volume_trend = recent_volumes.mean() / float(volume_ma.iloc[-1])
-        
-        # Determine volume characteristics
-        is_favorable = volume_trend > 1.0 and z_score > -1.0
-        
-        # Score from -1 to 1
-        score = min(1.0, max(-1.0, z_score / 2))
-        
-        # Get descriptive strength
-        if abs(z_score) > 2:
-            strength = "Very High" if z_score > 0 else "Very Low"
-        elif abs(z_score) > 1:
-            strength = "High" if z_score > 0 else "Low"
-        else:
-            strength = "Average"
-        
-        # Get trend description
-        if volume_trend > 1.2:
-            description = "Strongly Increasing"
-        elif volume_trend > 1.0:
-            description = "Moderately Increasing"
-        elif volume_trend < 0.8:
-            description = "Strongly Decreasing"
-        elif volume_trend < 1.0:
-            description = "Moderately Decreasing"
-        else:
-            description = "Stable"
-        
-        return {
-            'score': score,
-            'strength': strength,
-            'description': description,
-            'is_favorable': is_favorable
-        }
+        try:
+            # Calculate volume metrics
+            volume = data['volume']
+            volume_ma = volume.rolling(window=20).mean()
+            volume_std = volume.rolling(window=20).std()
+            
+            # Get recent volume data
+            current_volume = float(volume.iloc[-1])
+            recent_volumes = volume.iloc[-5:]  # Last 5 periods
+            
+            # Calculate z-score
+            current_ma = float(volume_ma.iloc[-1])
+            current_std = float(volume_std.iloc[-1])
+            z_score = (current_volume - current_ma) / current_std if current_std != 0 else 0
+            
+            # Calculate trend
+            volume_trend = float(recent_volumes.mean() / current_ma) if current_ma != 0 else 1.0
+            
+            # Determine volume characteristics
+            is_favorable = volume_trend > 1.0 and z_score > -1.0
+            
+            # Score from -1 to 1
+            score = min(1.0, max(-1.0, z_score / 2))
+            
+            # Get descriptive strength
+            if abs(z_score) > 2:
+                strength = "Very High" if z_score > 0 else "Very Low"
+            elif abs(z_score) > 1:
+                strength = "High" if z_score > 0 else "Low"
+            else:
+                strength = "Average"
+            
+            # Get trend description
+            if volume_trend > 1.2:
+                description = "Strongly Increasing"
+            elif volume_trend > 1.0:
+                description = "Moderately Increasing"
+            elif volume_trend < 0.8:
+                description = "Strongly Decreasing"
+            elif volume_trend < 1.0:
+                description = "Moderately Decreasing"
+            else:
+                description = "Stable"
+            
+            return {
+                'score': float(score),
+                'strength': strength,
+                'description': description,
+                'is_favorable': is_favorable,
+                'trend': description.split()[0].lower()  # For compatibility
+            }
+            
+        except Exception as e:
+            # Return neutral values on error
+            return {
+                'score': 0.0,
+                'strength': "Average",
+                'description': "Stable",
+                'is_favorable': False,
+                'trend': "stable"
+            }
 
     async def _calculate_pivot_points(self, data: pd.DataFrame) -> Dict[str, List[float]]:
         """Calculate pivot points and support/resistance levels"""
