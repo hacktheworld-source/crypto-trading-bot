@@ -64,7 +64,7 @@ class TechnicalAnalyzer:
             signals_1h = await self._calculate_timeframe_signals(data_1h, "1h")
             
             # Calculate trend alignment
-            trend_alignment = self._calculate_trend_alignment(
+            trend_alignment = await self._calculate_trend_alignment(
                 signals_1d['trend'],
                 signals_1h['trend']
             )
@@ -277,7 +277,7 @@ class TechnicalAnalyzer:
         
         return max(-1.0, min(1.0, weighted_score))
         
-    def _calculate_trend_alignment(self, daily_trend: float, h1_trend: float) -> Dict[str, Any]:
+    async def _calculate_trend_alignment(self, daily_trend: float, h1_trend: float) -> Dict[str, Any]:
         """
         Calculate trend alignment across timeframes.
         
