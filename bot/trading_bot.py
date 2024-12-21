@@ -1036,14 +1036,12 @@ class TradingBot:
     async def _get_live_account_value(self) -> float:
         """Get live trading account value from exchange."""
         try:
-            # Get account balance using the correct API method
-            accounts = await self.client.get_accounts()
-            if not accounts:
-                raise TradingError("Failed to fetch accounts", "ACCOUNT")
-                
+            # Get account balance using the Coinbase API
+            accounts = self.client.get_accounts()  # This returns synchronously
+            
             # Find USD account
             usd_account = next(
-                (acc for acc in accounts if acc.currency == 'USD'),
+                (acc for acc in accounts.accounts if acc.currency == 'USD'),
                 None
             )
             
@@ -1051,8 +1049,7 @@ class TradingBot:
                 raise TradingError("USD account not found", "ACCOUNT")
                 
             # Get available balance in USD
-            available_balance = float(usd_account.available_balance)
-            return available_balance
+            return float(usd_account.available_balance.value)
             
         except Exception as e:
             await self.log(f"Live account value fetch error: {str(e)}", level="error")
