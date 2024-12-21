@@ -30,8 +30,8 @@ class DataManager:
         
         # Timeframe configurations with correct Coinbase API granularity values
         self.timeframes = {
-            TimeFrame.HOUR_1: {'days': 14, 'granularity': 'ONE_HOUR'},    # 3600 seconds = 1 hour
-            TimeFrame.DAY_1: {'days': 90, 'granularity': 'ONE_DAY'}     # 86400 seconds = 1 day
+            TimeFrame.HOUR_1: {'days': 30, 'granularity': 'ONE_HOUR'},    # Ensure enough data for RSI
+            TimeFrame.DAY_1: {'days': 90, 'granularity': 'ONE_DAY'}      # Long-term trend
         }
         
         # Rate limiting

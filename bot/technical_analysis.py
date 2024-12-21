@@ -527,8 +527,9 @@ class TechnicalAnalyzer:
     async def check_market_conditions(self, symbol: str) -> Dict[str, Any]:
         """Check market conditions for trading"""
         try:
-            # Get price data
-            data = await self.get_price_data(symbol.upper(), TimeFrame.DAY_1)
+            # Format symbol and get price data
+            symbol = self.data_manager._format_product_id(symbol.upper())
+            data = await self.data_manager.get_price_data(symbol, TimeFrame.DAY_1)
             prices = pd.to_numeric(data['close'], errors='coerce')
             
             # Calculate volatility
