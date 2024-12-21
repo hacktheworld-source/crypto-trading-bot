@@ -30,8 +30,8 @@ class DataManager:
         
         # Timeframe configurations with correct Coinbase API granularity values
         self.timeframes = {
-            TimeFrame.HOUR_1: {'days': 30, 'granularity': 'ONE_HOUR'},    # Ensure enough data for RSI
-            TimeFrame.DAY_1: {'days': 90, 'granularity': 'ONE_DAY'}      # Long-term trend
+            TimeFrame.HOUR_1: {'days': 14, 'granularity': 'ONE_HOUR'},    # 14 days * 24 hours = 336 candles
+            TimeFrame.DAY_1: {'days': 200, 'granularity': 'ONE_DAY'}      # Daily candles, well under limit
         }
         
         # Rate limiting
@@ -159,13 +159,13 @@ class DataManager:
             
             # Calculate time range
             end = datetime.now()
-            days = max(timeframe_config['days'], 30)  # Ensure enough data for analysis
+            days = timeframe_config['days']  # Use configured days directly
             start = end - timedelta(days=days)
             
             # Log request details
             await self.trading_bot.log(
                 f"Fetching {timeframe.name} data for {symbol} "
-                f"(granularity: {timeframe_config['granularity']})",
+                f"(granularity: {timeframe_config['granularity']}, days: {days})",
                 level="debug"
             )
             
@@ -206,6 +206,14 @@ class DataManager:
             df = pd.DataFrame(candles_data)
             df = df.sort_values('timestamp')
             df.set_index('timestamp', inplace=True)
+            
+            # Validate number of candles
+            if len(df) > 350:
+                await self.trading_bot.log(
+                    f"Warning: Got {len(df)} candles, trimming to latest 350",
+                    level="warning"
+                )
+                df = df.iloc[-350:]  # Keep the most recent 350 candles if we somehow get more
             
             if len(df) < 15:  # Minimum required for most indicators
                 raise DataError(f"Insufficient data points for {symbol}: {len(df)}")
