@@ -4,7 +4,6 @@ from enum import Enum
 class TimeFrame(Enum):
     """Trading timeframes supported by Coinbase"""
     HOUR_1 = "ONE_HOUR"    # Short-term momentum
-    HOUR_4 = "FOUR_HOURS"  # Medium-term trend
     DAY_1 = "ONE_DAY"      # Long-term structure
 
 class TradingConstants:
@@ -30,7 +29,6 @@ class TradingConstants:
     CACHE_SIZE = 1000
     CACHE_TTL = {
         TimeFrame.HOUR_1: 300,      # 5 minutes
-        TimeFrame.HOUR_4: 900,      # 15 minutes
         TimeFrame.DAY_1: 3600       # 1 hour
     }
     
@@ -44,8 +42,7 @@ class TradingConstants:
     
     # Timeframe weights for analysis
     TIMEFRAMES = {
-        TimeFrame.DAY_1: {'weight': 0.3, 'periods': 90},   # Market structure
-        TimeFrame.HOUR_4: {'weight': 0.3, 'periods': 60},  # Trend confirmation
+        TimeFrame.DAY_1: {'weight': 0.6, 'periods': 90},   # Market structure
         TimeFrame.HOUR_1: {'weight': 0.4, 'periods': 48}   # Entry timing
     }
     

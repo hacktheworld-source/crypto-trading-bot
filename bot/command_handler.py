@@ -350,20 +350,35 @@ class CommandHandler:
             return "⬇️ " + ("Strong" if value < -0.5 else "Weak") + " Bearish"
 
     # Core Command Methods
-    async def _handle_signals(self, symbol: str = "BTC-USD") -> str:
-        """Get trading signals"""
+    async def _handle_signals(self, message: Message) -> None:
+        """Handle signals command."""
         try:
-            signals = await self.trading_bot.technical_analyzer.get_signals(symbol)
-            return (
-                f"**{symbol} Trading Signals**\n```\n"
-                f"Daily Trend: {self._format_signal_strength(signals['trend']['daily'])}\n"
-                f"Hourly Trend: {self._format_signal_strength(signals['trend']['1h'])}\n"
-                f"Trend Aligned: {'Yes' if signals['trend']['aligned'] else 'No'}\n"
-                f"Strength: {signals['trend']['strength']:.2f}\n"
-                "```"
-            )
+            parts = message.content.split()
+            if len(parts) < 2:
+                await self._send_help_message(message, "signals")
+                return
+                
+            symbol = parts[1].upper()
+            signals = await self.bot.get_signals(symbol)
+            
+            # Format the response
+            response = [f"Signal Analysis for {symbol}:"]
+            
+            for timeframe in ['daily', '1h']:
+                tf_signals = signals['signals'][timeframe]
+                response.append(f"\n{timeframe.upper()} Timeframe:")
+                response.append(f"Trend: {tf_signals['trend']:.2f}")
+                response.append(f"Volume: {tf_signals['volume']:.2f}")
+                response.append(f"Momentum: {tf_signals['momentum']:.2f}")
+            
+            response.append("\nTrend Analysis:")
+            response.append(f"Alignment: {'Aligned' if signals['trend']['aligned'] else 'Mixed'}")
+            response.append(f"Strength: {signals['trend']['strength']:.2f}")
+            
+            await message.reply("\n".join(response))
+            
         except Exception as e:
-            return self.message_formatter.format_error(str(e))
+            await message.reply(f"Error analyzing signals: {str(e)}")
 
     async def _handle_market_conditions(self, symbol: str = "BTC-USD") -> str:
         """Get market conditions"""
@@ -384,32 +399,52 @@ class CommandHandler:
         except Exception as e:
             return self.message_formatter.format_error(str(e))
 
-    async def _handle_rsi(self, symbol: str = "BTC-USD") -> str:
-        """Get RSI analysis"""
+    async def _handle_rsi(self, message: Message) -> None:
+        """Handle RSI command."""
         try:
-            data = await self.trading_bot.data_manager.get_price_data(symbol, TimeFrame.HOUR_1)
-            rsi = await self.trading_bot.technical_analyzer.calculate_rsi(data['close'])
+            parts = message.content.split()
+            if len(parts) < 2:
+                await self._send_help_message(message, "rsi")
+                return
+                
+            symbol = parts[1].upper()
+            timeframe = parts[2].lower() if len(parts) > 2 else "1h"
             
+            # Map timeframe string to TimeFrame enum
+            tf_map = {"1h": TimeFrame.HOUR_1, "daily": TimeFrame.DAY_1}
+            if timeframe not in tf_map:
+                await message.reply(f"Invalid timeframe. Use '1h' or 'daily'")
+                return
+            
+            # Get price data for the specified timeframe
+            data = await self.data_manager.get_price_data(symbol, tf_map[timeframe])
+            if data is None:
+                await message.reply(f"No data available for {symbol}")
+                return
+            
+            # Calculate RSI using existing method
+            rsi = await self.technical_analyzer.calculate_rsi(data['close'])
             current_rsi = float(rsi.iloc[-1])
-            prev_rsi = float(rsi.iloc[-2])
-            rsi_change = current_rsi - prev_rsi
             
-            # Get RSI zones
-            zone = (
-                "Overbought" if current_rsi > 70
-                else "Oversold" if current_rsi < 30
-                else "Neutral"
+            # Determine conditions
+            conditions = []
+            if current_rsi >= 70:
+                conditions.append("Overbought")
+            elif current_rsi <= 30:
+                conditions.append("Oversold")
+            else:
+                conditions.append("Neutral")
+            
+            response = (
+                f"RSI Analysis for {symbol} ({timeframe}):\n"
+                f"Value: {current_rsi:.2f}\n"
+                f"Status: {', '.join(conditions)}"
             )
             
-            return (
-                f"**{symbol} RSI Analysis**\n```\n"
-                f"Current RSI: {current_rsi:.1f}\n"
-                f"Change: {rsi_change:+.1f}\n"
-                f"Zone: {zone}\n"
-                "```"
-            )
+            await message.reply(response)
+            
         except Exception as e:
-            return self.message_formatter.format_error(str(e))
+            await message.reply(f"Error calculating RSI: {str(e)}")
 
     async def _handle_bb_analysis(self, symbol: str = "BTC-USD") -> str:
         """Get Bollinger Bands analysis"""
@@ -839,3 +874,12 @@ class CommandHandler:
             signals.append("Weak")
             
         return " ".join(signals)
+
+    def _get_command_help(self, command: str) -> str:
+        """Get help text for a specific command."""
+        help_texts = {
+            "rsi": "Usage: !rsi <symbol> [timeframe]\nGet RSI analysis for a trading pair. Optional timeframe: 1h (default) or daily",
+            "signals": "Usage: !signals <symbol>\nGet comprehensive signal analysis for a trading pair",
+            # ... other command help texts ...
+        }
+        return help_texts.get(command, "Command not found or help not available.")

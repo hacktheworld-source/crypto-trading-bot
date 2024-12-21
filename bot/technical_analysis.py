@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from bot.exceptions import TradingError, DataError
 from bot.constants import TimeFrame
 import asyncio
+import talib
 
 class TechnicalAnalyzer:
     """Core technical analysis engine"""
@@ -54,33 +55,28 @@ class TechnicalAnalyzer:
             
             # Get data for different timeframes
             data_1d = await self.data_manager.get_price_data(symbol, TimeFrame.DAY_1)
-            data_4h = await self.data_manager.get_price_data(symbol, TimeFrame.HOUR_4)
             data_1h = await self.data_manager.get_price_data(symbol, TimeFrame.HOUR_1)
             
-            if any(data is None for data in [data_1d, data_4h, data_1h]):
+            if any(data is None for data in [data_1d, data_1h]):
                 raise TradingError("Failed to fetch data for signal generation", "DATA")
                 
             # Calculate signals for each timeframe
             signals_1d = self._calculate_timeframe_signals(data_1d, "daily")
-            signals_4h = self._calculate_timeframe_signals(data_4h, "4h")
             signals_1h = self._calculate_timeframe_signals(data_1h, "1h")
             
             # Calculate trend alignment
             trend_alignment = self._calculate_trend_alignment(
                 signals_1d['trend'],
-                signals_4h['trend'],
                 signals_1h['trend']
             )
             
             return {
                 'signals': {
                     'daily': signals_1d,
-                    '4h': signals_4h,
                     '1h': signals_1h
                 },
                 'trend': {
                     'daily': signals_1d['trend'],
-                    '4h': signals_4h['trend'],
                     '1h': signals_1h['trend'],
                     'aligned': trend_alignment['aligned'],
                     'strength': trend_alignment['strength']
@@ -214,8 +210,7 @@ class TechnicalAnalyzer:
         
         return max(-1.0, min(1.0, weighted_score))
         
-    def _calculate_trend_alignment(self, daily_trend: float, h4_trend: float, 
-                                 h1_trend: float) -> Dict[str, Any]:
+    def _calculate_trend_alignment(self, daily_trend: float, h1_trend: float) -> Dict[str, Any]:
         """
         Calculate trend alignment across timeframes.
         
@@ -223,12 +218,12 @@ class TechnicalAnalyzer:
             Dict containing alignment analysis
         """
         # Check if trends are aligned (same direction)
-        trends = [daily_trend, h4_trend, h1_trend]
+        trends = [daily_trend, h1_trend]
         all_positive = all(t > 0 for t in trends)
         all_negative = all(t < 0 for t in trends)
         
         # Calculate alignment strength
-        strength = abs(sum(trends) / 3)  # Average magnitude
+        strength = abs(sum(trends) / 2)  # Average magnitude
         
         return {
             'aligned': all_positive or all_negative,

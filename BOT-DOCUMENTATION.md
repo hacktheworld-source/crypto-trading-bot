@@ -54,27 +54,23 @@ A professional-grade cryptocurrency trading bot that combines technical analysis
 ### Timeframe Analysis
 ```python
 timeframes = {
-    '1h': {'weight': 0.4},  # Short-term momentum and volatility
-    '4h': {'weight': 0.3},  # Medium-term trend confirmation
-    '1d': {'weight': 0.3}   # Long-term market structure
+    '1h': {'weight': 0.4},  # Short-term momentum and entry timing
+    '1d': {'weight': 0.6}   # Market structure and trend direction
 }
 ```
 
 ### Multi-Timeframe Analysis
-- **Daily Analysis (30%)**
+- **Daily Analysis (60%)**
   - Market structure and key levels
   - Long-term trend direction
   - Support/resistance zones
-
-- **4-Hour Analysis (30%)**
-  - Trend confirmation
-  - Market momentum
-  - Volume patterns
+  - Overall market bias
 
 - **Hourly Analysis (40%)**
   - Entry/exit timing
   - Short-term momentum
   - Volume confirmation
+  - Price action patterns
 
 ### Signal Generation and Analysis
 Each timeframe analysis produces:
@@ -86,8 +82,8 @@ Each timeframe analysis produces:
 ### Signal Weighting
 ```python
 confidence_score = (
-    (daily_trend * 0.4) +      # Primary trend direction
-    (hourly_signal * 0.3) +    # Entry timing
+    (daily_trend * 0.6) +      # Primary trend direction
+    (hourly_signal * 0.4) +    # Entry timing and momentum
     (volume_profile * 0.2) +   # Volume confirmation
     (price_level * 0.1)        # Support/Resistance
 )
