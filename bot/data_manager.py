@@ -30,8 +30,8 @@ class DataManager:
         
         # Timeframe configurations with correct Coinbase API granularity values
         self.timeframes = {
-            TimeFrame.HOUR_1: {'days': 14, 'granularity': 'ONE_HOUR'},    # Short-term analysis
-            TimeFrame.DAY_1: {'days': 90, 'granularity': 'ONE_DAY'}      # Long-term trend
+            TimeFrame.HOUR_1: {'days': 14, 'granularity': 3600},    # 3600 seconds = 1 hour
+            TimeFrame.DAY_1: {'days': 90, 'granularity': 86400}     # 86400 seconds = 1 day
         }
         
         # Rate limiting
@@ -139,7 +139,7 @@ class DataManager:
                 timeframe_config = self.timeframes.get(timeframe)
                 if not timeframe_config:
                     await self.trading_bot.log(
-                        f"Unsupported timeframe: {timeframe.name} ({timeframe.value})", 
+                        f"Unsupported timeframe: {timeframe.name}", 
                         level="error"
                     )
                     raise DataError(f"Unsupported timeframe: {timeframe.name}")
@@ -155,14 +155,31 @@ class DataManager:
                     level="debug"
                 )
                 
-                # Get candles from Coinbase
+                # Get candles from Coinbase with numeric granularity
                 try:
-                    response = self.client.get_candles(
-                        product_id=symbol,  # Already formatted by get_price_data
-                        start=int(start.timestamp()),
-                        end=int(end.timestamp()),
+                    response = self.client.get_product_candles(
+                        product_id=symbol,
+                        start=start.isoformat(),
+                        end=end.isoformat(),
                         granularity=timeframe_config['granularity']
                     )
+                    
+                    if not response or not response.candles:
+                        raise DataError(f"No data returned for {symbol}")
+                        
+                    # Convert to DataFrame
+                    df = pd.DataFrame([
+                        {
+                            'timestamp': datetime.fromtimestamp(float(candle.start)),
+                            'open': float(candle.open),
+                            'high': float(candle.high),
+                            'low': float(candle.low),
+                            'close': float(candle.close),
+                            'volume': float(candle.volume)
+                        }
+                        for candle in response.candles
+                    ])
+                    
                 except Exception as api_error:
                     await self.trading_bot.log(
                         f"Coinbase API error: {str(api_error)} "
@@ -171,37 +188,16 @@ class DataManager:
                     )
                     raise DataError(f"Failed to fetch data from Coinbase: {str(api_error)}")
                 
-                if not response.candles:
-                    await self.trading_bot.log(
-                        f"No data returned for {symbol} ({timeframe.name})",
-                        level="error"
-                    )
-                    raise DataError(f"No data available for {symbol}")
-                
-                # Convert to DataFrame
-                df = pd.DataFrame([
-                    {
-                        'timestamp': datetime.fromtimestamp(float(candle.start)),
-                        'open': float(candle.open),
-                        'high': float(candle.high),
-                        'low': float(candle.low),
-                        'close': float(candle.close),
-                        'volume': float(candle.volume)
-                    }
-                    for candle in response.candles
-                ])
-                
-                # Sort by timestamp and set index
-                df = df.sort_values('timestamp')
-                df.set_index('timestamp', inplace=True)
-                
-                # Validate data
                 if len(df) < 2:
                     await self.trading_bot.log(
                         f"Insufficient data points for {symbol} ({timeframe.name}): {len(df)} points",
                         level="error"
                     )
                     raise DataError(f"Insufficient data points for {symbol}")
+                
+                # Sort by timestamp and set index
+                df = df.sort_values('timestamp')
+                df.set_index('timestamp', inplace=True)
                 
                 await self.trading_bot.log(
                     f"Successfully fetched {len(df)} data points for {symbol} ({timeframe.name})",
