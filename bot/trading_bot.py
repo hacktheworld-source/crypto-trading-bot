@@ -81,6 +81,16 @@ class MessageFormatter:
         error_lines = error.split('\n')
         main_error = error_lines[0]
         
+        # Get error details including line number if available
+        error_details = []
+        if isinstance(error, Exception):
+            import traceback
+            tb = traceback.extract_tb(error.__traceback__)
+            if tb:
+                filename = tb[-1].filename.split('/')[-1]  # Get just the filename
+                line_num = tb[-1].lineno
+                error_details.append(f"Location: {filename}, line {line_num}")
+        
         # Format the error message
         formatted_lines = [
             "🚨 Error Alert",
@@ -88,10 +98,17 @@ class MessageFormatter:
             f"- Error: {main_error}"
         ]
         
+        # Add error location if available
+        if error_details:
+            formatted_lines.extend([
+                "# Error Details:",
+                *[f"# {detail}" for detail in error_details]
+            ])
+        
         # Add additional error details if present
         if len(error_lines) > 1:
             formatted_lines.extend([
-                "# Additional Details:",
+                "# Additional Info:",
                 *[f"# {line}" for line in error_lines[1:]]
             ])
             
