@@ -390,8 +390,7 @@ class CommandHandler:
             # Get price data using data manager
             data = await self.data_manager.get_price_data(
                 self.data_manager._format_product_id(symbol.upper()),
-                TimeFrame.HOUR_1,
-                limit=30  # Only need recent data for RSI
+                TimeFrame.HOUR_1
             )
             
             if data is None or len(data) < 15:  # Need at least 15 periods for 14-period RSI
