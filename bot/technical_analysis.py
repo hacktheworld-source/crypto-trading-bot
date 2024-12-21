@@ -199,22 +199,50 @@ class TechnicalAnalyzer:
         Returns:
             Float between -1 and 1 indicating trend strength and direction
         """
-        # Initialize score components
-        ema_score = 1 if price > ema_short > ema_long else -1 if price < ema_short < ema_long else 0
-        bb_score = 1 if price > bb_middle else -1 if price < bb_middle else 0
-        macd_score = 1 if macd > 0 else -1 if macd < 0 else 0
-        rsi_score = 1 if rsi > 60 else -1 if rsi < 40 else 0
-        
-        # Weight and combine scores
-        weighted_score = (
-            ema_score * 0.4 +
-            bb_score * 0.2 +
-            macd_score * 0.2 +
-            rsi_score * 0.2
-        )
-        
-        return max(-1.0, min(1.0, weighted_score))
-        
+        try:
+            # Calculate price momentum
+            price_momentum = (price - bb_middle) / bb_middle
+            
+            # Initialize score components with more granular scoring
+            ema_score = (
+                1.0 if price > ema_short > ema_long else
+                -1.0 if price < ema_short < ema_long else
+                0.5 if price > ema_long else
+                -0.5 if price < ema_long else
+                0.0
+            )
+            
+            # BB score with distance consideration
+            bb_distance = abs(price - bb_middle) / bb_middle
+            bb_score = (1.0 if price > bb_middle else -1.0) * min(1.0, bb_distance * 10)
+            
+            # MACD score with magnitude consideration
+            macd_score = max(-1.0, min(1.0, macd))
+            
+            # RSI score with more granular zones
+            rsi_score = (
+                1.0 if rsi > 70 else
+                0.5 if rsi > 60 else
+                -0.5 if rsi < 40 else
+                -1.0 if rsi < 30 else
+                0.0
+            )
+            
+            # Weight and combine scores
+            weighted_score = (
+                ema_score * 0.35 +      # Trend following
+                bb_score * 0.25 +       # Price position
+                macd_score * 0.25 +     # Momentum
+                rsi_score * 0.15        # Overbought/Oversold
+            )
+            
+            # Ensure the score is between -1 and 1
+            return max(-1.0, min(1.0, weighted_score))
+            
+        except Exception as e:
+            await self.log(f"Trend score calculation error: {str(e)}", level="error")
+            return 0.0  # Neutral score on error
+            
     def _calculate_momentum_score(self, rsi: float, macd: float, 
                                 signal: float, data: pd.DataFrame) -> float:
         """
@@ -256,19 +284,33 @@ class TechnicalAnalyzer:
         Returns:
             Dict containing alignment analysis
         """
-        # Check if trends are aligned (same direction)
-        trends = [daily_trend, h1_trend]
-        all_positive = all(t > 0 for t in trends)
-        all_negative = all(t < 0 for t in trends)
-        
-        # Calculate alignment strength
-        strength = abs(sum(trends) / 2)  # Average magnitude
-        
-        return {
-            'aligned': all_positive or all_negative,
-            'strength': strength,
-            'direction': 'bullish' if all_positive else 'bearish' if all_negative else 'mixed'
-        }
+        try:
+            # Check if trends are aligned (same direction and significant)
+            daily_significant = abs(daily_trend) > 0.2
+            h1_significant = abs(h1_trend) > 0.2
+            
+            same_direction = (daily_trend > 0 and h1_trend > 0) or (daily_trend < 0 and h1_trend < 0)
+            
+            # Calculate alignment strength
+            strength = (abs(daily_trend) * 0.6 + abs(h1_trend) * 0.4)  # Weight daily more heavily
+            
+            return {
+                'aligned': same_direction and daily_significant and h1_significant,
+                'strength': strength,
+                'direction': (
+                    'bullish' if daily_trend > 0 and h1_trend > 0 else
+                    'bearish' if daily_trend < 0 and h1_trend < 0 else
+                    'mixed'
+                )
+            }
+            
+        except Exception as e:
+            await self.log(f"Trend alignment calculation error: {str(e)}", level="error")
+            return {
+                'aligned': False,
+                'strength': 0.0,
+                'direction': 'mixed'
+            }
 
     def _combine_signals(self, signals: Dict[str, Dict]) -> Dict[str, Any]:
         """Combine signals from all timeframes into one decision"""
