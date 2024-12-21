@@ -1106,7 +1106,7 @@ class TechnicalAnalyzer:
             # Calculate position size based on volatility
             base_position = 1.0
             vol_adjustment = max(0.5, 1 - (volatility / 100))  # Reduce size for high volatility
-            position_size = base_position * vol_adjustment * signals['confidence']
+            position_size = base_position * vol_adjustment * signals['trend']['strength']
             
             # Determine trend description
             if signals['trend']['aligned']:
@@ -1114,6 +1114,9 @@ class TechnicalAnalyzer:
             else:
                 trend_desc = "Mixed - Daily: " + ("Up" if signals['trend']['daily'] > 0 else "Down") + \
                            ", Hourly: " + ("Up" if signals['trend']['hourly'] > 0 else "Down")
+            
+            # Calculate confidence score
+            confidence = abs(signals['trend']['strength']) * vol_adjustment
             
             return {
                 'price': current_price,
@@ -1126,8 +1129,9 @@ class TechnicalAnalyzer:
                     'description': trend_desc
                 },
                 'rsi': float(rsi.iloc[-1]),
-                'volume_confirmed': signals['volume_confirmed'],
-                'strength': signals['confidence'],
+                'volume_confirmed': signals['signals']['daily'].get('volume_confirmed', False),
+                'strength': signals['trend']['strength'],
+                'confidence': confidence,  # Add confidence score
                 'position_size': position_size
             }
             
@@ -1283,7 +1287,7 @@ class TechnicalAnalyzer:
             }
             
         except Exception as e:
-            await self.trading_bot.log(f"MACD calculation error: {str(e)}", level="error")
+            await self.log(f"MACD calculation error: {str(e)}", level="error")
             # Return empty series with same index as input data
             empty = pd.Series(0, index=data.index)
             return {'macd': empty, 'signal': empty, 'histogram': empty}
@@ -1304,3 +1308,113 @@ class TechnicalAnalyzer:
         except Exception as e:
             await self.trading_bot.log(f"EMA calculation error: {str(e)}", level="error")
             return pd.Series(0, index=data.index)
+
+    def _consolidate_levels(self, *level_lists: List[float], tolerance: float = 0.01) -> List[float]:
+        """
+        Consolidate multiple lists of price levels into a single list, merging nearby levels.
+        
+        Args:
+            *level_lists: Variable number of lists containing price levels
+            tolerance: Percentage difference to consider levels as the same
+            
+        Returns:
+            List of consolidated price levels
+        """
+        # Combine all levels into a single list
+        all_levels = []
+        for levels in level_lists:
+            all_levels.extend(levels)
+            
+        if not all_levels:
+            return []
+            
+        # Sort levels
+        all_levels = sorted(all_levels)
+        
+        # Consolidate nearby levels
+        consolidated = []
+        current_group = [all_levels[0]]
+        
+        for level in all_levels[1:]:
+            # Check if level is within tolerance of current group average
+            group_avg = sum(current_group) / len(current_group)
+            if abs(level - group_avg) / group_avg <= tolerance:
+                current_group.append(level)
+            else:
+                # Add average of current group to consolidated list
+                consolidated.append(sum(current_group) / len(current_group))
+                current_group = [level]
+                
+        # Add final group
+        if current_group:
+            consolidated.append(sum(current_group) / len(current_group))
+            
+        return consolidated
+
+    async def get_volume_profile(self, symbol: str) -> Dict[str, Any]:
+        """
+        Get volume profile analysis for a symbol.
+        
+        Args:
+            symbol: Trading pair symbol
+            
+        Returns:
+            Dict containing volume profile analysis
+            
+        Raises:
+            TradingError: If analysis fails
+        """
+        try:
+            # Get hourly data for more granular analysis
+            data = await self.data_manager.get_price_data(
+                self.data_manager._format_product_id(symbol.upper()),
+                TimeFrame.HOUR_1
+            )
+            
+            if data is None or len(data) < 24:  # Need at least 24 hours
+                raise TradingError(
+                    f"Insufficient data for {symbol}. Need at least 24 hours.",
+                    "ANALYSIS"
+                )
+            
+            # Calculate price levels
+            price_range = data['high'].max() - data['low'].min()
+            num_levels = 50  # Number of price levels to analyze
+            level_size = price_range / num_levels
+            
+            # Initialize volume profile
+            levels = []
+            total_volume = float(data['volume'].sum())
+            
+            # Calculate volume for each price level
+            current_price = float(data['low'].min())
+            for _ in range(num_levels):
+                # Find trades within this price level
+                mask = (data['low'] <= current_price + level_size) & (data['high'] >= current_price)
+                level_volume = float(data.loc[mask, 'volume'].sum())
+                
+                if level_volume > 0:
+                    levels.append({
+                        'price': current_price + (level_size / 2),  # Mid-point of level
+                        'volume': level_volume,
+                        'percentage': (level_volume / total_volume) * 100
+                    })
+                
+                current_price += level_size
+            
+            # Sort levels by volume
+            levels = sorted(levels, key=lambda x: x['volume'], reverse=True)
+            
+            return {
+                'total_volume': total_volume,
+                'levels': levels,
+                'level_count': len(levels),
+                'high_volume_zones': [
+                    level for level in levels
+                    if level['percentage'] > 5  # More than 5% of total volume
+                ]
+            }
+            
+        except Exception as e:
+            await self.log(f"Volume profile analysis error: {str(e)}", level="error")
+            raise TradingError(f"Failed to analyze volume profile: {str(e)}", "ANALYSIS")
