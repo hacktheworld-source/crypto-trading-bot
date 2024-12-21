@@ -52,8 +52,12 @@ async def on_message(message):
         return
 
     if message.content.startswith('!'):
-        command = message.content[1:].split()[0]
-        args = message.content.split()[1:]
+        # Parse command and arguments
+        parts = message.content[1:].split()
+        command = parts[0].lower()
+        args = parts[1:]
+        
+        # Handle command and send response
         response = await command_handler.handle_command(command, *args)
         await message.channel.send(response)
 

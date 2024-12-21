@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 import asyncio
 import pandas as pd
 import logging
+from discord import Message
 from bot.constants import TradingConstants, TimeFrame
 
 class CommandHandler:
@@ -78,48 +79,34 @@ class CommandHandler:
             'signals': self.get_signals
         }
     
-    async def handle_command(self, command: str, args: List[str], message: Message) -> None:
+    async def handle_command(self, command: str, *args: str) -> str:
         """
         Handle incoming bot commands.
         
         Args:
             command: Command name without prefix
-            args: List of command arguments
-            message: Original message object
+            *args: Command arguments
+            
+        Returns:
+            str: Response message
             
         Raises:
             CommandError: If command handling fails
         """
         try:
-            # Get symbol from args or use default
-            symbol = args[0].upper() if args else self.settings['default_symbol']
-            symbol = self.technical_analyzer.data_manager._format_product_id(symbol)
+            # Get the command handler
+            handler = self.commands.get(command.lower())
+            if not handler:
+                return f"Unknown command: {command}"
+
+            # Execute the command
+            return await handler(*args)
             
-            # Handle commands
-            if command == "help":
-                await self._handle_help(message)
-            elif command == "price":
-                await self._handle_price(symbol, message)
-            elif command == "signals":
-                await self._handle_signals(symbol, message)
-            elif command == "conditions":
-                await self._handle_conditions(symbol, message)
-            elif command == "rsi":
-                await self._handle_rsi(symbol, message)
-            elif command == "macd":
-                await self._handle_macd(symbol, message)
-            elif command == "bb":
-                await self._handle_bb(symbol, message)
-            elif command == "volume":
-                await self._handle_volume(symbol, message)
-            else:
-                await message.reply(f"Unknown command: {command}")
-                
         except Exception as e:
             error_msg = f"Command failed: {str(e)}"
-            await self.log(error_msg, level="error")
-            await message.reply(error_msg)
-            
+            await self.trading_bot.log(error_msg, level="error")
+            return error_msg
+    
     async def _handle_help(self, message: Message) -> None:
         """Send help message with available commands"""
         help_text = (
