@@ -297,15 +297,19 @@ class TechnicalAnalyzer:
             current_price = float(data['close'].iloc[-1])
             
             # Calculate EMAs for trend determination
-            ema_short = self._calculate_ema(data['close'], 9)
-            ema_long = self._calculate_ema(data['close'], 21)
+            ema_short = await self._calculate_ema(data['close'], 9)
+            ema_long = await self._calculate_ema(data['close'], 21)
+            
+            # Get latest EMA values
+            latest_ema_short = float(ema_short.iloc[-1])
+            latest_ema_long = float(ema_long.iloc[-1])
             
             # Determine trend direction
-            daily_trend = 1 if current_price > float(ema_long.iloc[-1]) else -1
-            hourly_trend = 1 if current_price > float(ema_short.iloc[-1]) else -1
+            daily_trend = 1 if current_price > latest_ema_long else -1
+            hourly_trend = 1 if current_price > latest_ema_short else -1
             
             # Calculate trend strength
-            trend_strength = abs(current_price - float(ema_long.iloc[-1])) / float(ema_long.iloc[-1]) * 100
+            trend_strength = abs(current_price - latest_ema_long) / latest_ema_long * 100
             
             # Get volume confirmation
             volume_analysis = self._analyze_volume_trend(data)
