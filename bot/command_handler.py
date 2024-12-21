@@ -612,3 +612,28 @@ class CommandHandler:
             return self.message_formatter.format_error("Invalid percentage value")
         except Exception as e:
             return self.message_formatter.format_error(str(e))
+
+    async def _handle_ma_analysis(self, symbol: str = "BTC-USD") -> str:
+        """Get moving average analysis"""
+        try:
+            analysis = await self.trading_bot.technical_analyzer.get_ma_analysis(symbol)
+            return analysis
+        except Exception as e:
+            return self.message_formatter.format_error(str(e))
+
+    async def _handle_stats(self) -> str:
+        """Get trading statistics"""
+        try:
+            stats = await self.trading_bot.get_trading_stats()
+            return (
+                "Trading Statistics:\n```\n"
+                f"Total Trades: {stats['total_trades']}\n"
+                f"Win Rate: {stats['win_rate']*100:.1f}%\n"
+                f"Average Profit: ${stats['avg_profit']:.2f}\n"
+                f"Max Drawdown: {stats['max_drawdown']*100:.1f}%\n"
+                f"Active Positions: {stats['active_positions']}\n"
+                f"Closed Positions: {stats['closed_positions']}\n"
+                "```"
+            )
+        except Exception as e:
+            return self.message_formatter.format_error(str(e))
