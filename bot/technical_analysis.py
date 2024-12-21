@@ -100,10 +100,10 @@ class TechnicalAnalyzer:
         try:
             # Calculate technical indicators
             rsi = await self.calculate_rsi(data['close'])
-            macd = self._calculate_macd(data)
+            macd = await self._calculate_macd(data)
             bb = await self.calculate_bollinger_bands(data)
-            ema_short = self._calculate_ema(data['close'], 9)
-            ema_long = self._calculate_ema(data['close'], 21)
+            ema_short = await self._calculate_ema(data['close'], 9)
+            ema_long = await self._calculate_ema(data['close'], 21)
             
             # Get latest values with proper error handling
             try:
@@ -131,7 +131,7 @@ class TechnicalAnalyzer:
                 raise TradingError("Failed to get latest values", "ANALYSIS")
             
             # Calculate trend
-            trend_score = self._calculate_trend_score(
+            trend_score = await self._calculate_trend_score(
                 current_price,
                 current_ema_short,
                 current_ema_long,
@@ -184,7 +184,7 @@ class TechnicalAnalyzer:
                 }
             }
         
-    def _calculate_trend_score(self, price: float, ema_short: float, 
+    async def _calculate_trend_score(self, price: float, ema_short: float, 
                              ema_long: float, bb_middle: float,
                              macd: float, rsi: float) -> float:
         """
@@ -338,9 +338,9 @@ class TechnicalAnalyzer:
             daily_data = await self.data_manager.get_price_data(symbol, TimeFrame.DAY_1)
             
             # Multiple methods for robustness
-            pivot_levels = self._calculate_pivot_points(daily_data)
+            pivot_levels = await self._calculate_pivot_points(daily_data)
             volume_levels = await self.analyze_volume_profile(symbol)
-            swing_levels = self._identify_swing_levels(daily_data)
+            swing_levels = await self._identify_swing_levels(daily_data)
             
             return {
                 'support': self._consolidate_levels(
@@ -365,10 +365,10 @@ class TechnicalAnalyzer:
             data = await self.data_manager.get_price_data(symbol, TimeFrame.HOUR_1)
             
             # Calculate volume-weighted price levels
-            volume_profile = self._calculate_volume_profile(data)
+            volume_profile = await self._calculate_volume_profile(data)
             
             # Identify high-volume nodes
-            significant_levels = self._find_volume_nodes(volume_profile)
+            significant_levels = await self._find_volume_nodes(volume_profile)
             
             # Volume trend analysis
             volume_trend = self._analyze_volume_trend(data)
@@ -384,7 +384,7 @@ class TechnicalAnalyzer:
             await self.log(f"Volume analysis error: {str(e)}", level="error")
             raise TradingError(f"Failed to analyze volume: {str(e)}", "ANALYSIS")
 
-    def _calculate_volume_profile(self, data: pd.DataFrame) -> Dict[str, Any]:
+    async def _calculate_volume_profile(self, data: pd.DataFrame) -> Dict[str, Any]:
         """Calculate volume profile and price levels"""
         try:
             price_range = data['high'].max() - data['low'].min()
@@ -412,7 +412,7 @@ class TechnicalAnalyzer:
             await self.trading_bot.log(f"Volume profile calculation error: {str(e)}", level="error")
             return {}
 
-    def _find_volume_nodes(self, volume_profile: Dict[str, Any]) -> List[float]:
+    async def _find_volume_nodes(self, volume_profile: Dict[str, Any]) -> List[float]:
         """Identify significant volume nodes"""
         try:
             if not volume_profile:
@@ -494,7 +494,7 @@ class TechnicalAnalyzer:
             'is_favorable': is_favorable
         }
 
-    def _calculate_pivot_points(self, data: pd.DataFrame) -> Dict[str, List[float]]:
+    async def _calculate_pivot_points(self, data: pd.DataFrame) -> Dict[str, List[float]]:
         """Calculate pivot points and support/resistance levels"""
         try:
             # Get most recent data point
@@ -521,7 +521,7 @@ class TechnicalAnalyzer:
             await self.trading_bot.log(f"Pivot point calculation error: {str(e)}", level="error")
             return {'pivot': 0, 'resistance': [], 'support': []}
 
-    def _identify_swing_levels(self, data: pd.DataFrame, window: int = 20) -> Dict[str, List[float]]:
+    async def _identify_swing_levels(self, data: pd.DataFrame, window: int = 20) -> Dict[str, List[float]]:
         """Identify swing highs and lows"""
         try:
             highs = []
@@ -1149,7 +1149,7 @@ class TechnicalAnalyzer:
             await self.log(f"Data validation error: {str(e)}", level="error")
             raise TradingError(f"Failed to validate data: {str(e)}", "DATA")
 
-    def _calculate_macd(self, data: pd.DataFrame) -> Dict[str, pd.Series]:
+    async def _calculate_macd(self, data: pd.DataFrame) -> Dict[str, pd.Series]:
         """
         Calculate MACD indicator.
         
@@ -1188,7 +1188,7 @@ class TechnicalAnalyzer:
             empty = pd.Series(0, index=data.index)
             return {'macd': empty, 'signal': empty, 'histogram': empty}
 
-    def _calculate_ema(self, data: pd.Series, period: int) -> pd.Series:
+    async def _calculate_ema(self, data: pd.Series, period: int) -> pd.Series:
         """
         Calculate Exponential Moving Average.
         
