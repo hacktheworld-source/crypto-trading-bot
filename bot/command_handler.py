@@ -5,6 +5,11 @@ import pandas as pd
 import logging
 from discord import Message
 from bot.constants import TradingConstants, TimeFrame
+from bot.exceptions import TradingError
+
+class CommandError(Exception):
+    """Custom exception for command handling errors"""
+    pass
 
 class CommandHandler:
     """
@@ -30,6 +35,7 @@ class CommandHandler:
         self.trading_bot = trading_bot
         self.data_manager = trading_bot.data_manager
         self.message_formatter = trading_bot.message_formatter
+        self.technical_analyzer = trading_bot.technical_analyzer
         self.commands = self._initialize_commands()
     
     def _initialize_commands(self) -> Dict[str, callable]:
@@ -77,7 +83,13 @@ class CommandHandler:
             'set_daily_var': self._handle_set_daily_var,
             'set_trailing_stop': self._handle_set_trailing_stop,
             'set_take_profit': self._handle_set_take_profit,
-            'signals': self._handle_signals
+            'signals': self._handle_signals,
+            'macd': self._handle_macd_analysis,
+            'levels': self._handle_key_levels,
+            'patterns': self._handle_price_patterns,
+            'vprofile': self._handle_volume_profile,
+            'trend': self._handle_trend_strength,
+            'momentum': self._handle_momentum
         }
     
     async def handle_command(self, command: str, *args: str) -> str:
@@ -128,13 +140,22 @@ class CommandHandler:
             "!start - Start trading\n"
             "!stop - Stop trading\n\n"
             
-            "Market Analysis:\n"
-            "!price <symbol> - Get current price\n"
-            "!signals <symbol> - Get trading signals\n"
-            "!conditions <symbol> - Get market conditions\n"
+            "Technical Analysis:\n"
+            "!price <symbol> - Get current price and 24h change\n"
+            "!trend <symbol> - Get trend strength and direction\n"
+            "!momentum <symbol> - Get momentum indicators\n"
+            "!macd <symbol> - Get MACD analysis\n"
             "!rsi <symbol> - Get RSI indicator\n"
             "!bb <symbol> - Get Bollinger Bands\n"
-            "!volume <symbol> - Get volume analysis\n"
+            "!ma <symbol> - Get moving average analysis\n"
+            "!levels <symbol> - Get support/resistance levels\n"
+            "!patterns <symbol> - Get price action patterns\n"
+            "!volume <symbol> - Get basic volume analysis\n"
+            "!vprofile <symbol> - Get detailed volume profile\n\n"
+            
+            "Market Analysis:\n"
+            "!signals <symbol> - Get all trading signals\n"
+            "!conditions <symbol> - Get market conditions\n"
             "!sentiment <symbol> - Get market sentiment\n\n"
             
             "Position & Portfolio:\n"
@@ -647,3 +668,174 @@ class CommandHandler:
             )
         except Exception as e:
             return self.message_formatter.format_error(str(e))
+
+    async def _handle_macd_analysis(self, symbol: str = "BTC-USD") -> str:
+        """Get MACD analysis"""
+        try:
+            macd = await self.technical_analyzer._calculate_macd(
+                await self.data_manager.get_price_data(symbol, TimeFrame.HOUR_1)
+            )
+            
+            current_macd = float(macd['macd'].iloc[-1])
+            current_signal = float(macd['signal'].iloc[-1])
+            current_hist = float(macd['histogram'].iloc[-1])
+            
+            signal = "Bullish" if current_macd > current_signal else "Bearish"
+            strength = "Strong" if abs(current_hist) > abs(macd['histogram'].mean()) else "Weak"
+            
+            return (
+                f"**{symbol} MACD Analysis**\n```\n"
+                f"MACD: {current_macd:.2f}\n"
+                f"Signal: {current_signal:.2f}\n"
+                f"Histogram: {current_hist:+.2f}\n"
+                f"Signal: {strength} {signal}\n"
+                "```"
+            )
+        except Exception as e:
+            return self.message_formatter.format_error(str(e))
+
+    async def _handle_key_levels(self, symbol: str = "BTC-USD") -> str:
+        """Get key support and resistance levels"""
+        try:
+            levels = await self.technical_analyzer.identify_key_levels(symbol)
+            current_price = await self.data_manager.get_current_price(symbol)
+            
+            # Format support levels
+            support_levels = [f"${level:,.2f}" for level in levels['support'] if level < current_price]
+            resistance_levels = [f"${level:,.2f}" for level in levels['resistance'] if level > current_price]
+            
+            return (
+                f"**{symbol} Key Levels**\n```\n"
+                f"Current Price: ${current_price:,.2f}\n\n"
+                f"Support Levels:\n{chr(10).join(support_levels)}\n\n"
+                f"Resistance Levels:\n{chr(10).join(resistance_levels)}\n"
+                "```"
+            )
+        except Exception as e:
+            return self.message_formatter.format_error(str(e))
+
+    async def _handle_price_patterns(self, symbol: str = "BTC-USD") -> str:
+        """Get price action patterns"""
+        try:
+            data = await self.data_manager.get_price_data(symbol, TimeFrame.HOUR_1)
+            current_price = float(data['close'].iloc[-1])
+            
+            # Analyze recent price action
+            high = float(data['high'].max())
+            low = float(data['low'].min())
+            trend = "Uptrend" if current_price > data['close'].mean() else "Downtrend"
+            
+            # Calculate price swings
+            swings = await self.technical_analyzer._identify_swing_levels(data)
+            
+            return (
+                f"**{symbol} Price Patterns**\n```\n"
+                f"Current Trend: {trend}\n"
+                f"Recent High: ${high:,.2f}\n"
+                f"Recent Low: ${low:,.2f}\n"
+                f"Swing Highs: {len(swings['resistance'])}\n"
+                f"Swing Lows: {len(swings['support'])}\n"
+                "```"
+            )
+        except Exception as e:
+            return self.message_formatter.format_error(str(e))
+
+    async def _handle_volume_profile(self, symbol: str = "BTC-USD") -> str:
+        """Get detailed volume profile analysis"""
+        try:
+            profile = await self.technical_analyzer.get_volume_profile(symbol)
+            
+            # Find high volume nodes
+            significant_levels = [
+                level for level in profile['levels']
+                if level['volume'] > profile['total_volume'] * 0.1
+            ]
+            
+            return (
+                f"**{symbol} Volume Profile**\n```\n"
+                f"Total Volume: {profile['total_volume']:,.2f}\n"
+                f"High Volume Nodes:\n"
+                + "\n".join([
+                    f"${level['price']:,.2f}: {level['volume']:,.2f}"
+                    for level in significant_levels[:5]
+                ]) +
+                "```"
+            )
+        except Exception as e:
+            return self.message_formatter.format_error(str(e))
+
+    async def _handle_trend_strength(self, symbol: str = "BTC-USD") -> str:
+        """Get trend strength analysis"""
+        try:
+            signals = await self.technical_analyzer.get_signals(symbol)
+            
+            # Calculate trend metrics
+            trend_score = signals['trend']['daily']
+            momentum = signals['signals']['daily']['momentum']
+            volume_confirmed = signals['volume_confirmed']
+            
+            # Calculate overall strength
+            strength = abs(trend_score)
+            direction = "Bullish" if trend_score > 0 else "Bearish"
+            
+            return (
+                f"**{symbol} Trend Strength**\n```\n"
+                f"Direction: {direction}\n"
+                f"Strength: {strength:.2f}\n"
+                f"Momentum: {momentum:+.2f}\n"
+                f"Volume Confirmed: {'Yes' if volume_confirmed else 'No'}\n"
+                f"Multiple Timeframes Aligned: {'Yes' if signals['trend']['aligned'] else 'No'}\n"
+                "```"
+            )
+        except Exception as e:
+            return self.message_formatter.format_error(str(e))
+
+    async def _handle_momentum(self, symbol: str = "BTC-USD") -> str:
+        """Get momentum indicators analysis"""
+        try:
+            data = await self.data_manager.get_price_data(symbol, TimeFrame.HOUR_1)
+            
+            # Calculate momentum indicators
+            rsi = await self.technical_analyzer.calculate_rsi(data['close'])
+            macd = await self.technical_analyzer._calculate_macd(data)
+            
+            # Get current values
+            current_rsi = float(rsi.iloc[-1])
+            current_macd = float(macd['macd'].iloc[-1])
+            current_signal = float(macd['signal'].iloc[-1])
+            
+            # Calculate rate of change
+            roc = ((data['close'].iloc[-1] / data['close'].iloc[-20]) - 1) * 100
+            
+            return (
+                f"**{symbol} Momentum Analysis**\n```\n"
+                f"RSI: {current_rsi:.1f}\n"
+                f"MACD Signal: {'Bullish' if current_macd > current_signal else 'Bearish'}\n"
+                f"Rate of Change (20): {roc:+.2f}%\n"
+                f"Overall Momentum: {self._get_momentum_signal(current_rsi, current_macd, roc)}\n"
+                "```"
+            )
+        except Exception as e:
+            return self.message_formatter.format_error(str(e))
+
+    def _get_momentum_signal(self, rsi: float, macd: float, roc: float) -> str:
+        """Get combined momentum signal"""
+        signals = []
+        if rsi > 70:
+            signals.append("Overbought")
+        elif rsi < 30:
+            signals.append("Oversold")
+        
+        if macd > 0:
+            signals.append("Bullish")
+        else:
+            signals.append("Bearish")
+            
+        if abs(roc) > 10:
+            signals.append("Strong")
+        elif abs(roc) > 5:
+            signals.append("Moderate")
+        else:
+            signals.append("Weak")
+            
+        return " ".join(signals)

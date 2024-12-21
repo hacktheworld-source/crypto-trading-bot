@@ -10,6 +10,10 @@ class TimeFrame(Enum):
 class TradingConstants:
     """Trading-related constants"""
     
+    # Data Requirements
+    MIN_DATA_POINTS = 30  # Minimum data points needed for analysis
+    MAX_CANDLES = 300    # Maximum candles to request (Coinbase limit is 350)
+    
     # Minimum amounts
     MIN_TRADE_USD = 10.0
     MIN_POSITION_SIZE = 0.001
