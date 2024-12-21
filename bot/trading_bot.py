@@ -1010,7 +1010,8 @@ class TradingBot:
         """Get current account balance with portfolio breakdown."""
         try:
             if self.paper_trading:
-                return f"Paper Trading Balance: ${await self._calculate_paper_account_value():.2f}"
+                paper_value = await self._calculate_paper_account_value()
+                return f"Paper Trading Balance: ${paper_value:.2f}"
             else:
                 portfolio = await self._get_live_account_value()
                 
@@ -1069,24 +1070,25 @@ class TradingBot:
             
             # Process all accounts
             for acc in accounts.accounts:
-                balance = float(acc.available_balance['value'])
-                if balance > 0:  # Only process accounts with non-zero balance
-                    if acc.currency == 'USD':
-                        portfolio['cash_balance'] = balance
-                        portfolio['total_value'] += balance
-                    elif acc.type == 'ACCOUNT_TYPE_CRYPTO':
-                        # Get current price for crypto
-                        try:
-                            current_price = await self.data_manager.get_current_price(acc.currency)
-                            usd_value = balance * current_price
-                            portfolio['crypto_holdings'].append({
-                                'currency': acc.currency,
-                                'amount': balance,
-                                'usd_value': usd_value
-                            })
-                            portfolio['total_value'] += usd_value
-                        except Exception as e:
-                            await self.log(f"Error getting price for {acc.currency}: {str(e)}", level="error")
+                if acc.available_balance and 'value' in acc.available_balance:
+                    balance = float(acc.available_balance['value'])
+                    if balance > 0:  # Only process accounts with non-zero balance
+                        if acc.currency == 'USD':
+                            portfolio['cash_balance'] = balance
+                            portfolio['total_value'] += balance
+                        elif acc.type == 'ACCOUNT_TYPE_CRYPTO':
+                            # Get current price for crypto
+                            try:
+                                current_price = await self.data_manager.get_current_price(acc.currency)
+                                usd_value = balance * current_price
+                                portfolio['crypto_holdings'].append({
+                                    'currency': acc.currency,
+                                    'amount': balance,
+                                    'usd_value': usd_value
+                                })
+                                portfolio['total_value'] += usd_value
+                            except Exception as e:
+                                await self.log(f"Error getting price for {acc.currency}: {str(e)}", level="error")
             
             return portfolio
             
