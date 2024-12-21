@@ -76,13 +76,27 @@ class MessageFormatter:
 
     @staticmethod
     def format_error(error: str) -> str:
-        """Format error messages."""
-        return (
-            "🚨 Error Alert\n"
-            "```diff\n"
-            f"- {error}\n"
-            "```"
-        )
+        """Format error messages with detailed information."""
+        # Split error message if it contains multiple lines
+        error_lines = error.split('\n')
+        main_error = error_lines[0]
+        
+        # Format the error message
+        formatted_lines = [
+            "🚨 Error Alert",
+            "```diff",
+            f"- Error: {main_error}"
+        ]
+        
+        # Add additional error details if present
+        if len(error_lines) > 1:
+            formatted_lines.extend([
+                "# Additional Details:",
+                *[f"# {line}" for line in error_lines[1:]]
+            ])
+            
+        formatted_lines.append("```")
+        return "\n".join(formatted_lines)
 
     @staticmethod
     def format_risk_alert(message: str, level: str = "warning") -> str:
@@ -1013,31 +1027,51 @@ class TradingBot:
                 paper_value = await self._calculate_paper_account_value()
                 return f"Paper Trading Balance: ${paper_value:.2f}"
             else:
-                portfolio = await self._get_live_account_value()
+                try:
+                    portfolio = await self._get_live_account_value()
+                    
+                    # Build response string
+                    response = [
+                        "Portfolio Breakdown:",
+                        f"Cash Balance: ${float(portfolio['cash_balance']):.2f}"  # Ensure float conversion
+                    ]
+                    
+                    # Add crypto holdings if any exist
+                    if portfolio['crypto_holdings']:
+                        response.append("\nCrypto Holdings:")
+                        for holding in portfolio['crypto_holdings']:
+                            # Ensure float conversion for all numeric values
+                            amount = float(holding['amount'])
+                            usd_value = float(holding['usd_value'])
+                            response.append(
+                                f"{holding['currency']}: {amount:.8f} "
+                                f"(${usd_value:.2f})"
+                            )
+                    
+                    # Add total value
+                    response.append(f"\nTotal Portfolio Value: ${float(portfolio['total_value']):.2f}")
+                    
+                    return "\n".join(response)
+                    
+                except KeyError as ke:
+                    error_msg = f"Missing data in portfolio response: {str(ke)}"
+                    await self.log(error_msg, level="error")
+                    raise TradingError("Portfolio data structure error", {"details": error_msg})
+                except ValueError as ve:
+                    error_msg = f"Invalid numeric value in portfolio data: {str(ve)}"
+                    await self.log(error_msg, level="error")
+                    raise TradingError("Portfolio value conversion error", {"details": error_msg})
                 
-                # Build response string
-                response = [
-                    "Portfolio Breakdown:",
-                    f"Cash Balance: ${portfolio['cash_balance']}"
-                ]
-                
-                # Add crypto holdings if any exist
-                if portfolio['crypto_holdings']:
-                    response.append("\nCrypto Holdings:")
-                    for holding in portfolio['crypto_holdings']:
-                        response.append(
-                            f"{holding['currency']}: {holding['amount']} "
-                            f"(${holding['usd_value']})"
-                        )
-                
-                # Add total value
-                response.append(f"\nTotal Portfolio Value: ${portfolio['total_value']}")
-                
-                return "\n".join(response)
-                
+        except TradingError as te:
+            # Re-raise TradingError with more context
+            raise te
         except Exception as e:
-            await self.log(f"Failed to get account balance: {str(e)}", level="error")
-            raise TradingError("Failed to get account balance", {"error": str(e)})
+            error_msg = (
+                f"Failed to get account balance: {str(e)}\n"
+                f"Error type: {type(e).__name__}"
+            )
+            await self.log(error_msg, level="error")
+            raise TradingError("Account balance retrieval failed", {"error": error_msg})
 
     async def _calculate_paper_account_value(self) -> float:
         """Calculate paper trading account value."""
