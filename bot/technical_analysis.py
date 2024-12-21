@@ -557,8 +557,8 @@ class TechnicalAnalyzer:
             # Convert to float series if needed
             prices = pd.to_numeric(prices, errors='coerce')
             
-            # Drop any NaN values
-            prices = prices.dropna()
+            # Drop any NaN values and reset index
+            prices = prices.dropna().reset_index(drop=True)
             
             # Validate data length
             if len(prices) < period + 1:
@@ -570,8 +570,8 @@ class TechnicalAnalyzer:
             # Calculate price changes
             delta = prices.diff()
             
-            # Drop the first NaN value from diff
-            delta = delta.dropna()
+            # Drop the first NaN value from diff and reset index
+            delta = delta.dropna().reset_index(drop=True)
             
             # Separate gains and losses
             gains = delta.where(delta > 0, 0)
@@ -593,10 +593,8 @@ class TechnicalAnalyzer:
                 avg_losses.append(avg_loss)
             
             # Create Series with proper index alignment
-            # Use the index starting after the initial period, accounting for the dropped NaN
-            rsi_index = prices.index[period+1:]  # +1 to account for the dropped diff NaN
-            avg_gains_series = pd.Series(avg_gains, index=rsi_index)
-            avg_losses_series = pd.Series(avg_losses, index=rsi_index)
+            avg_gains_series = pd.Series(avg_gains)
+            avg_losses_series = pd.Series(avg_losses)
             
             # Calculate RS
             rs = avg_gains_series / avg_losses_series
@@ -618,6 +616,9 @@ class TechnicalAnalyzer:
             # Validate final output
             if pd.isna(rsi.iloc[-1]):
                 raise TradingError("Invalid RSI calculation result", "ANALYSIS")
+            
+            # Restore the original index for the final values
+            rsi.index = prices.index[period:]
             
             return rsi
             
