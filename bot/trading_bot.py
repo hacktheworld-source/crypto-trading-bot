@@ -1039,13 +1039,6 @@ class TradingBot:
             # Get account balance using the Coinbase API
             accounts = self.client.get_accounts()  # This returns synchronously
             
-            # Debug log the complete response
-            await self.log(f"Coinbase API Response Structure: {accounts}", level="info")
-            await self.log(f"Response type: {type(accounts)}", level="info")
-            
-            if hasattr(accounts, 'accounts'):
-                await self.log(f"First account structure: {accounts.accounts[0] if accounts.accounts else 'No accounts'}", level="info")
-            
             # Find USD account
             usd_account = next(
                 (acc for acc in accounts.accounts if acc.currency == 'USD'),
@@ -1055,15 +1048,9 @@ class TradingBot:
             if not usd_account:
                 raise TradingError("USD account not found", "ACCOUNT")
             
-            # Log the USD account structure
-            await self.log(f"USD Account Structure: {usd_account}", level="info")
-            await self.log(f"USD Account type: {type(usd_account)}", level="info")
-            
-            # Get available balance in USD - we'll log before attempting to access
-            await self.log(f"Available Balance Structure: {usd_account.available_balance}", level="info")
-            
-            # For now, return 0 until we see the actual structure
-            return 0.0
+            # Get available balance in USD - the value is in the nested available_balance dictionary
+            balance_str = usd_account.available_balance['value']
+            return float(balance_str)
             
         except Exception as e:
             await self.log(f"Live account value fetch error: {str(e)}", level="error")
