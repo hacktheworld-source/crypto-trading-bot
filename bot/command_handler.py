@@ -397,8 +397,8 @@ class CommandHandler:
                     f"Insufficient data for {symbol}. Need at least 30 days."
                 )
             
-            # Calculate RSI using daily data
-            rsi = await self.technical_analyzer.calculate_rsi(data['close'])
+            # Calculate RSI using daily data with 14-day period
+            rsi = await self.technical_analyzer.calculate_rsi(data['close'], period=14)
             
             # Get current and previous values
             current_rsi = float(rsi.iloc[-1])
@@ -421,7 +421,7 @@ class CommandHandler:
             rsi_low = float(rsi.iloc[-30:].min())
             
             return (
-                f"**{symbol} RSI Analysis (30D)**\n```\n"
+                f"**{symbol} RSI Analysis (14D RSI, 30D Range)**\n```\n"
                 f"Current RSI: {current_rsi:.1f} {trend_emoji}\n"
                 f"Change: {rsi_change:+.1f}\n"
                 f"Zone: {zone} {zone_emoji}\n"
