@@ -399,19 +399,21 @@ class DataManager:
             await self.trading_bot.log(f"Error getting market depth: {str(e)}", level="error")
             raise TradingError(f"Failed to get market depth: {str(e)}", "DATA")
 
-    def _clean_cache(self) -> None:
+    async def _clean_cache(self) -> None:
         """Remove expired cache entries."""
         try:
             current_time = time.time()
             expired_keys = []
             
-            for key, (_, timestamp) in self.cache.items():
+            for key, (_, timestamp) in self._cache.items():
                 timeframe = key.split('_')[1]
-                if current_time - timestamp > self.cache_ttl[timeframe]:
+                timeframe_obj = TimeFrame[timeframe]
+                ttl = TradingConstants.CACHE_TTL.get(timeframe_obj, 3600)
+                if current_time - timestamp > ttl:
                     expired_keys.append(key)
             
             for key in expired_keys:
-                del self.cache[key]
+                del self._cache[key]
                 
         except Exception as e:
             await self.trading_bot.log(f"Error cleaning cache: {str(e)}", level="error")
