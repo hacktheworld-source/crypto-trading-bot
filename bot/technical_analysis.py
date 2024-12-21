@@ -570,13 +570,16 @@ class TechnicalAnalyzer:
             # Calculate price changes
             delta = prices.diff()
             
+            # Drop the first NaN value from diff
+            delta = delta.dropna()
+            
             # Separate gains and losses
             gains = delta.where(delta > 0, 0)
             losses = -delta.where(delta < 0, 0)
             
             # First average - simple average for initial period
-            first_avg_gain = gains.iloc[:period].mean()
-            first_avg_loss = losses.iloc[:period].mean()
+            first_avg_gain = gains[:period].mean()
+            first_avg_loss = losses[:period].mean()
             
             # Initialize lists for gains and losses
             avg_gains = [first_avg_gain]
@@ -590,7 +593,8 @@ class TechnicalAnalyzer:
                 avg_losses.append(avg_loss)
             
             # Create Series with proper index alignment
-            rsi_index = prices.index[period:]  # Get the correct index starting from period
+            # Use the index starting after the initial period, accounting for the dropped NaN
+            rsi_index = prices.index[period+1:]  # +1 to account for the dropped diff NaN
             avg_gains_series = pd.Series(avg_gains, index=rsi_index)
             avg_losses_series = pd.Series(avg_losses, index=rsi_index)
             
