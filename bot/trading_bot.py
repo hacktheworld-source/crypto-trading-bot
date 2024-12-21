@@ -1018,7 +1018,7 @@ class TradingBot:
                 # Build response string
                 response = [
                     "Portfolio Breakdown:",
-                    f"Cash Balance: ${portfolio['cash_balance']:.2f}"
+                    f"Cash Balance: ${portfolio['cash_balance']}"
                 ]
                 
                 # Add crypto holdings if any exist
@@ -1026,12 +1026,12 @@ class TradingBot:
                     response.append("\nCrypto Holdings:")
                     for holding in portfolio['crypto_holdings']:
                         response.append(
-                            f"{holding['currency']}: {holding['amount']:.8f} "
-                            f"(${holding['usd_value']:.2f})"
+                            f"{holding['currency']}: {holding['amount']} "
+                            f"(${holding['usd_value']})"
                         )
                 
                 # Add total value
-                response.append(f"\nTotal Portfolio Value: ${portfolio['total_value']:.2f}")
+                response.append(f"\nTotal Portfolio Value: ${portfolio['total_value']}")
                 
                 return "\n".join(response)
                 
