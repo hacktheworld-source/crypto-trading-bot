@@ -630,24 +630,6 @@ class TradingBot:
                             )
                             await self.log(entry_check_msg, level="info")
                             
-                            # Skip immediate trading loop if this is initial analysis
-                            if not hasattr(self, '_initial_analysis_complete'):
-                                self._initial_analysis_complete = True
-                                continue  # Skip to next symbol
-                                
-                            if entry_conditions:
-                                await self.send_notification(
-                                    f"🎯 Entry conditions met for {symbol}\n"
-                                    f"Current price: ${full_analysis['price']:,.2f}\n"
-                                    f"Signal: {signals['action'].upper()} (Confidence: {signals['score']*100:.1f}%)\n"
-                                    f"Market Score: {market_conditions['market_alignment']['score']:+.2f}\n"
-                                    f"Recommendation: {market_conditions['trading_summary']['recommendation']}",
-                                    "alert"
-                                )
-                                await self._execute_entry(symbol)
-                            
-                            await self.log(f"✅ Completed analysis for {symbol}", level="info")
-                            
                             # Format detailed analysis result for final summary
                             result = (
                                 f"Symbol: {symbol}\n"
@@ -680,6 +662,23 @@ class TradingBot:
                             )
                             analysis_results.append(result)
                             await self.log(f"Added analysis for {symbol} (Total results: {len(analysis_results)})", level="debug")
+                            
+                            # Skip immediate trading loop if this is initial analysis
+                            if not hasattr(self, '_initial_analysis_complete'):
+                                self._initial_analysis_complete = True
+                                await self.log(f"✅ Completed analysis for {symbol}", level="info")
+                                continue  # Skip to next symbol
+                                
+                            if entry_conditions:
+                                await self.send_notification(
+                                    f"🎯 Entry conditions met for {symbol}\n"
+                                    f"Current price: ${full_analysis['price']:,.2f}\n"
+                                    f"Signal: {signals['action'].upper()} (Confidence: {signals['score']*100:.1f}%)\n"
+                                    f"Market Score: {market_conditions['market_alignment']['score']:+.2f}\n"
+                                    f"Recommendation: {market_conditions['trading_summary']['recommendation']}",
+                                    "alert"
+                                )
+                                await self._execute_entry(symbol)
                             
                             await self.log(f"✅ Completed analysis for {symbol}", level="info")
                             
