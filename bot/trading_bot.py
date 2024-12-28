@@ -539,7 +539,6 @@ class TradingBot:
                     # 3. Comprehensive Analysis for all coins
                     await self.log(f"🔍 Beginning analysis of {len(self.watched_symbols)} coins...", level="info")
                     
-                    analysis_results = []
                     analyzed_symbols = set()  # Track which symbols we've analyzed
                     
                     for symbol in sorted(self.watched_symbols):  # Sort for consistent order
@@ -630,46 +629,6 @@ class TradingBot:
                             )
                             await self.log(entry_check_msg, level="info")
                             
-                            # Format detailed analysis result for final summary
-                            result = (
-                                f"Symbol: {symbol}\n"
-                                f"Action: {signals['action'].upper()}\n"
-                                f"Confidence: {signals['score']*100:.1f}%\n\n"
-                                f"Price: ${full_analysis['price']:,.2f}\n"
-                                f"24h Change: {full_analysis['price_change_24h']:+.2f}%\n\n"
-                                f"Trend Analysis:\n"
-                                f"• Direction: {full_analysis['trend']['description']}\n"
-                                f"• Daily: {full_analysis['trend']['daily']:+.2f}\n"
-                                f"• Hourly: {full_analysis['trend']['hourly']:+.2f}\n"
-                                f"• Aligned: {'Yes' if full_analysis['trend']['aligned'] else 'No'}\n\n"
-                                f"Momentum:\n"
-                                f"• RSI: {full_analysis['rsi']:.1f}\n"
-                                f"• MACD: {signals['signals']['momentum']:+.2f}\n"
-                                f"• Strength: {full_analysis['strength']:+.2f}\n\n"
-                                f"Volatility:\n"
-                                f"• BB Width: {bb['bandwidth']:.1f}%\n"
-                                f"• BB Signal: {bb['signal']}\n"
-                                f"• ATR: {market_conditions['price_action']['atr']:.4f}\n\n"
-                                f"Volume:\n"
-                                f"• Trend: {market_conditions['volume']['trend']}\n"
-                                f"• Ratio: {market_conditions['volume']['ratio']:.2f}\n"
-                                f"• Confirmed: {'Yes' if full_analysis['volume_confirmed'] else 'No'}\n\n"
-                                f"Market Conditions:\n"
-                                f"• Score: {market_conditions['market_alignment']['score']:+.2f}\n"
-                                f"• Volatility: {'High' if market_conditions['volatility']['is_high'] else 'Normal'}\n"
-                                f"• Recommendation: {market_conditions['trading_summary']['recommendation']}\n\n"
-                                f"Entry Conditions: {'PASS' if entry_conditions else 'FAIL'}"
-                            )
-                            analysis_results.append(result)
-                            await self.log(f"Added analysis for {symbol} (Total results: {len(analysis_results)})", level="debug")
-                            
-                            await self.log(f"✅ Completed analysis for {symbol}", level="info")
-                            
-                            # Check if this is initial analysis after adding results
-                            if not hasattr(self, '_initial_analysis_complete'):
-                                self._initial_analysis_complete = True
-                                continue  # Skip to next symbol
-                                
                             if entry_conditions:
                                 await self.send_notification(
                                     f"🎯 Entry conditions met for {symbol}\n"
@@ -686,11 +645,8 @@ class TradingBot:
                         except Exception as e:
                             await self.log(f"❌ Error analyzing {symbol}: {str(e)}", level="error")
                     
-                    # Send analysis summary if we have watched symbols
-                    if analysis_results:
-                        await self.log("📊 Sending comprehensive analysis results...", level="info")
-                        summary = "📊 Comprehensive Analysis:\n```\n" + "\n\n" + "\n\n".join(analysis_results) + "```"
-                        await self.send_notification(summary, category="analysis")
+                    await self.log("⏳ Waiting 5 minutes until next analysis...", level="info")
+                    await asyncio.sleep(self.config.TRADING_INTERVAL)
                     
                 except Exception as e:
                     await self.log(f"❌ Trading loop iteration error: {str(e)}", level="error")
