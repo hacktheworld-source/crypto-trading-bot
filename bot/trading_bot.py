@@ -1380,3 +1380,282 @@ class TradingBot:
                 )
         except Exception as e:
             await self.log(f"Position metrics update error: {str(e)}", level="error")
+
+    async def _execute_paper_order(self, symbol: str, quantity: float, price: float, side: str) -> bool:
+        """
+        Execute a paper trading order.
+        
+        Args:
+            symbol: Trading pair symbol
+            quantity: Order quantity
+            price: Target price
+            side: Order side ('buy' or 'sell')
+            
+        Returns:
+            bool: True if order was executed successfully
+        """
+        try:
+            # Validate inputs
+            if quantity <= 0:
+                await self.log(f"Invalid quantity for {symbol}", level="error")
+                return False
+                
+            if price <= 0:
+                await self.log(f"Invalid price for {symbol}", level="error")
+                return False
+                
+            # Get current market price
+            current_price = await self.data_manager.get_current_price(symbol)
+            
+            # For paper trading, we'll assume the order fills at current price
+            execution_price = current_price
+            
+            # Calculate order value and fees (using Coinbase Advanced Trade taker fees)
+            order_value = execution_price * quantity
+            # Default taker fee is 0.6% (we assume taker orders for paper trading simplicity)
+            fee_rate = 0.006  
+            fee_amount = order_value * fee_rate
+            
+            # Create or update position
+            if side == "buy":
+                # For buys, add fee to total cost
+                total_cost = order_value + fee_amount
+                
+                # Check if we have enough paper balance
+                if total_cost > self.config.PAPER_BALANCE:
+                    await self.log(f"Insufficient paper trading balance for {symbol}", level="error")
+                    return False
+                    
+                if symbol not in self.positions:
+                    # Create new position
+                    self.positions[symbol] = Position(
+                        symbol=symbol,
+                        entry_price=execution_price,
+                        initial_quantity=quantity,
+                        remaining_quantity=quantity,
+                        side="long",
+                        entry_time=datetime.now(),
+                        trading_bot=self,
+                        fees_paid=fee_amount  # Track fees
+                    )
+                else:
+                    # Update existing position
+                    position = self.positions[symbol]
+                    # Calculate new average entry price (including fees)
+                    total_value = (position.entry_price * position.remaining_quantity) + (execution_price * quantity)
+                    total_quantity = position.remaining_quantity + quantity
+                    position.entry_price = total_value / total_quantity
+                    position.remaining_quantity = total_quantity
+                    position.fees_paid += fee_amount  # Add to total fees
+                    
+                # Deduct from paper balance
+                self.config.PAPER_BALANCE -= total_cost
+                    
+            elif side == "sell":
+                if symbol not in self.positions:
+                    await self.log(f"No position found for {symbol}", level="error")
+                    return False
+                    
+                position = self.positions[symbol]
+                if quantity > position.remaining_quantity:
+                    await self.log(f"Insufficient quantity for {symbol}", level="error")
+                    return False
+                    
+                # For sells, subtract fee from proceeds
+                sell_proceeds = order_value - fee_amount
+                position.fees_paid += fee_amount  # Add to total fees
+                
+                # Update position
+                position.remaining_quantity -= quantity
+                
+                # Add proceeds to paper balance
+                self.config.PAPER_BALANCE += sell_proceeds
+                
+                # If position is fully closed, calculate final P/L and remove
+                if position.remaining_quantity == 0:
+                    # Calculate total P/L including all fees
+                    total_profit = sell_proceeds - (position.entry_price * quantity) - position.fees_paid
+                    history_entry = {
+                        'symbol': symbol,
+                        'entry_price': position.entry_price,
+                        'exit_price': execution_price,
+                        'initial_quantity': position.initial_quantity,
+                        'partial_exits': [exit.__dict__ for exit in position.partial_exits],
+                        'scale_levels': [level.__dict__ for level in position.scale_levels],
+                        'entry_time': position.entry_time,
+                        'exit_time': datetime.now(),
+                        'total_profit': total_profit,
+                        'total_fees': position.fees_paid
+                    }
+                    self.position_history.append(history_entry)
+                    del self.positions[symbol]
+                    
+            await self.log(
+                f"Paper order executed - {symbol} {side.upper()}: "
+                f"Quantity: {quantity:.8f}, Price: ${execution_price:.2f}, "
+                f"Fees: ${fee_amount:.2f}",
+                level="info"
+            )
+            return True
+            
+        except Exception as e:
+            await self.log(f"Paper order execution error: {str(e)}", level="error")
+            return False
+
+    async def _execute_order(self, symbol: str, quantity: float, side: str) -> bool:
+        """
+        High-level order execution method that routes to paper or live trading.
+        
+        Args:
+            symbol: Trading pair symbol
+            quantity: Order quantity
+            side: Order side ('buy' or 'sell')
+            
+        Returns:
+            bool: True if order was executed successfully
+        """
+        try:
+            # Get current price for execution
+            current_price = await self.data_manager.get_current_price(symbol)
+            
+            # Route to appropriate execution method
+            if self.paper_trading:
+                return await self._execute_paper_order(symbol, quantity, current_price, side)
+            else:
+                return await self._execute_live_order(symbol, quantity, current_price, side)
+                
+        except Exception as e:
+            await self.log(f"Order execution error: {str(e)}", level="error")
+            return False
+            
+    async def _execute_live_order(self, symbol: str, quantity: float, price: float, side: str) -> bool:
+        """
+        Execute a live order using the Coinbase Advanced Trade API.
+        
+        Args:
+            symbol: Trading pair symbol
+            quantity: Order quantity
+            price: Target price
+            side: Order side ('buy' or 'sell')
+            
+        Returns:
+            bool: True if order was executed successfully
+        """
+        try:
+            # Validate inputs
+            if quantity <= 0:
+                await self.log(f"Invalid quantity for {symbol}", level="error")
+                return False
+                
+            if price <= 0:
+                await self.log(f"Invalid price for {symbol}", level="error")
+                return False
+                
+            # Format trading pair for Coinbase (e.g., BTC-USD)
+            product_id = f"{symbol}-USD"
+            
+            # Calculate order value and validate against account balance
+            order_value = price * quantity
+            if side == "buy":
+                account = await self._get_live_account_value()
+                if order_value > account['cash_balance']:
+                    await self.log(f"Insufficient balance for {symbol} order", level="error")
+                    return False
+            
+            try:
+                # Create market order
+                order = self.client.create_market_order(
+                    product_id=product_id,
+                    side=side.upper(),
+                    size=str(quantity)  # Coinbase requires string values
+                )
+                
+                # Wait for order to fill
+                filled = False
+                max_attempts = 10
+                attempts = 0
+                
+                while not filled and attempts < max_attempts:
+                    order_status = self.client.get_order(order.order_id)
+                    if order_status.status == "FILLED":
+                        filled = True
+                        execution_price = float(order_status.average_filled_price)
+                        filled_size = float(order_status.filled_size)
+                        
+                        # Calculate actual fees paid
+                        fee_amount = float(order_status.total_fees)
+                        
+                        # Update position tracking
+                        if side == "buy":
+                            if symbol not in self.positions:
+                                # Create new position
+                                self.positions[symbol] = Position(
+                                    symbol=symbol,
+                                    entry_price=execution_price,
+                                    initial_quantity=filled_size,
+                                    remaining_quantity=filled_size,
+                                    side="long",
+                                    entry_time=datetime.now(),
+                                    trading_bot=self,
+                                    fees_paid=fee_amount
+                                )
+                            else:
+                                # Update existing position
+                                position = self.positions[symbol]
+                                total_value = (position.entry_price * position.remaining_quantity) + (execution_price * filled_size)
+                                total_quantity = position.remaining_quantity + filled_size
+                                position.entry_price = total_value / total_quantity
+                                position.remaining_quantity = total_quantity
+                                position.fees_paid += fee_amount
+                                
+                        elif side == "sell":
+                            position = self.positions[symbol]
+                            position.remaining_quantity -= filled_size
+                            position.fees_paid += fee_amount
+                            
+                            # If position is fully closed, record history
+                            if position.remaining_quantity == 0:
+                                total_profit = (execution_price - position.entry_price) * filled_size - position.fees_paid
+                                history_entry = {
+                                    'symbol': symbol,
+                                    'entry_price': position.entry_price,
+                                    'exit_price': execution_price,
+                                    'initial_quantity': position.initial_quantity,
+                                    'partial_exits': [exit.__dict__ for exit in position.partial_exits],
+                                    'scale_levels': [level.__dict__ for level in position.scale_levels],
+                                    'entry_time': position.entry_time,
+                                    'exit_time': datetime.now(),
+                                    'total_profit': total_profit,
+                                    'total_fees': position.fees_paid
+                                }
+                                self.position_history.append(history_entry)
+                                del self.positions[symbol]
+                        
+                        await self.log(
+                            f"Live order executed - {symbol} {side.upper()}: "
+                            f"Quantity: {filled_size:.8f}, Price: ${execution_price:.2f}, "
+                            f"Fees: ${fee_amount:.2f}",
+                            level="info"
+                        )
+                        return True
+                        
+                    elif order_status.status in ["FAILED", "CANCELLED", "EXPIRED"]:
+                        await self.log(f"Order failed: {order_status.status}", level="error")
+                        return False
+                        
+                    attempts += 1
+                    await asyncio.sleep(1)  # Wait 1 second between checks
+                    
+                if not filled:
+                    await self.log("Order timed out waiting for fill", level="error")
+                    # Attempt to cancel order
+                    self.client.cancel_orders(order_ids=[order.order_id])
+                    return False
+                    
+            except Exception as e:
+                await self.log(f"Coinbase API error: {str(e)}", level="error")
+                return False
+                
+        except Exception as e:
+            await self.log(f"Live order execution error: {str(e)}", level="error")
+            return False

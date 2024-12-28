@@ -27,53 +27,67 @@ class Position:
         trading_bot,
         symbol: str,
         entry_price: float,
-        quantity: float,
-        is_paper: bool = False
+        initial_quantity: float,
+        remaining_quantity: float,
+        side: str,
+        entry_time: datetime,
+        fees_paid: float = 0.0  # Add fees tracking
     ):
         self.trading_bot = trading_bot
         self.symbol = symbol
         self.entry_price = entry_price
-        self.quantity = quantity
-        self.is_paper = is_paper
+        self.initial_quantity = initial_quantity
+        self.remaining_quantity = remaining_quantity
+        self.side = side
+        self.entry_time = entry_time
+        self.fees_paid = fees_paid  # Track total fees paid
         
-        # Core metrics
+        # Initialize metrics
         self.current_price = entry_price
-        self.entry_time = datetime.now()
         self.unrealized_pnl = 0.0
+        self.unrealized_pnl_pct = 0.0
+        self.unrealized_pnl_change = 0.0
         
-        # Risk levels
-        self.stop_loss = entry_price * (1 - trading_bot.config.STOP_LOSS_PERCENTAGE / 100)
-        self.take_profit = entry_price * (1 + trading_bot.config.TAKE_PROFIT_PERCENTAGE / 100)
+        # Risk management
+        self.stop_loss = entry_price * (1 - self.trading_bot.config.STOP_LOSS_PERCENTAGE/100)
+        self.take_profit = entry_price * (1 + self.trading_bot.config.TAKE_PROFIT_PERCENTAGE/100)
+        self.trailing_stop = None
         
-        # Position scaling
-        self.scale_levels: List[ScaleLevel] = []
-        self.partial_exits: List[PartialExit] = []
-        self.initial_quantity = quantity
-        self.remaining_quantity = quantity
+        # Position management
+        self.partial_exits = []
+        self.scale_levels = []
         
         # Trailing stop configuration
-        self.trailing_stop_enabled = trading_bot.config.TRAILING_STOP_ENABLED
-        self.trailing_stop_distance = trading_bot.config.TRAILING_STOP_PERCENTAGE / 100
-        self.trailing_stop_activation = trading_bot.config.TAKE_PROFIT_PERCENTAGE / 100 * 0.5  # Activate at 50% of take profit
+        self.trailing_stop_enabled = self.trading_bot.config.TRAILING_STOP_ENABLED
+        self.trailing_stop_distance = self.trading_bot.config.TRAILING_STOP_PERCENTAGE / 100
+        self.trailing_stop_activation = self.trading_bot.config.TAKE_PROFIT_PERCENTAGE / 100 * 0.5  # Activate at 50% of take profit
         self.highest_price = entry_price
         self.trailing_stop_price = None
 
     async def update_metrics(self, current_price: float) -> None:
-        """Update position metrics and check scaling conditions"""
+        """Update position metrics with current price."""
         try:
+            prev_pnl = self.unrealized_pnl
             self.current_price = current_price
+            
+            # Calculate unrealized P/L (excluding fees until position is closed)
             self.unrealized_pnl = (current_price - self.entry_price) * self.remaining_quantity
+            self.unrealized_pnl_pct = ((current_price - self.entry_price) / self.entry_price) * 100
+            self.unrealized_pnl_change = self.unrealized_pnl - prev_pnl
             
-            # Update trailing stop if enabled
-            if self.trailing_stop_enabled:
-                await self._update_trailing_stop(current_price)
+            # Update trailing stop if needed
+            await self._update_trailing_stop(current_price)
             
-            # Check scale levels
+            # Check and execute scale levels
             await self._check_scale_levels(current_price)
             
+            # Check for partial profit taking
+            if await self._should_take_partial_profit(current_price):
+                await self.execute_partial_exit(current_price)
+                
         except Exception as e:
-            await self.trading_bot.log(f"Metrics update error: {str(e)}", level="error")
-
+            await self.trading_bot.log(f"Position metrics update error: {str(e)}", level="error")
+            
     async def _update_trailing_stop(self, current_price: float) -> None:
         """Update trailing stop based on profit levels"""
         try:
@@ -234,4 +248,22 @@ class Position:
                 for exit in self.partial_exits
             ],
             'is_paper': self.is_paper
+        }
+
+    def get_metrics(self) -> Dict[str, Any]:
+        """Get current position metrics."""
+        return {
+            'symbol': self.symbol,
+            'side': self.side,
+            'entry_price': self.entry_price,
+            'current_price': self.current_price,
+            'initial_quantity': self.initial_quantity,
+            'remaining_quantity': self.remaining_quantity,
+            'unrealized_pnl': self.unrealized_pnl,
+            'unrealized_pnl_pct': self.unrealized_pnl_pct,
+            'fees_paid': self.fees_paid,  # Include fees in metrics
+            'stop_loss': self.stop_loss,
+            'take_profit': self.take_profit,
+            'trailing_stop': self.trailing_stop,
+            'entry_time': self.entry_time
         }
