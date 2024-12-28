@@ -1279,7 +1279,7 @@ class TradingBot:
             # Component signals (normalized to -1 to 1 scale)
             trend_signal = analysis['trend']['daily'] * 0.4  # 40% weight
             momentum_signal = analysis['signals']['daily']['momentum'] * 0.3  # 30% weight
-            volume_signal = analysis['volume_confirmed'] * 0.2  # 20% weight
+            volume_signal = float(analysis['signals']['daily'].get('volume_confirmed', False)) * 0.2  # 20% weight
             
             # Risk component based on volatility and market conditions
             risk_score = await self._calculate_risk_score(symbol)
