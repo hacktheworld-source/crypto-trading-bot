@@ -518,170 +518,7 @@ class TradingBot:
                 "success"
             )
             
-            # Perform immediate analysis when starting
-            await self.log("🔄 Starting initial analysis of all watched coins...", level="info")
-            
-            try:
-                # 1. Update Global State
-                await self.log("📊 Updating global state and positions...", level="info")
-                await self.update_account_state()
-                await self.update_positions()
-                
-                # 2. Position Management
-                if self.positions:
-                    await self.log("📈 Managing existing positions...", level="info")
-                    for symbol, position in self.positions.items():
-                        await self._manage_position(symbol)
-                
-                # 3. Comprehensive Analysis for all coins
-                await self.log(f"🔍 Beginning analysis of {len(self.watched_symbols)} coins...", level="info")
-                
-                analysis_results = []
-                analyzed_symbols = set()  # Track which symbols we've analyzed
-                
-                for symbol in self.watched_symbols:
-                    if symbol in analyzed_symbols:  # Skip if already analyzed
-                        continue
-                        
-                    analyzed_symbols.add(symbol)
-                    await self.log(f"⚡ Analyzing {symbol}...", level="info")
-                    
-                    try:
-                        # Get all analysis components
-                        await self.log(f"  • Getting full analysis for {symbol}", level="info")
-                        full_analysis = await self.technical_analyzer.get_full_analysis(symbol)
-                        
-                        await self.log(f"  • Calculating trade signals for {symbol}", level="info")
-                        signals = await self._calculate_trade_signal(symbol)
-                        
-                        await self.log(f"  • Checking market conditions for {symbol}", level="info")
-                        market_conditions = await self.technical_analyzer.check_market_conditions(symbol)
-                        
-                        await self.log(f"  • Calculating Bollinger Bands for {symbol}", level="info")
-                        bb = await self.technical_analyzer.calculate_bollinger_bands(symbol)
-                        
-                        # Calculate volume signal properly
-                        volume_signal = 0.0
-                        if full_analysis['volume_confirmed']:
-                            volume_trend = market_conditions['volume']['trend']
-                            if volume_trend == "Strongly Increasing":
-                                volume_signal = 0.2
-                            elif volume_trend == "Increasing":
-                                volume_signal = 0.1
-                            elif volume_trend == "Strongly Decreasing":
-                                volume_signal = -0.2
-                            elif volume_trend == "Decreasing":
-                                volume_signal = -0.1
-                        
-                        # Update signals with proper volume signal
-                        signals['signals']['volume'] = volume_signal
-                        
-                        # Recalculate total score with updated volume signal
-                        total_score = (
-                            signals['signals']['trend'] +
-                            signals['signals']['momentum'] +
-                            volume_signal +
-                            signals['signals']['risk']
-                        )
-                        signals['score'] = total_score
-                        
-                        # Send individual coin analysis to notifications
-                        coin_summary = (
-                            f"Analysis Complete for {symbol}:\n```\n"
-                            f"Action: {signals['action'].upper()} (Confidence: {signals['score']*100:.1f}%)\n"
-                            f"Price: ${full_analysis['price']:,.2f} ({full_analysis['price_change_24h']:+.2f}%)\n\n"
-                            f"Signal Components:\n"
-                            f"• Trend: {signals['signals']['trend']:+.2f}\n"
-                            f"• Momentum: {signals['signals']['momentum']:+.2f}\n"
-                            f"• Volume: {signals['signals']['volume']:+.2f}\n"
-                            f"• Risk: {signals['signals']['risk']:+.2f}\n\n"
-                            f"Market Conditions:\n"
-                            f"• Trend Aligned: {'Yes' if market_conditions['market_alignment']['aligned'] else 'No'}\n"
-                            f"• Volatility: {'High' if market_conditions['volatility']['is_high'] else 'Normal'}\n"
-                            f"• Volume Trend: {market_conditions['volume']['trend']}\n"
-                            f"• RSI: {full_analysis['rsi']:.1f}\n"
-                            "```"
-                        )
-                        await self.send_notification(coin_summary, "analysis")
-                        
-                        # Check entry conditions and notify about analysis
-                        await self.log(f"  • Checking entry conditions for {symbol}", level="info")
-                        entry_conditions = await self._should_enter_position(symbol)
-                        
-                        # Log entry condition check results
-                        entry_check_msg = (
-                            f"Entry Conditions for {symbol}:\n"
-                            f"• Signal Score: {signals['score']*100:.1f}% ({'PASS' if abs(signals['score']) > 0.2 else 'FAIL'}) [Required: >20%]\n"
-                            f"• Trend Aligned: {'PASS' if market_conditions['market_alignment']['aligned'] else 'FAIL'} "
-                            f"[Score: {market_conditions['market_alignment']['score']:+.2f}]\n"
-                            f"• Volume Confirmed: {'PASS' if full_analysis['volume_confirmed'] else 'FAIL'} "
-                            f"[Ratio: {market_conditions['volume']['ratio']:.2f}, Trend: {market_conditions['volume']['trend']}]\n"
-                            f"• Risk Acceptable: {'PASS' if market_conditions['trading_summary']['suitable'] else 'FAIL'} "
-                            f"[Volatility: {market_conditions['volatility']['value']:.2f}, "
-                            f"Market Score: {market_conditions['market_alignment']['score']:+.2f}]\n"
-                            f"• Final Decision: {'PASS' if entry_conditions else 'FAIL'} "
-                            f"[{market_conditions['trading_summary']['recommendation']}]"
-                        )
-                        await self.log(entry_check_msg, level="info")
-                        
-                        if entry_conditions:
-                            await self.send_notification(
-                                f"🎯 Entry conditions met for {symbol}\n"
-                                f"Current price: ${full_analysis['price']:,.2f}\n"
-                                f"Signal: {signals['action'].upper()} (Confidence: {signals['score']*100:.1f}%)\n"
-                                f"Market Score: {market_conditions['market_alignment']['score']:+.2f}\n"
-                                f"Recommendation: {market_conditions['trading_summary']['recommendation']}",
-                                "alert"
-                            )
-                            await self._execute_entry(symbol)
-                            
-                        await self.log(f"✅ Completed analysis for {symbol}", level="info")
-                        
-                        # Format detailed analysis result for final summary
-                        result = (
-                            f"Symbol: {symbol}\n"
-                            f"Action: {signals['action'].upper()}\n"
-                            f"Confidence: {signals['score']*100:.1f}%\n\n"
-                            f"Price: ${full_analysis['price']:,.2f}\n"
-                            f"24h Change: {full_analysis['price_change_24h']:+.2f}%\n\n"
-                            f"Trend Analysis:\n"
-                            f"• Direction: {full_analysis['trend']['description']}\n"
-                            f"• Daily: {full_analysis['trend']['daily']:+.2f}\n"
-                            f"• Hourly: {full_analysis['trend']['hourly']:+.2f}\n"
-                            f"• Aligned: {'Yes' if full_analysis['trend']['aligned'] else 'No'}\n\n"
-                            f"Momentum:\n"
-                            f"• RSI: {full_analysis['rsi']:.1f}\n"
-                            f"• MACD: {signals['signals']['momentum']:+.2f}\n"
-                            f"• Strength: {full_analysis['strength']:+.2f}\n\n"
-                            f"Volatility:\n"
-                            f"• BB Width: {bb['bandwidth']:.1f}%\n"
-                            f"• BB Signal: {bb['signal']}\n"
-                            f"• ATR: {market_conditions['price_action']['atr']:.4f}\n\n"
-                            f"Volume:\n"
-                            f"• Trend: {market_conditions['volume']['trend']}\n"
-                            f"• Ratio: {market_conditions['volume']['ratio']:.2f}\n"
-                            f"• Confirmed: {'Yes' if full_analysis['volume_confirmed'] else 'No'}\n\n"
-                            f"Market Conditions:\n"
-                            f"• Score: {market_conditions['market_alignment']['score']:+.2f}\n"
-                            f"• Volatility: {'High' if market_conditions['volatility']['is_high'] else 'Normal'}\n"
-                            f"• Recommendation: {market_conditions['trading_summary']['recommendation']}\n\n"
-                            f"Entry Conditions: {'PASS' if entry_conditions else 'FAIL'}"
-                        )
-                        analysis_results.append(result)
-                        
-                    except Exception as e:
-                        await self.log(f"❌ Error analyzing {symbol}: {str(e)}", level="error")
-                
-                # Send analysis summary if we have watched symbols
-                if analysis_results:
-                    await self.log("📊 Sending comprehensive analysis results...", level="info")
-                    summary = "📊 Comprehensive Analysis:\n```\n" + "\n\n" + "\n\n".join(analysis_results) + "```"
-                    await self.send_notification(summary, category="analysis")
-                
-            except Exception as e:
-                await self.log(f"❌ Initial analysis error: {str(e)}", level="error")
-            
-            await self.log("✅ Initial analysis complete. Starting regular trading loop...", level="info")
+            self.trading_active = True
             
             # Start the regular trading loop
             while self.trading_active:
@@ -726,58 +563,16 @@ class TradingBot:
                             await self.log(f"  • Calculating Bollinger Bands for {symbol}", level="info")
                             bb = await self.technical_analyzer.calculate_bollinger_bands(symbol)
                             
-                            # Calculate volume signal properly
-                            volume_signal = 0.0
-                            if full_analysis['volume_confirmed']:
-                                volume_trend = market_conditions['volume']['trend']
-                                if volume_trend == "Strongly Increasing":
-                                    volume_signal = 0.2
-                                elif volume_trend == "Increasing":
-                                    volume_signal = 0.1
-                                elif volume_trend == "Strongly Decreasing":
-                                    volume_signal = -0.2
-                                elif volume_trend == "Decreasing":
-                                    volume_signal = -0.1
-                            
-                            # Update signals with proper volume signal
-                            signals['signals']['volume'] = volume_signal
-                            
-                            # Recalculate total score with updated volume signal
-                            total_score = (
-                                signals['signals']['trend'] +
-                                signals['signals']['momentum'] +
-                                volume_signal +
-                                signals['signals']['risk']
-                            )
-                            signals['score'] = total_score
-                            
-                            # Send individual coin analysis to notifications
-                            coin_summary = (
-                                f"Analysis Complete for {symbol}:\n```\n"
-                                f"Action: {signals['action'].upper()} (Confidence: {signals['score']*100:.1f}%)\n"
-                                f"Price: ${full_analysis['price']:,.2f} ({full_analysis['price_change_24h']:+.2f}%)\n\n"
-                                f"Signal Components:\n"
-                                f"• Trend: {signals['signals']['trend']:+.2f}\n"
-                                f"• Momentum: {signals['signals']['momentum']:+.2f}\n"
-                                f"• Volume: {signals['signals']['volume']:+.2f}\n"
-                                f"• Risk: {signals['signals']['risk']:+.2f}\n\n"
-                                f"Market Conditions:\n"
-                                f"• Trend Aligned: {'Yes' if market_conditions['market_alignment']['aligned'] else 'No'}\n"
-                                f"• Volatility: {'High' if market_conditions['volatility']['is_high'] else 'Normal'}\n"
-                                f"• Volume Trend: {market_conditions['volume']['trend']}\n"
-                                f"• RSI: {full_analysis['rsi']:.1f}\n"
-                                "```"
-                            )
-                            await self.send_notification(coin_summary, "analysis")
-                            
                             # Check entry conditions and notify about analysis
                             await self.log(f"  • Checking entry conditions for {symbol}", level="info")
                             entry_conditions = await self._should_enter_position(symbol)
                             
-                            # Log entry condition check results
+                            # Log entry condition check results with directional signal check
+                            signal_pass = signals['score'] > 0.2  # Only pass for positive signals
                             entry_check_msg = (
                                 f"Entry Conditions for {symbol}:\n"
-                                f"• Signal Score: {signals['score']*100:.1f}% ({'PASS' if abs(signals['score']) > 0.2 else 'FAIL'}) [Required: >20%]\n"
+                                f"• Signal Score: {signals['score']*100:.1f}% ({'PASS' if signal_pass else 'FAIL'}) "
+                                f"[Required: >+20% for entry]\n"
                                 f"• Trend Aligned: {'PASS' if market_conditions['market_alignment']['aligned'] else 'FAIL'} "
                                 f"[Score: {market_conditions['market_alignment']['score']:+.2f}]\n"
                                 f"• Volume Confirmed: {'PASS' if full_analysis['volume_confirmed'] else 'FAIL'} "
@@ -1542,14 +1337,16 @@ class TradingBot:
             # Get technical analysis
             analysis = await self.technical_analyzer.get_signals(symbol)
             current_price = await self.data_manager.get_current_price(symbol)
+            market_conditions = await self.technical_analyzer.check_market_conditions(symbol)
             
             # Component signals (normalized to -1 to 1 scale)
             trend_signal = analysis['trend']['daily'] * 0.4  # 40% weight
             momentum_signal = analysis['signals']['daily']['momentum'] * 0.3  # 30% weight
-            volume_signal = float(analysis['signals']['daily'].get('volume_confirmed', False)) * 0.2  # 20% weight
             
-            # Risk component based on volatility and market conditions
-            market_conditions = await self.technical_analyzer.check_market_conditions(symbol)
+            # Use existing volume score from market conditions
+            volume_signal = market_conditions['volume']['score'] * 0.2  # 20% weight
+            
+            # Risk component based on market conditions
             risk_signal = market_conditions['market_alignment']['score'] * 0.1  # 10% weight
             
             # Combine signals
