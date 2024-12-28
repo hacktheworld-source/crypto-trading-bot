@@ -537,7 +537,13 @@ class TradingBot:
                 await self.log(f"🔍 Beginning analysis of {len(self.watched_symbols)} coins...", level="info")
                 
                 analysis_results = []
+                analyzed_symbols = set()  # Track which symbols we've analyzed
+                
                 for symbol in self.watched_symbols:
+                    if symbol in analyzed_symbols:  # Skip if already analyzed
+                        continue
+                        
+                    analyzed_symbols.add(symbol)
                     await self.log(f"⚡ Analyzing {symbol}...", level="info")
                     
                     try:
@@ -553,6 +559,31 @@ class TradingBot:
                         
                         await self.log(f"  • Calculating Bollinger Bands for {symbol}", level="info")
                         bb = await self.technical_analyzer.calculate_bollinger_bands(symbol)
+                        
+                        # Calculate volume signal properly
+                        volume_signal = 0.0
+                        if full_analysis['volume_confirmed']:
+                            volume_trend = market_conditions['volume']['trend']
+                            if volume_trend == "Strongly Increasing":
+                                volume_signal = 0.2
+                            elif volume_trend == "Increasing":
+                                volume_signal = 0.1
+                            elif volume_trend == "Strongly Decreasing":
+                                volume_signal = -0.2
+                            elif volume_trend == "Decreasing":
+                                volume_signal = -0.1
+                        
+                        # Update signals with proper volume signal
+                        signals['signals']['volume'] = volume_signal
+                        
+                        # Recalculate total score with updated volume signal
+                        total_score = (
+                            signals['signals']['trend'] +
+                            signals['signals']['momentum'] +
+                            volume_signal +
+                            signals['signals']['risk']
+                        )
+                        signals['score'] = total_score
                         
                         # Send individual coin analysis to notifications
                         coin_summary = (
@@ -667,7 +698,13 @@ class TradingBot:
                     await self.log(f"🔍 Beginning analysis of {len(self.watched_symbols)} coins...", level="info")
                     
                     analysis_results = []
+                    analyzed_symbols = set()  # Track which symbols we've analyzed
+                    
                     for symbol in self.watched_symbols:
+                        if symbol in analyzed_symbols:  # Skip if already analyzed
+                            continue
+                            
+                        analyzed_symbols.add(symbol)
                         await self.log(f"⚡ Analyzing {symbol}...", level="info")
                         
                         try:
@@ -683,6 +720,31 @@ class TradingBot:
                             
                             await self.log(f"  • Calculating Bollinger Bands for {symbol}", level="info")
                             bb = await self.technical_analyzer.calculate_bollinger_bands(symbol)
+                            
+                            # Calculate volume signal properly
+                            volume_signal = 0.0
+                            if full_analysis['volume_confirmed']:
+                                volume_trend = market_conditions['volume']['trend']
+                                if volume_trend == "Strongly Increasing":
+                                    volume_signal = 0.2
+                                elif volume_trend == "Increasing":
+                                    volume_signal = 0.1
+                                elif volume_trend == "Strongly Decreasing":
+                                    volume_signal = -0.2
+                                elif volume_trend == "Decreasing":
+                                    volume_signal = -0.1
+                            
+                            # Update signals with proper volume signal
+                            signals['signals']['volume'] = volume_signal
+                            
+                            # Recalculate total score with updated volume signal
+                            total_score = (
+                                signals['signals']['trend'] +
+                                signals['signals']['momentum'] +
+                                volume_signal +
+                                signals['signals']['risk']
+                            )
+                            signals['score'] = total_score
                             
                             # Send individual coin analysis to notifications
                             coin_summary = (
