@@ -1337,16 +1337,14 @@ class TradingBot:
             # Get technical analysis
             analysis = await self.technical_analyzer.get_signals(symbol)
             current_price = await self.data_manager.get_current_price(symbol)
-            market_conditions = await self.technical_analyzer.check_market_conditions(symbol)
             
             # Component signals (normalized to -1 to 1 scale)
             trend_signal = analysis['trend']['daily'] * 0.4  # 40% weight
             momentum_signal = analysis['signals']['daily']['momentum'] * 0.3  # 30% weight
+            volume_signal = float(analysis['signals']['daily'].get('volume_confirmed', False)) * 0.2  # 20% weight
             
-            # Use existing volume score from market conditions
-            volume_signal = market_conditions['volume']['score'] * 0.2  # 20% weight
-            
-            # Risk component based on market conditions
+            # Risk component based on volatility and market conditions
+            market_conditions = await self.technical_analyzer.check_market_conditions(symbol)
             risk_signal = market_conditions['market_alignment']['score'] * 0.1  # 10% weight
             
             # Combine signals
