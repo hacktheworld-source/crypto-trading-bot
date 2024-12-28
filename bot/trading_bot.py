@@ -509,61 +509,91 @@ class TradingBot:
 
     async def trading_loop(self):
         """Main trading loop - runs every TRADING_INTERVAL seconds"""
-        analysis_counter = 0  # Counter for detailed analysis updates
-        while self.trading_active:
-            try:
-                # 1. Update Global State
-                await self.update_account_state()
-                await self.update_positions()
-                
-                # 2. Risk Checks
-                await self.risk_manager.check_portfolio_health()
-                
-                # 3. Position Management
-                for symbol, position in self.positions.items():
-                    await self._manage_position(symbol)
-                
-                # 4. Entry Analysis with notifications
-                analysis_counter += 1
-                if analysis_counter >= 6:  # Detailed analysis every 6 intervals
-                    analysis_results = []
-                    for symbol in self.watched_symbols:
-                        # Get comprehensive analysis
-                        analysis = await self.technical_analyzer.get_full_analysis(symbol)
-                        signals = await self._calculate_trade_signal(symbol)
-                        
-                        # Format analysis result
-                        result = (
-                            f"Symbol: {symbol}\n"
-                            f"Action: {signals['action'].upper()}\n"
-                            f"Confidence: {signals['score']*100:.1f}%\n"
-                            f"Trend: {analysis['trend']['description']}\n"
-                            f"24h Change: {analysis['price_change_24h']:+.2f}%\n"
-                            f"RSI: {analysis['rsi']:.1f}"
-                        )
-                        analysis_results.append(result)
-                        
-                        # Check entry conditions
-                        if await self._should_enter_position(symbol):
-                            await self._execute_entry(symbol)
+        try:
+            await self.send_notification(
+                f"🔄 Trading loop started\n"
+                f"Watching: {', '.join(sorted(self.watched_symbols))}\n"
+                f"Interval: {self.config.TRADING_INTERVAL} seconds",
+                "info"
+            )
+            
+            analysis_counter = 0  # Counter for detailed analysis updates
+            while self.trading_active:
+                try:
+                    # 1. Update Global State
+                    await self.update_account_state()
+                    await self.update_positions()
                     
-                    # Send analysis summary if we have watched symbols
-                    if analysis_results:
-                        summary = "📊 Watched Symbols Analysis:\n```\n" + "\n\n".join(analysis_results) + "```"
-                        await self.send_notification(summary, category="analysis")
+                    # 2. Risk Checks
+                    await self.risk_manager.check_portfolio_health()
                     
-                    analysis_counter = 0
-                else:
-                    # Normal entry checks without detailed notifications
-                    for symbol in self.watched_symbols:
-                        if await self._should_enter_position(symbol):
-                            await self._execute_entry(symbol)
+                    # 3. Position Management
+                    for symbol, position in self.positions.items():
+                        await self._manage_position(symbol)
+                    
+                    # 4. Entry Analysis with notifications
+                    analysis_counter += 1
+                    if analysis_counter >= 6:  # Detailed analysis every 6 intervals
+                        analysis_results = []
+                        for symbol in self.watched_symbols:
+                            # Get comprehensive analysis
+                            analysis = await self.technical_analyzer.get_full_analysis(symbol)
+                            signals = await self._calculate_trade_signal(symbol)
+                            
+                            # Format analysis result
+                            result = (
+                                f"Symbol: {symbol}\n"
+                                f"Action: {signals['action'].upper()}\n"
+                                f"Confidence: {signals['score']*100:.1f}%\n"
+                                f"Trend: {analysis['trend']['description']}\n"
+                                f"24h Change: {analysis['price_change_24h']:+.2f}%\n"
+                                f"RSI: {analysis['rsi']:.1f}"
+                            )
+                            analysis_results.append(result)
+                            
+                            # Check entry conditions and notify about analysis
+                            entry_conditions = await self._should_enter_position(symbol)
+                            if entry_conditions:
+                                await self.send_notification(
+                                    f"🎯 Entry conditions met for {symbol}\n"
+                                    f"Current price: ${analysis['price']:,.2f}\n"
+                                    f"Signal: {signals['action'].upper()} (Confidence: {signals['score']*100:.1f}%)",
+                                    "alert"
+                                )
+                                await self._execute_entry(symbol)
+                        
+                        # Send analysis summary if we have watched symbols
+                        if analysis_results:
+                            summary = "📊 Watched Symbols Analysis:\n```\n" + "\n\n".join(analysis_results) + "```"
+                            await self.send_notification(summary, category="analysis")
+                        
+                        analysis_counter = 0
+                    else:
+                        # Quick analysis without detailed notifications
+                        for symbol in self.watched_symbols:
+                            if await self._should_enter_position(symbol):
+                                current_price = await self.data_manager.get_current_price(symbol)
+                                await self.send_notification(
+                                    f"🎯 Entry signal for {symbol} at ${current_price:,.2f}",
+                                    "alert"
+                                )
+                                await self._execute_entry(symbol)
+                    
+                except Exception as e:
+                    await self.log(f"Trading loop iteration error: {str(e)}", level="error")
+                    
+                finally:
+                    await asyncio.sleep(self.config.TRADING_INTERVAL)
                 
-            except Exception as e:
-                await self.log(f"Trading loop error: {str(e)}", level="error")
-                
-            finally:
-                await asyncio.sleep(self.config.TRADING_INTERVAL)
+        except Exception as e:
+            await self.log(f"Trading loop critical error: {str(e)}", level="error")
+            self.trading_active = False  # Stop trading on critical error
+            await self.send_notification(
+                "❌ Trading loop stopped due to critical error. Check logs for details.",
+                "error"
+            )
+        finally:
+            await self.send_notification("⏹️ Trading loop stopped", "info")
 
     async def _manage_position(self, symbol: str) -> None:
         """Comprehensive position management"""
@@ -963,7 +993,7 @@ class TradingBot:
     async def get_status(self) -> str:
         """Get current bot status and configuration"""
         try:
-            status = "🟢 Active" if self.trading_active else "🔴 Inactive"
+            status = "🟢 Active" if self.trading_active else "���� Inactive"
             mode = "📝 Paper Trading" if self.paper_trading else "💵 Live Trading"
             
             active_positions = len(self.positions)

@@ -324,9 +324,28 @@ class CommandHandler:
         try:
             if self.trading_bot.trading_active:
                 return "Trading already active"
+            
+            # Check if we have any watched symbols
+            if not self.trading_bot.watched_symbols:
+                return self.message_formatter.format_error(
+                    "No coins in watchlist. Add coins using !add <symbol>"
+                )
+            
+            # Start the trading loop as a background task
             self.trading_bot.trading_active = True
-            return self.message_formatter.format_notification("Trading started", "success")
+            asyncio.create_task(self.trading_bot.trading_loop())
+            
+            # Send initial status
+            status_msg = (
+                "✅ Trading Started\n"
+                f"Mode: {'Paper Trading' if self.trading_bot.paper_trading else 'Live Trading'}\n"
+                f"Watching: {', '.join(sorted(self.trading_bot.watched_symbols))}\n"
+                "Trading loop will analyze coins every 5 minutes."
+            )
+            return self.message_formatter.format_notification(status_msg, "success")
+            
         except Exception as e:
+            self.trading_bot.trading_active = False  # Reset state on error
             return self.message_formatter.format_error(str(e))
 
     async def _handle_stop_trading(self) -> str:
