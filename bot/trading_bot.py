@@ -542,7 +542,7 @@ class TradingBot:
                     analysis_results = []
                     analyzed_symbols = set()  # Track which symbols we've analyzed
                     
-                    for symbol in self.watched_symbols:
+                    for symbol in sorted(self.watched_symbols):  # Sort for consistent order
                         if symbol in analyzed_symbols:  # Skip if already analyzed
                             continue
                             
@@ -645,7 +645,7 @@ class TradingBot:
                                     "alert"
                                 )
                                 await self._execute_entry(symbol)
-                                
+                            
                             await self.log(f"✅ Completed analysis for {symbol}", level="info")
                             
                             # Format detailed analysis result for final summary
@@ -679,6 +679,9 @@ class TradingBot:
                                 f"Entry Conditions: {'PASS' if entry_conditions else 'FAIL'}"
                             )
                             analysis_results.append(result)
+                            await self.log(f"Added analysis for {symbol} (Total results: {len(analysis_results)})", level="debug")
+                            
+                            await self.log(f"✅ Completed analysis for {symbol}", level="info")
                             
                         except Exception as e:
                             await self.log(f"❌ Error analyzing {symbol}: {str(e)}", level="error")
