@@ -686,7 +686,9 @@ class TradingBot:
                     # Send analysis summary if we have watched symbols
                     if analysis_results:
                         await self.log("📊 Sending comprehensive analysis results...", level="info")
-                        summary = "📊 Comprehensive Analysis:\n```\n" + "\n\n" + "\n\n".join(analysis_results) + "```"
+                        # Sort results by symbol for consistent ordering
+                        analysis_results.sort(key=lambda x: x.split('\n')[0].split(': ')[1])
+                        summary = "📊 Comprehensive Analysis:\n```\n" + "\n\n".join(analysis_results) + "```"
                         await self.send_notification(summary, category="analysis")
                     
                 except Exception as e:
