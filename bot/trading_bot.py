@@ -1350,15 +1350,15 @@ class TradingBot:
             conditions = await self.technical_analyzer.check_market_conditions(symbol)
             
             # Risk factors
-            volatility_penalty = -0.3 if conditions['is_volatile'] else 0
-            market_bonus = 0.2 if conditions['market_aligned'] else 0
-            activity_score = 0.2 if conditions['is_high_activity'] else -0.1
+            volatility_penalty = -0.3 if conditions['volatility']['is_high'] else 0
+            market_bonus = 0.2 if conditions['market_alignment']['aligned'] else 0
+            volume_score = 0.2 if conditions['volume']['ratio'] > 1.2 else -0.1
             
             # Combine risk factors
             risk_score = (
                 volatility_penalty +
                 market_bonus +
-                activity_score
+                volume_score
             )
             
             # Normalize to -1 to 1 range
