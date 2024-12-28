@@ -665,11 +665,11 @@ class TradingBot:
                             
                             await self.log(f"✅ Completed analysis for {symbol}", level="info")
                             
-                            # Skip immediate trading loop if this is initial analysis
+                            # Check if this is initial analysis after adding results
                             if not hasattr(self, '_initial_analysis_complete'):
                                 self._initial_analysis_complete = True
                                 continue  # Skip to next symbol
-                            
+                                
                             if entry_conditions:
                                 await self.send_notification(
                                     f"🎯 Entry conditions met for {symbol}\n"
@@ -689,11 +689,8 @@ class TradingBot:
                     # Send analysis summary if we have watched symbols
                     if analysis_results:
                         await self.log("📊 Sending comprehensive analysis results...", level="info")
-                        summary = "📊 Comprehensive Analysis:\n```\n" + "\n\n".join(analysis_results) + "\n```"
+                        summary = "📊 Comprehensive Analysis:\n```\n" + "\n\n" + "\n\n".join(analysis_results) + "```"
                         await self.send_notification(summary, category="analysis")
-                        
-                    await self.log(f"⏳ Waiting {self.config.TRADING_INTERVAL/60:.0f} minutes until next analysis...", level="info")
-                    await asyncio.sleep(self.config.TRADING_INTERVAL)
                     
                 except Exception as e:
                     await self.log(f"❌ Trading loop iteration error: {str(e)}", level="error")
