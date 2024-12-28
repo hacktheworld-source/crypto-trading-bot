@@ -607,6 +607,38 @@ class TradingBot:
                             )
                             await self.send_notification(coin_summary, "analysis")
                             
+                            # Format detailed analysis result for final summary
+                            result = (
+                                f"Symbol: {symbol}\n"
+                                f"Action: {signals['action'].upper()}\n"
+                                f"Confidence: {signals['score']*100:.1f}%\n\n"
+                                f"Price: ${full_analysis['price']:,.2f}\n"
+                                f"24h Change: {full_analysis['price_change_24h']:+.2f}%\n\n"
+                                f"Trend Analysis:\n"
+                                f"• Direction: {full_analysis['trend']['description']}\n"
+                                f"• Daily: {full_analysis['trend']['daily']:+.2f}\n"
+                                f"• Hourly: {full_analysis['trend']['hourly']:+.2f}\n"
+                                f"• Aligned: {'Yes' if full_analysis['trend']['aligned'] else 'No'}\n\n"
+                                f"Momentum:\n"
+                                f"• RSI: {full_analysis['rsi']:.1f}\n"
+                                f"• MACD: {signals['signals']['momentum']:+.2f}\n"
+                                f"• Strength: {full_analysis['strength']:+.2f}\n\n"
+                                f"Volatility:\n"
+                                f"• BB Width: {bb['bandwidth']:.1f}%\n"
+                                f"• BB Signal: {bb['signal']}\n"
+                                f"• ATR: {market_conditions['price_action']['atr']:.4f}\n\n"
+                                f"Volume:\n"
+                                f"• Trend: {market_conditions['volume']['trend']}\n"
+                                f"• Ratio: {market_conditions['volume']['ratio']:.2f}\n"
+                                f"• Confirmed: {'Yes' if full_analysis['volume_confirmed'] else 'No'}\n\n"
+                                f"Market Conditions:\n"
+                                f"• Score: {market_conditions['market_alignment']['score']:+.2f}\n"
+                                f"• Volatility: {'High' if market_conditions['volatility']['is_high'] else 'Normal'}\n"
+                                f"• Recommendation: {market_conditions['trading_summary']['recommendation']}\n\n"
+                                f"Entry Conditions: {'PASS' if entry_conditions else 'FAIL'}"
+                            )
+                            analysis_results.append(result)
+                            
                             # Check entry conditions and notify about analysis
                             await self.log(f"  • Checking entry conditions for {symbol}", level="info")
                             entry_conditions = await self._should_enter_position(symbol)
@@ -647,38 +679,6 @@ class TradingBot:
                                 await self._execute_entry(symbol)
                                 
                             await self.log(f"✅ Completed analysis for {symbol}", level="info")
-                            
-                            # Format detailed analysis result for final summary
-                            result = (
-                                f"Symbol: {symbol}\n"
-                                f"Action: {signals['action'].upper()}\n"
-                                f"Confidence: {signals['score']*100:.1f}%\n\n"
-                                f"Price: ${full_analysis['price']:,.2f}\n"
-                                f"24h Change: {full_analysis['price_change_24h']:+.2f}%\n\n"
-                                f"Trend Analysis:\n"
-                                f"• Direction: {full_analysis['trend']['description']}\n"
-                                f"• Daily: {full_analysis['trend']['daily']:+.2f}\n"
-                                f"• Hourly: {full_analysis['trend']['hourly']:+.2f}\n"
-                                f"• Aligned: {'Yes' if full_analysis['trend']['aligned'] else 'No'}\n\n"
-                                f"Momentum:\n"
-                                f"• RSI: {full_analysis['rsi']:.1f}\n"
-                                f"• MACD: {signals['signals']['momentum']:+.2f}\n"
-                                f"• Strength: {full_analysis['strength']:+.2f}\n\n"
-                                f"Volatility:\n"
-                                f"• BB Width: {bb['bandwidth']:.1f}%\n"
-                                f"• BB Signal: {bb['signal']}\n"
-                                f"• ATR: {market_conditions['price_action']['atr']:.4f}\n\n"
-                                f"Volume:\n"
-                                f"• Trend: {market_conditions['volume']['trend']}\n"
-                                f"• Ratio: {market_conditions['volume']['ratio']:.2f}\n"
-                                f"• Confirmed: {'Yes' if full_analysis['volume_confirmed'] else 'No'}\n\n"
-                                f"Market Conditions:\n"
-                                f"• Score: {market_conditions['market_alignment']['score']:+.2f}\n"
-                                f"• Volatility: {'High' if market_conditions['volatility']['is_high'] else 'Normal'}\n"
-                                f"• Recommendation: {market_conditions['trading_summary']['recommendation']}\n\n"
-                                f"Entry Conditions: {'PASS' if entry_conditions else 'FAIL'}"
-                            )
-                            analysis_results.append(result)
                             
                         except Exception as e:
                             await self.log(f"❌ Error analyzing {symbol}: {str(e)}", level="error")
