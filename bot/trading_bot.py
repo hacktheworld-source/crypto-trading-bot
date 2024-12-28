@@ -611,11 +611,16 @@ class TradingBot:
                         # Log entry condition check results
                         entry_check_msg = (
                             f"Entry Conditions for {symbol}:\n"
-                            f"• Signal Score: {signals['score']*100:.1f}% ({'PASS' if abs(signals['score']) > 0.2 else 'FAIL'})\n"
-                            f"• Trend Aligned: {'PASS' if market_conditions['market_alignment']['aligned'] else 'FAIL'}\n"
-                            f"• Volume Confirmed: {'PASS' if full_analysis['volume_confirmed'] else 'FAIL'}\n"
-                            f"• Risk Acceptable: {'PASS' if market_conditions['trading_summary']['suitable'] else 'FAIL'}\n"
-                            f"• Final Decision: {'PASS' if entry_conditions else 'FAIL'}"
+                            f"• Signal Score: {signals['score']*100:.1f}% ({'PASS' if abs(signals['score']) > 0.2 else 'FAIL'}) [Required: >20%]\n"
+                            f"• Trend Aligned: {'PASS' if market_conditions['market_alignment']['aligned'] else 'FAIL'} "
+                            f"[Score: {market_conditions['market_alignment']['score']:+.2f}]\n"
+                            f"• Volume Confirmed: {'PASS' if full_analysis['volume_confirmed'] else 'FAIL'} "
+                            f"[Ratio: {market_conditions['volume']['ratio']:.2f}, Trend: {market_conditions['volume']['trend']}]\n"
+                            f"• Risk Acceptable: {'PASS' if market_conditions['trading_summary']['suitable'] else 'FAIL'} "
+                            f"[Volatility: {market_conditions['volatility']['value']:.2f}, "
+                            f"Market Score: {market_conditions['market_alignment']['score']:+.2f}]\n"
+                            f"• Final Decision: {'PASS' if entry_conditions else 'FAIL'} "
+                            f"[{market_conditions['trading_summary']['recommendation']}]"
                         )
                         await self.log(entry_check_msg, level="info")
                         
@@ -772,11 +777,16 @@ class TradingBot:
                             # Log entry condition check results
                             entry_check_msg = (
                                 f"Entry Conditions for {symbol}:\n"
-                                f"• Signal Score: {signals['score']*100:.1f}% ({'PASS' if abs(signals['score']) > 0.2 else 'FAIL'})\n"
-                                f"• Trend Aligned: {'PASS' if market_conditions['market_alignment']['aligned'] else 'FAIL'}\n"
-                                f"• Volume Confirmed: {'PASS' if full_analysis['volume_confirmed'] else 'FAIL'}\n"
-                                f"• Risk Acceptable: {'PASS' if market_conditions['trading_summary']['suitable'] else 'FAIL'}\n"
-                                f"• Final Decision: {'PASS' if entry_conditions else 'FAIL'}"
+                                f"• Signal Score: {signals['score']*100:.1f}% ({'PASS' if abs(signals['score']) > 0.2 else 'FAIL'}) [Required: >20%]\n"
+                                f"• Trend Aligned: {'PASS' if market_conditions['market_alignment']['aligned'] else 'FAIL'} "
+                                f"[Score: {market_conditions['market_alignment']['score']:+.2f}]\n"
+                                f"• Volume Confirmed: {'PASS' if full_analysis['volume_confirmed'] else 'FAIL'} "
+                                f"[Ratio: {market_conditions['volume']['ratio']:.2f}, Trend: {market_conditions['volume']['trend']}]\n"
+                                f"• Risk Acceptable: {'PASS' if market_conditions['trading_summary']['suitable'] else 'FAIL'} "
+                                f"[Volatility: {market_conditions['volatility']['value']:.2f}, "
+                                f"Market Score: {market_conditions['market_alignment']['score']:+.2f}]\n"
+                                f"• Final Decision: {'PASS' if entry_conditions else 'FAIL'} "
+                                f"[{market_conditions['trading_summary']['recommendation']}]"
                             )
                             await self.log(entry_check_msg, level="info")
                             
@@ -912,22 +922,30 @@ class TradingBot:
         try:
             current_positions = len(self.positions)
             
-            # Basic entry conditions
+            # Get analysis components
             analysis = await self.technical_analyzer.analyze_trend(symbol)
             current_price = await self.data_manager.get_current_price(symbol)
+            market_conditions = await self.technical_analyzer.check_market_conditions(symbol)
+            full_analysis = await self.technical_analyzer.get_full_analysis(symbol)
+            
+            # Safely check volume confirmation
+            volume_confirmed = (
+                full_analysis.get('volume_confirmed', False) 
+                if isinstance(full_analysis, dict) else False
+            )
             
             # Adjust entry criteria based on position count
             if current_positions >= self.risk_manager.target_positions:
                 # Require stronger signals above target
                 if not (analysis['trend']['aligned'] and 
                        analysis['trend']['daily'] > 0.5 and  # Stronger trend required
-                       analysis['volume_confirmed']):
+                       volume_confirmed):
                     return False
             else:
                 # Normal entry criteria
                 if not (analysis['trend']['aligned'] and 
                        analysis['trend']['daily'] > 0 and
-                       analysis['volume_confirmed']):
+                       volume_confirmed):
                     return False
             
             # Check risk management
