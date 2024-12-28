@@ -518,6 +518,80 @@ class TradingBot:
                 "success"
             )
             
+            # Perform immediate analysis when starting
+            await self.send_notification("🔄 Performing initial analysis of all watched coins...", "info")
+            
+            try:
+                # 1. Update Global State
+                await self.update_account_state()
+                await self.update_positions()
+                
+                # 2. Position Management
+                for symbol, position in self.positions.items():
+                    await self._manage_position(symbol)
+                
+                # 3. Comprehensive Analysis for all coins
+                analysis_results = []
+                for symbol in self.watched_symbols:
+                    # Get all analysis components
+                    full_analysis = await self.technical_analyzer.get_full_analysis(symbol)
+                    signals = await self._calculate_trade_signal(symbol)
+                    market_conditions = await self.technical_analyzer.check_market_conditions(symbol)
+                    bb = await self.technical_analyzer.calculate_bollinger_bands(symbol)
+                    
+                    # Format detailed analysis result
+                    result = (
+                        f"Symbol: {symbol}\n"
+                        f"Action: {signals['action'].upper()}\n"
+                        f"Confidence: {signals['score']*100:.1f}%\n\n"
+                        f"Price: ${full_analysis['price']:,.2f}\n"
+                        f"24h Change: {full_analysis['price_change_24h']:+.2f}%\n\n"
+                        f"Trend Analysis:\n"
+                        f"• Direction: {full_analysis['trend']['description']}\n"
+                        f"• Daily: {full_analysis['trend']['daily']:+.2f}\n"
+                        f"• Hourly: {full_analysis['trend']['hourly']:+.2f}\n"
+                        f"• Aligned: {'Yes' if full_analysis['trend']['aligned'] else 'No'}\n\n"
+                        f"Momentum:\n"
+                        f"• RSI: {full_analysis['rsi']:.1f}\n"
+                        f"• MACD: {signals['signals']['momentum']:+.2f}\n"
+                        f"• Strength: {full_analysis['strength']:+.2f}\n\n"
+                        f"Volatility:\n"
+                        f"• BB Width: {bb['bandwidth']:.1f}%\n"
+                        f"• BB Signal: {bb['signal']}\n"
+                        f"• ATR: {market_conditions['price_action']['atr']:.4f}\n\n"
+                        f"Volume:\n"
+                        f"• Trend: {market_conditions['volume']['trend']}\n"
+                        f"• Ratio: {market_conditions['volume']['ratio']:.2f}\n"
+                        f"• Confirmed: {'Yes' if full_analysis['volume_confirmed'] else 'No'}\n\n"
+                        f"Market Conditions:\n"
+                        f"• Score: {market_conditions['market_alignment']['score']:+.2f}\n"
+                        f"• Volatility: {'High' if market_conditions['volatility']['is_high'] else 'Normal'}\n"
+                        f"• Recommendation: {market_conditions['trading_summary']['recommendation']}"
+                    )
+                    analysis_results.append(result)
+                    
+                    # Check entry conditions and notify about analysis
+                    entry_conditions = await self._should_enter_position(symbol)
+                    if entry_conditions:
+                        await self.send_notification(
+                            f"🎯 Entry conditions met for {symbol}\n"
+                            f"Current price: ${full_analysis['price']:,.2f}\n"
+                            f"Signal: {signals['action'].upper()} (Confidence: {signals['score']*100:.1f}%)\n"
+                            f"Market Score: {market_conditions['market_alignment']['score']:+.2f}\n"
+                            f"Recommendation: {market_conditions['trading_summary']['recommendation']}",
+                            "alert"
+                        )
+                        await self._execute_entry(symbol)
+                
+                # Send analysis summary if we have watched symbols
+                if analysis_results:
+                    summary = "📊 Comprehensive Analysis:\n```\n" + "\n\n" + "\n\n".join(analysis_results) + "```"
+                    await self.send_notification(summary, category="analysis")
+                
+            except Exception as e:
+                await self.log(f"Initial analysis error: {str(e)}", level="error")
+            
+            # Start the regular trading loop
             while self.trading_active:
                 try:
                     # 1. Update Global State
