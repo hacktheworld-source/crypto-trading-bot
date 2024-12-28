@@ -511,10 +511,11 @@ class TradingBot:
         """Main trading loop - runs every TRADING_INTERVAL seconds"""
         try:
             await self.send_notification(
-                f"🔄 Trading loop started\n"
+                f"✅ Trading Started\n"
+                f"Mode: {'Paper Trading' if self.paper_trading else 'Live Trading'}\n"
                 f"Watching: {', '.join(sorted(self.watched_symbols))}\n"
-                f"Interval: {self.config.TRADING_INTERVAL} seconds",
-                "info"
+                f"Trading loop will analyze coins every {self.config.TRADING_INTERVAL/60:.0f} minutes.",
+                "success"
             )
             
             analysis_counter = 0  # Counter for detailed analysis updates
@@ -524,14 +525,11 @@ class TradingBot:
                     await self.update_account_state()
                     await self.update_positions()
                     
-                    # 2. Risk Checks
-                    await self.risk_manager.check_portfolio_health()
-                    
-                    # 3. Position Management
+                    # 2. Position Management
                     for symbol, position in self.positions.items():
                         await self._manage_position(symbol)
                     
-                    # 4. Entry Analysis with notifications
+                    # 3. Entry Analysis with notifications
                     analysis_counter += 1
                     if analysis_counter >= 6:  # Detailed analysis every 6 intervals
                         analysis_results = []
@@ -993,7 +991,7 @@ class TradingBot:
     async def get_status(self) -> str:
         """Get current bot status and configuration"""
         try:
-            status = "🟢 Active" if self.trading_active else "���� Inactive"
+            status = "🟢 Active" if self.trading_active else "❌ Inactive"
             mode = "📝 Paper Trading" if self.paper_trading else "💵 Live Trading"
             
             active_positions = len(self.positions)
