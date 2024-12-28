@@ -554,7 +554,54 @@ class TradingBot:
                         await self.log(f"  • Calculating Bollinger Bands for {symbol}", level="info")
                         bb = await self.technical_analyzer.calculate_bollinger_bands(symbol)
                         
-                        # Format detailed analysis result
+                        # Send individual coin analysis to notifications
+                        coin_summary = (
+                            f"Analysis Complete for {symbol}:\n```\n"
+                            f"Action: {signals['action'].upper()} (Confidence: {signals['score']*100:.1f}%)\n"
+                            f"Price: ${full_analysis['price']:,.2f} ({full_analysis['price_change_24h']:+.2f}%)\n\n"
+                            f"Signal Components:\n"
+                            f"• Trend: {signals['signals']['trend']:+.2f}\n"
+                            f"• Momentum: {signals['signals']['momentum']:+.2f}\n"
+                            f"• Volume: {signals['signals']['volume']:+.2f}\n"
+                            f"• Risk: {signals['signals']['risk']:+.2f}\n\n"
+                            f"Market Conditions:\n"
+                            f"• Trend Aligned: {'Yes' if market_conditions['market_alignment']['aligned'] else 'No'}\n"
+                            f"• Volatility: {'High' if market_conditions['volatility']['is_high'] else 'Normal'}\n"
+                            f"• Volume Trend: {market_conditions['volume']['trend']}\n"
+                            f"• RSI: {full_analysis['rsi']:.1f}\n"
+                            "```"
+                        )
+                        await self.send_notification(coin_summary, "analysis")
+                        
+                        # Check entry conditions and notify about analysis
+                        await self.log(f"  • Checking entry conditions for {symbol}", level="info")
+                        entry_conditions = await self._should_enter_position(symbol)
+                        
+                        # Log entry condition check results
+                        entry_check_msg = (
+                            f"Entry Conditions for {symbol}:\n"
+                            f"• Signal Score: {signals['score']*100:.1f}% ({'PASS' if abs(signals['score']) > 0.2 else 'FAIL'})\n"
+                            f"• Trend Aligned: {'PASS' if market_conditions['market_alignment']['aligned'] else 'FAIL'}\n"
+                            f"• Volume Confirmed: {'PASS' if full_analysis['volume_confirmed'] else 'FAIL'}\n"
+                            f"• Risk Acceptable: {'PASS' if market_conditions['trading_summary']['suitable'] else 'FAIL'}\n"
+                            f"• Final Decision: {'PASS' if entry_conditions else 'FAIL'}"
+                        )
+                        await self.log(entry_check_msg, level="info")
+                        
+                        if entry_conditions:
+                            await self.send_notification(
+                                f"🎯 Entry conditions met for {symbol}\n"
+                                f"Current price: ${full_analysis['price']:,.2f}\n"
+                                f"Signal: {signals['action'].upper()} (Confidence: {signals['score']*100:.1f}%)\n"
+                                f"Market Score: {market_conditions['market_alignment']['score']:+.2f}\n"
+                                f"Recommendation: {market_conditions['trading_summary']['recommendation']}",
+                                "alert"
+                            )
+                            await self._execute_entry(symbol)
+                            
+                        await self.log(f"✅ Completed analysis for {symbol}", level="info")
+                        
+                        # Format detailed analysis result for final summary
                         result = (
                             f"Symbol: {symbol}\n"
                             f"Action: {signals['action'].upper()}\n"
@@ -581,25 +628,10 @@ class TradingBot:
                             f"Market Conditions:\n"
                             f"• Score: {market_conditions['market_alignment']['score']:+.2f}\n"
                             f"• Volatility: {'High' if market_conditions['volatility']['is_high'] else 'Normal'}\n"
-                            f"• Recommendation: {market_conditions['trading_summary']['recommendation']}"
+                            f"• Recommendation: {market_conditions['trading_summary']['recommendation']}\n\n"
+                            f"Entry Conditions: {'PASS' if entry_conditions else 'FAIL'}"
                         )
                         analysis_results.append(result)
-                        
-                        # Check entry conditions and notify about analysis
-                        await self.log(f"  • Checking entry conditions for {symbol}", level="info")
-                        entry_conditions = await self._should_enter_position(symbol)
-                        if entry_conditions:
-                            await self.send_notification(
-                                f"🎯 Entry conditions met for {symbol}\n"
-                                f"Current price: ${full_analysis['price']:,.2f}\n"
-                                f"Signal: {signals['action'].upper()} (Confidence: {signals['score']*100:.1f}%)\n"
-                                f"Market Score: {market_conditions['market_alignment']['score']:+.2f}\n"
-                                f"Recommendation: {market_conditions['trading_summary']['recommendation']}",
-                                "alert"
-                            )
-                            await self._execute_entry(symbol)
-                            
-                        await self.log(f"✅ Completed analysis for {symbol}", level="info")
                         
                     except Exception as e:
                         await self.log(f"❌ Error analyzing {symbol}: {str(e)}", level="error")
@@ -652,7 +684,54 @@ class TradingBot:
                             await self.log(f"  • Calculating Bollinger Bands for {symbol}", level="info")
                             bb = await self.technical_analyzer.calculate_bollinger_bands(symbol)
                             
-                            # Format detailed analysis result
+                            # Send individual coin analysis to notifications
+                            coin_summary = (
+                                f"Analysis Complete for {symbol}:\n```\n"
+                                f"Action: {signals['action'].upper()} (Confidence: {signals['score']*100:.1f}%)\n"
+                                f"Price: ${full_analysis['price']:,.2f} ({full_analysis['price_change_24h']:+.2f}%)\n\n"
+                                f"Signal Components:\n"
+                                f"• Trend: {signals['signals']['trend']:+.2f}\n"
+                                f"• Momentum: {signals['signals']['momentum']:+.2f}\n"
+                                f"• Volume: {signals['signals']['volume']:+.2f}\n"
+                                f"• Risk: {signals['signals']['risk']:+.2f}\n\n"
+                                f"Market Conditions:\n"
+                                f"• Trend Aligned: {'Yes' if market_conditions['market_alignment']['aligned'] else 'No'}\n"
+                                f"• Volatility: {'High' if market_conditions['volatility']['is_high'] else 'Normal'}\n"
+                                f"• Volume Trend: {market_conditions['volume']['trend']}\n"
+                                f"• RSI: {full_analysis['rsi']:.1f}\n"
+                                "```"
+                            )
+                            await self.send_notification(coin_summary, "analysis")
+                            
+                            # Check entry conditions and notify about analysis
+                            await self.log(f"  • Checking entry conditions for {symbol}", level="info")
+                            entry_conditions = await self._should_enter_position(symbol)
+                            
+                            # Log entry condition check results
+                            entry_check_msg = (
+                                f"Entry Conditions for {symbol}:\n"
+                                f"• Signal Score: {signals['score']*100:.1f}% ({'PASS' if abs(signals['score']) > 0.2 else 'FAIL'})\n"
+                                f"• Trend Aligned: {'PASS' if market_conditions['market_alignment']['aligned'] else 'FAIL'}\n"
+                                f"• Volume Confirmed: {'PASS' if full_analysis['volume_confirmed'] else 'FAIL'}\n"
+                                f"• Risk Acceptable: {'PASS' if market_conditions['trading_summary']['suitable'] else 'FAIL'}\n"
+                                f"• Final Decision: {'PASS' if entry_conditions else 'FAIL'}"
+                            )
+                            await self.log(entry_check_msg, level="info")
+                            
+                            if entry_conditions:
+                                await self.send_notification(
+                                    f"🎯 Entry conditions met for {symbol}\n"
+                                    f"Current price: ${full_analysis['price']:,.2f}\n"
+                                    f"Signal: {signals['action'].upper()} (Confidence: {signals['score']*100:.1f}%)\n"
+                                    f"Market Score: {market_conditions['market_alignment']['score']:+.2f}\n"
+                                    f"Recommendation: {market_conditions['trading_summary']['recommendation']}",
+                                    "alert"
+                                )
+                                await self._execute_entry(symbol)
+                                
+                            await self.log(f"✅ Completed analysis for {symbol}", level="info")
+                            
+                            # Format detailed analysis result for final summary
                             result = (
                                 f"Symbol: {symbol}\n"
                                 f"Action: {signals['action'].upper()}\n"
@@ -679,25 +758,10 @@ class TradingBot:
                                 f"Market Conditions:\n"
                                 f"• Score: {market_conditions['market_alignment']['score']:+.2f}\n"
                                 f"• Volatility: {'High' if market_conditions['volatility']['is_high'] else 'Normal'}\n"
-                                f"• Recommendation: {market_conditions['trading_summary']['recommendation']}"
+                                f"• Recommendation: {market_conditions['trading_summary']['recommendation']}\n\n"
+                                f"Entry Conditions: {'PASS' if entry_conditions else 'FAIL'}"
                             )
                             analysis_results.append(result)
-                            
-                            # Check entry conditions and notify about analysis
-                            await self.log(f"  • Checking entry conditions for {symbol}", level="info")
-                            entry_conditions = await self._should_enter_position(symbol)
-                            if entry_conditions:
-                                await self.send_notification(
-                                    f"🎯 Entry conditions met for {symbol}\n"
-                                    f"Current price: ${full_analysis['price']:,.2f}\n"
-                                    f"Signal: {signals['action'].upper()} (Confidence: {signals['score']*100:.1f}%)\n"
-                                    f"Market Score: {market_conditions['market_alignment']['score']:+.2f}\n"
-                                    f"Recommendation: {market_conditions['trading_summary']['recommendation']}",
-                                    "alert"
-                                )
-                                await self._execute_entry(symbol)
-                                
-                            await self.log(f"✅ Completed analysis for {symbol}", level="info")
                             
                         except Exception as e:
                             await self.log(f"❌ Error analyzing {symbol}: {str(e)}", level="error")
