@@ -153,13 +153,15 @@ class TechnicalAnalyzer:
                 current_ema_short = float(ema_short.iloc[-1]) if ema_short is not None else current_price
                 current_ema_long = float(ema_long.iloc[-1]) if ema_long is not None else current_price
                 
-                if bb is not None:
+                # Handle Bollinger Bands values properly
+                if bb is not None and isinstance(bb, dict):
                     current_bb = {
-                        'upper': float(bb['upper']),
-                        'middle': float(bb['middle']),
-                        'lower': float(bb['lower'])
+                        'upper': bb['upper'],
+                        'middle': bb['middle'],
+                        'lower': bb['lower']
                     }
                 else:
+                    # Default values if BB calculation fails
                     current_bb = {
                         'upper': current_price * 1.02,
                         'middle': current_price,
