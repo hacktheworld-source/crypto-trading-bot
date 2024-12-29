@@ -126,21 +126,29 @@ class TechnicalAnalyzer:
         
         Args:
             data: Price data
-            timeframe: Timeframe identifier
+            timeframe: Timeframe identifier ('monthly', 'daily', 'hourly', '1h', '1d', '30d')
             
         Returns:
             Dict containing signal analysis
         """
         try:
-            # Adjust periods based on timeframe
-            rsi_period = self.rsi_period
-            if timeframe == "monthly":
-                rsi_period = max(7, self.rsi_period // 2)  # Shorter period for monthly data
+            # Map timeframe to settings key
+            timeframe_map = {
+                'hourly': 'hourly',
+                '1h': 'hourly',
+                'daily': 'daily',
+                '1d': 'daily',
+                'monthly': 'monthly',
+                '30d': 'monthly'
+            }
+            
+            settings_key = timeframe_map.get(timeframe.lower(), 'daily')  # Default to daily if unknown
+            settings = self.indicator_settings[settings_key]
             
             # Calculate technical indicators
-            rsi = await self.calculate_rsi(data['close'], period=rsi_period)
-            macd = self._calculate_macd(data)
-            bb = await self.calculate_bollinger_bands(data, timeframe)
+            rsi = await self.calculate_rsi(data['close'], period=settings['rsi_period'])
+            macd = self._calculate_macd(data, timeframe=settings_key)
+            bb = await self.calculate_bollinger_bands(data, timeframe=settings_key)
             ema_short = await self._calculate_ema(data['close'], 9)
             ema_long = await self._calculate_ema(data['close'], 21)
             
