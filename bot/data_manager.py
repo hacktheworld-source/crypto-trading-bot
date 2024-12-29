@@ -24,14 +24,30 @@ class DataManager:
         self.trading_bot = trading_bot
         self.client = trading_bot.client
         
-        # Initialize cache
+        # Initialize cache with separate TTLs for different timeframes
         self._cache: Dict[str, tuple[pd.DataFrame, float]] = {}
         self._cache_lock = asyncio.Lock()
         
-        # Timeframe configurations with correct Coinbase API granularity values
+        # Timeframe configurations with optimized settings
         self.timeframes = {
-            TimeFrame.HOUR_1: {'days': 14, 'granularity': 'ONE_HOUR'},    # 14 days * 24 hours = 336 candles
-            TimeFrame.DAY_1: {'days': 200, 'granularity': 'ONE_DAY'}      # Daily candles, well under limit
+            TimeFrame.HOUR_1: {
+                'days': 14,              # 14 days * 24 hours = 336 candles
+                'granularity': 'ONE_HOUR',
+                'min_periods': 24,       # Minimum 1 day of hourly data
+                'cache_ttl': 300         # 5 minutes cache
+            },
+            TimeFrame.DAY_1: {
+                'days': 100,             # 100 days of daily data
+                'granularity': 'ONE_DAY',
+                'min_periods': 20,       # Minimum 20 days
+                'cache_ttl': 3600        # 1 hour cache
+            },
+            TimeFrame.DAY_30: {
+                'days': 300,             # 300 days for reliable monthly analysis
+                'granularity': 'ONE_DAY',
+                'min_periods': 90,       # Minimum 3 months
+                'cache_ttl': 14400       # 4 hours cache
+            }
         }
         
         # Rate limiting
@@ -81,15 +97,15 @@ class DataManager:
         self, 
         symbol: str, 
         timeframe: TimeFrame,
-        periods: Optional[int] = None
+        force_fetch: bool = False
     ) -> pd.DataFrame:
         """
-        Get price data for specified timeframe with caching.
+        Get price data for specified timeframe with optimized caching.
         
         Args:
-            symbol: Trading pair symbol (e.g., 'BTC', 'ETH')
+            symbol: Trading pair symbol
             timeframe: TimeFrame enum value
-            periods: Optional number of periods to fetch
+            force_fetch: Force fetch new data ignoring cache
             
         Returns:
             DataFrame with OHLCV data
@@ -105,28 +121,31 @@ class DataManager:
             symbol = self._format_product_id(symbol)
             cache_key = f"{symbol}_{timeframe.name}"
             
+            timeframe_config = self.timeframes.get(timeframe)
+            if not timeframe_config:
+                raise DataError(f"Unsupported timeframe: {timeframe}")
+            
             async with self._cache_lock:
-                # Check cache first
-                if cache_key in self._cache:
+                # Check cache first if not forcing fetch
+                if not force_fetch and cache_key in self._cache:
                     data, timestamp = self._cache[cache_key]
-                    ttl = TradingConstants.CACHE_TTL.get(timeframe, 3600)
-                    if (time.time() - timestamp) < ttl:
+                    if (time.time() - timestamp) < timeframe_config['cache_ttl']:
                         return data
                 
                 # Acquire rate limit
                 await self.trading_bot.rate_limiter.acquire()
                 
                 # Fetch new data
-                data = await self._fetch_price_data(symbol, timeframe, periods)
+                data = await self._fetch_price_data(symbol, timeframe)
                 
                 # Validate data
                 if data is None or data.empty:
                     raise DataError(f"No data returned for {symbol}")
                 
-                if len(data) < TradingConstants.MIN_DATA_POINTS:
+                if len(data) < timeframe_config['min_periods']:
                     raise DataError(
                         f"Insufficient data points for {symbol}: "
-                        f"got {len(data)}, need {TradingConstants.MIN_DATA_POINTS}"
+                        f"got {len(data)}, need {timeframe_config['min_periods']}"
                     )
                 
                 # Update cache
@@ -134,8 +153,7 @@ class DataManager:
                 
                 # Clean cache if needed
                 if len(self._cache) > TradingConstants.CACHE_SIZE:
-                    oldest_key = min(self._cache.items(), key=lambda x: x[1][1])[0]
-                    del self._cache[oldest_key]
+                    await self._clean_cache()
                 
                 return data
                 
@@ -143,23 +161,22 @@ class DataManager:
             error_msg = f"Failed to get price data for {symbol}: {str(e)}"
             await self.trading_bot.log(error_msg, level="error")
             raise DataError(error_msg)
-
+            
     async def _fetch_price_data(
         self, 
         symbol: str, 
-        timeframe: TimeFrame,
-        periods: Optional[int] = None
+        timeframe: TimeFrame
     ) -> pd.DataFrame:
-        """Fetch historical price data from exchange."""
+        """Fetch historical price data with optimized handling."""
         try:
             # Get timeframe configuration
             timeframe_config = self.timeframes.get(timeframe)
             if not timeframe_config:
-                raise DataError(f"Unsupported timeframe: {timeframe.name}")
+                raise DataError(f"Unsupported timeframe: {timeframe}")
             
             # Calculate time range
             end = datetime.now()
-            days = timeframe_config['days']  # Use configured days directly
+            days = timeframe_config['days']
             start = end - timedelta(days=days)
             
             # Log request details
@@ -169,23 +186,45 @@ class DataManager:
                 level="debug"
             )
             
-            # Get candles from Coinbase
-            response = self.client.get_candles(
-                product_id=symbol,
-                start=int(start.timestamp()),
-                end=int(end.timestamp()),
-                granularity=timeframe_config['granularity']
-            )
+            # Get candles from Coinbase with retry logic
+            max_retries = 3
+            retry_delay = 1.0
+            
+            for attempt in range(max_retries):
+                try:
+                    response = self.client.get_candles(
+                        product_id=symbol,
+                        start=int(start.timestamp()),
+                        end=int(end.timestamp()),
+                        granularity=timeframe_config['granularity']
+                    )
+                    break
+                except Exception as e:
+                    if attempt == max_retries - 1:
+                        raise
+                    await asyncio.sleep(retry_delay * (attempt + 1))
             
             if not response or not response.candles:
                 raise DataError(f"No data returned for {symbol}")
             
-            # Process candle data
+            # Process candle data with validation
             candles_data = []
             for candle in response.candles:
                 try:
+                    candle_time = datetime.fromtimestamp(float(candle.start))
+                    
+                    # Skip invalid candles
+                    if any(pd.isna(x) or pd.isinf(x) for x in [
+                        float(candle.open),
+                        float(candle.high),
+                        float(candle.low),
+                        float(candle.close),
+                        float(candle.volume)
+                    ]):
+                        continue
+                        
                     candles_data.append({
-                        'timestamp': datetime.fromtimestamp(float(candle.start)),
+                        'timestamp': candle_time,
                         'open': float(candle.open),
                         'high': float(candle.high),
                         'low': float(candle.low),
@@ -207,16 +246,22 @@ class DataManager:
             df = df.sort_values('timestamp')
             df.set_index('timestamp', inplace=True)
             
-            # Validate number of candles
-            if len(df) > 350:
-                await self.trading_bot.log(
-                    f"Warning: Got {len(df)} candles, trimming to latest 350",
-                    level="warning"
-                )
-                df = df.iloc[-350:]  # Keep the most recent 350 candles if we somehow get more
+            # Remove duplicates and handle missing data
+            df = df[~df.index.duplicated(keep='last')]
+            df = df.resample(self._get_resample_rule(timeframe)).agg({
+                'open': 'first',
+                'high': 'max',
+                'low': 'min',
+                'close': 'last',
+                'volume': 'sum'
+            }).fillna(method='ffill')
             
-            if len(df) < 15:  # Minimum required for most indicators
-                raise DataError(f"Insufficient data points for {symbol}: {len(df)}")
+            # Validate final dataset
+            if len(df) < timeframe_config['min_periods']:
+                raise DataError(
+                    f"Insufficient data points for {symbol}: "
+                    f"got {len(df)}, need {timeframe_config['min_periods']}"
+                )
             
             return df
             
@@ -225,6 +270,35 @@ class DataManager:
                 raise
             await self.trading_bot.log(f"Data fetch error: {str(e)}", level="error")
             raise DataError(f"Failed to fetch price data: {str(e)}")
+            
+    def _get_resample_rule(self, timeframe: TimeFrame) -> str:
+        """Get pandas resample rule for timeframe."""
+        rules = {
+            TimeFrame.HOUR_1: '1H',
+            TimeFrame.DAY_1: '1D',
+            TimeFrame.DAY_30: '1D'  # We'll handle 30-day resampling separately
+        }
+        return rules.get(timeframe, '1D')
+            
+    async def _clean_cache(self) -> None:
+        """Remove expired cache entries with timeframe-specific TTLs."""
+        try:
+            current_time = time.time()
+            expired_keys = []
+            
+            for key, (_, timestamp) in self._cache.items():
+                timeframe = TimeFrame[key.split('_')[1]]
+                timeframe_config = self.timeframes.get(timeframe)
+                if timeframe_config:
+                    ttl = timeframe_config['cache_ttl']
+                    if current_time - timestamp > ttl:
+                        expired_keys.append(key)
+            
+            for key in expired_keys:
+                del self._cache[key]
+                
+        except Exception as e:
+            await self.trading_bot.log(f"Error cleaning cache: {str(e)}", level="error")
 
     async def get_current_price(self, symbol: str) -> float:
         """Get current price for a symbol."""
@@ -398,22 +472,3 @@ class DataManager:
         except Exception as e:
             await self.trading_bot.log(f"Error getting market depth: {str(e)}", level="error")
             raise TradingError(f"Failed to get market depth: {str(e)}", "DATA")
-
-    async def _clean_cache(self) -> None:
-        """Remove expired cache entries."""
-        try:
-            current_time = time.time()
-            expired_keys = []
-            
-            for key, (_, timestamp) in self._cache.items():
-                timeframe = key.split('_')[1]
-                timeframe_obj = TimeFrame[timeframe]
-                ttl = TradingConstants.CACHE_TTL.get(timeframe_obj, 3600)
-                if current_time - timestamp > ttl:
-                    expired_keys.append(key)
-            
-            for key in expired_keys:
-                del self._cache[key]
-                
-        except Exception as e:
-            await self.trading_bot.log(f"Error cleaning cache: {str(e)}", level="error")

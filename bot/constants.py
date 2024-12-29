@@ -3,14 +3,15 @@ from enum import Enum
 
 class TimeFrame(Enum):
     """Trading timeframes supported by Coinbase"""
-    HOUR_1 = "ONE_HOUR"    # Short-term momentum
-    DAY_1 = "ONE_DAY"      # Long-term structure
+    HOUR_1 = "1h"
+    DAY_1 = "1d"
+    DAY_30 = "30d"
 
 class TradingConstants:
     """Trading-related constants"""
     
     # Data Requirements
-    MIN_DATA_POINTS = 30  # Minimum data points needed for analysis
+    MIN_DATA_POINTS = 20  # Minimum data points needed for analysis
     MAX_CANDLES = 300    # Maximum candles to request (Coinbase limit is 350)
     
     # Minimum amounts
@@ -29,7 +30,8 @@ class TradingConstants:
     CACHE_SIZE = 1000
     CACHE_TTL = {
         TimeFrame.HOUR_1: 300,      # 5 minutes
-        TimeFrame.DAY_1: 3600       # 1 hour
+        TimeFrame.DAY_1: 3600,      # 1 hour
+        TimeFrame.DAY_30: 14400,    # 4 hours
     }
     
     # Technical Analysis
@@ -42,8 +44,21 @@ class TradingConstants:
     
     # Timeframe weights for analysis
     TIMEFRAMES = {
-        TimeFrame.DAY_1: {'weight': 0.5, 'periods': 90},   # Market structure
-        TimeFrame.HOUR_1: {'weight': 0.5, 'periods': 48}   # Entry timing
+        TimeFrame.HOUR_1: {
+            'granularity': 'ONE_HOUR',
+            'days': 14,  # 14 days * 24 hours = 336 candles
+            'weight': 0.25
+        },
+        TimeFrame.DAY_1: {
+            'granularity': 'ONE_DAY',
+            'days': 200,  # Daily candles
+            'weight': 0.35
+        },
+        TimeFrame.DAY_30: {
+            'granularity': 'ONE_DAY',
+            'days': 200,  # For 30-day analysis
+            'weight': 0.40  # Higher weight for longer timeframe
+        }
     }
     
     # Risk Management

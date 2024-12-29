@@ -14,10 +14,39 @@ class TechnicalAnalyzer:
         self.config = trading_bot.config
         self.data_manager = trading_bot.data_manager
         
+        # Timeframe-specific indicator settings
+        self.indicator_settings = {
+            'monthly': {
+                'rsi_period': 7,          # Shorter for monthly
+                'macd_fast': 6,           # Faster for monthly
+                'macd_slow': 13,
+                'macd_signal': 4,
+                'bb_period': 10,          # Shorter for monthly
+                'volume_ma': 6            # 6 months volume MA
+            },
+            'daily': {
+                'rsi_period': 14,         # Standard daily
+                'macd_fast': 12,
+                'macd_slow': 26,
+                'macd_signal': 9,
+                'bb_period': 20,
+                'volume_ma': 20
+            },
+            'hourly': {
+                'rsi_period': 14,         # Standard hourly
+                'macd_fast': 12,
+                'macd_slow': 26,
+                'macd_signal': 9,
+                'bb_period': 20,
+                'volume_ma': 24           # Full day of hourly volume
+            }
+        }
+        
         # Use data manager's timeframes for consistency
         self.timeframes = {
-            TimeFrame.DAY_1: {'weight': 0.6},  # Daily for trend direction
-            TimeFrame.HOUR_1: {'weight': 0.4}   # Hourly for entry timing
+            TimeFrame.DAY_30: {'weight': 0.4},  # Monthly for long-term trend
+            TimeFrame.DAY_1: {'weight': 0.35},  # Daily for trend direction
+            TimeFrame.HOUR_1: {'weight': 0.25}  # Hourly for entry timing
         }
         
         self.rsi_period = self.config.RSI_PERIOD
@@ -53,28 +82,33 @@ class TechnicalAnalyzer:
             symbol = self.data_manager._format_product_id(symbol.upper())
             
             # Get data for different timeframes
+            data_30d = await self.data_manager.get_price_data(symbol, TimeFrame.DAY_30)
             data_1d = await self.data_manager.get_price_data(symbol, TimeFrame.DAY_1)
             data_1h = await self.data_manager.get_price_data(symbol, TimeFrame.HOUR_1)
             
-            if any(data is None for data in [data_1d, data_1h]):
+            if any(data is None for data in [data_30d, data_1d, data_1h]):
                 raise TradingError("Failed to fetch data for signal generation", "DATA")
                 
             # Calculate signals for each timeframe
+            signals_30d = await self._calculate_timeframe_signals(data_30d, "monthly")
             signals_1d = await self._calculate_timeframe_signals(data_1d, "daily")
             signals_1h = await self._calculate_timeframe_signals(data_1h, "1h")
             
-            # Calculate trend alignment
+            # Calculate trend alignment across all timeframes
             trend_alignment = await self._calculate_trend_alignment(
+                signals_30d['trend'],
                 signals_1d['trend'],
                 signals_1h['trend']
             )
             
             return {
                 'signals': {
+                    'monthly': signals_30d,
                     'daily': signals_1d,
                     '1h': signals_1h
                 },
                 'trend': {
+                    'monthly': signals_30d['trend'],
                     'daily': signals_1d['trend'],
                     'hourly': signals_1h['trend'],
                     'aligned': trend_alignment['aligned'],
@@ -98,8 +132,13 @@ class TechnicalAnalyzer:
             Dict containing signal analysis
         """
         try:
+            # Adjust periods based on timeframe
+            rsi_period = self.rsi_period
+            if timeframe == "monthly":
+                rsi_period = max(7, self.rsi_period // 2)  # Shorter period for monthly data
+            
             # Calculate technical indicators
-            rsi = await self.calculate_rsi(data['close'])
+            rsi = await self.calculate_rsi(data['close'], period=rsi_period)
             macd = self._calculate_macd(data)
             bb = await self.calculate_bollinger_bands(data)
             ema_short = await self._calculate_ema(data['close'], 9)
@@ -130,34 +169,47 @@ class TechnicalAnalyzer:
                 await self.trading_bot.log(f"Error getting latest values: {str(e)}", level="error")
                 raise TradingError("Failed to get latest values", "ANALYSIS")
             
-            # Calculate trend
+            # Calculate trend with timeframe-specific adjustments
             trend_score = await self._calculate_trend_score(
                 current_price,
                 current_ema_short,
                 current_ema_long,
                 current_bb['middle'],
                 current_macd,
-                current_rsi
+                current_rsi,
+                timeframe=timeframe
             )
             
-            # Calculate momentum
+            # Calculate momentum with timeframe adjustments
             momentum_score = self._calculate_momentum_score(
                 current_rsi,
                 current_macd,
                 current_signal,
-                data
+                data,
+                timeframe=timeframe
             )
             
-            # Get volume confirmation
-            volume_analysis = self._analyze_volume_trend(data)
+            # Get volume confirmation with timeframe consideration
+            volume_analysis = self._analyze_volume_trend(data, timeframe=timeframe)
             volume_confirmed = volume_analysis.get('is_favorable', False)
             
-            # Determine signal strength
-            signal_strength = abs(trend_score + momentum_score) / 2
+            # Determine signal strength with timeframe weights
+            base_strength = abs(trend_score + momentum_score) / 2
+            timeframe_weight = (
+                1.2 if timeframe == "monthly" else
+                1.0 if timeframe == "daily" else
+                0.8  # hourly
+            )
+            signal_strength = base_strength * timeframe_weight
             
             return {
                 'trend': trend_score,
-                'momentum': momentum_score,
+                'momentum': {
+                    'value': momentum_score,
+                    'rsi': current_rsi,
+                    'macd': current_macd,
+                    'signal': current_signal
+                },
                 'strength': signal_strength,
                 'volume_confirmed': volume_confirmed,
                 'indicators': {
@@ -165,9 +217,13 @@ class TechnicalAnalyzer:
                     'macd': {
                         'value': current_macd,
                         'signal': current_signal,
-                        'histogram': float(macd['histogram'].iloc[-1]) if macd is not None else 0.0
+                        'histogram': current_macd - current_signal
                     },
-                    'bb': current_bb
+                    'bb': current_bb,
+                    'ema': {
+                        'short': current_ema_short,
+                        'long': current_ema_long
+                    }
                 }
             }
             
@@ -176,7 +232,12 @@ class TechnicalAnalyzer:
             # Return neutral signals on error
             return {
                 'trend': 0.0,
-                'momentum': 0.0,
+                'momentum': {
+                    'value': 0.0,
+                    'rsi': 50.0,
+                    'macd': 0.0,
+                    'signal': 0.0
+                },
                 'strength': 0.0,
                 'volume_confirmed': False,
                 'indicators': {
@@ -186,13 +247,18 @@ class TechnicalAnalyzer:
                         'upper': float(data['close'].iloc[-1]) * 1.02,
                         'middle': float(data['close'].iloc[-1]),
                         'lower': float(data['close'].iloc[-1]) * 0.98
+                    },
+                    'ema': {
+                        'short': float(data['close'].iloc[-1]),
+                        'long': float(data['close'].iloc[-1])
                     }
                 }
             }
         
     async def _calculate_trend_score(self, price: float, ema_short: float, 
                              ema_long: float, bb_middle: float,
-                             macd: float, rsi: float) -> float:
+                             macd: float, rsi: float,
+                             timeframe: str = "daily") -> float:
         """
         Calculate trend score based on multiple indicators.
         
@@ -264,7 +330,8 @@ class TechnicalAnalyzer:
             return 0.0  # Neutral score on error
             
     def _calculate_momentum_score(self, rsi: float, macd: float, 
-                                signal: float, data: pd.DataFrame) -> float:
+                                signal: float, data: pd.DataFrame,
+                                timeframe: str = "daily") -> float:
         """
         Calculate momentum score based on multiple indicators.
         
@@ -297,40 +364,43 @@ class TechnicalAnalyzer:
         
         return max(-1.0, min(1.0, weighted_score))
         
-    async def _calculate_trend_alignment(self, daily_trend: float, h1_trend: float) -> Dict[str, Any]:
+    async def _calculate_trend_alignment(self, *trends: float) -> Dict[str, Any]:
         """
-        Calculate trend alignment across timeframes.
+        Calculate trend alignment across multiple timeframes.
         
+        Args:
+            *trends: Trend scores for different timeframes
+            
         Returns:
             Dict containing alignment analysis
         """
         try:
-            # Check if trends are aligned (same direction and significant)
-            daily_significant = abs(daily_trend) > 0.2
-            h1_significant = abs(h1_trend) > 0.2
+            if not trends:
+                return {'aligned': False, 'strength': 0.0}
             
-            same_direction = (daily_trend > 0 and h1_trend > 0) or (daily_trend < 0 and h1_trend < 0)
+            # All trends should be in the same direction
+            all_positive = all(t > 0 for t in trends)
+            all_negative = all(t < 0 for t in trends)
+            aligned = all_positive or all_negative
             
-            # Calculate alignment strength
-            strength = (abs(daily_trend) * 0.6 + abs(h1_trend) * 0.4)  # Weight daily more heavily
+            # Calculate average strength
+            avg_strength = sum(abs(t) for t in trends) / len(trends)
+            
+            # Weight longer timeframes more heavily
+            weighted_strength = 0.0
+            weights = [0.5, 0.3, 0.2]  # Monthly, Daily, Hourly
+            for trend, weight in zip(trends, weights):
+                weighted_strength += abs(trend) * weight
             
             return {
-                'aligned': same_direction and daily_significant and h1_significant,
-                'strength': strength,
-                'direction': (
-                    'bullish' if daily_trend > 0 and h1_trend > 0 else
-                    'bearish' if daily_trend < 0 and h1_trend < 0 else
-                    'mixed'
-                )
+                'aligned': aligned,
+                'strength': weighted_strength,
+                'direction': 'bullish' if all_positive else 'bearish' if all_negative else 'mixed'
             }
             
         except Exception as e:
             await self.log(f"Trend alignment calculation error: {str(e)}", level="error")
-            return {
-                'aligned': False,
-                'strength': 0.0,
-                'direction': 'mixed'
-            }
+            return {'aligned': False, 'strength': 0.0, 'direction': 'unknown'}
 
     def _combine_signals(self, signals: Dict[str, Dict]) -> Dict[str, Any]:
         """Combine signals from all timeframes into one decision"""
@@ -522,56 +592,70 @@ class TechnicalAnalyzer:
             await self.trading_bot.log(f"Volume node analysis error: {str(e)}", level="error")
             return []
 
-    def _analyze_volume_trend(self, data: pd.DataFrame) -> Dict[str, Any]:
+    def _analyze_volume_trend(self, data: pd.DataFrame, timeframe: str = "daily") -> Dict[str, Any]:
         """
-        Analyze volume trend using multiple metrics.
+        Analyze volume trend with timeframe-specific thresholds.
         
         Args:
             data: Price and volume data
+            timeframe: Analysis timeframe
             
         Returns:
             Dict containing volume analysis
         """
         try:
+            settings = self.indicator_settings[timeframe]
+            
             # Calculate volume metrics
             volume = data['volume']
-            volume_ma = volume.rolling(window=20).mean()
-            volume_std = volume.rolling(window=20).std()
+            volume_ma = volume.rolling(window=settings['volume_ma']).mean()
+            volume_std = volume.rolling(window=settings['volume_ma']).std()
             
             # Get recent volume data
             current_volume = float(volume.iloc[-1])
-            recent_volumes = volume.iloc[-5:]  # Last 5 periods
+            recent_volumes = volume.iloc[-settings['volume_ma']:]
             
-            # Calculate z-score
+            # Calculate z-score with timeframe consideration
             current_ma = float(volume_ma.iloc[-1])
             current_std = float(volume_std.iloc[-1])
             z_score = (current_volume - current_ma) / current_std if current_std != 0 else 0
             
-            # Calculate trend
+            # Adjust volume trend calculation for timeframe
             volume_trend = float(recent_volumes.mean() / current_ma) if current_ma != 0 else 1.0
             
-            # Determine volume characteristics
-            is_favorable = volume_trend > 1.0 and z_score > -1.0
+            # Adjust thresholds based on timeframe
+            if timeframe == "monthly":
+                trend_threshold = 1.1  # 10% above average for monthly
+                z_score_threshold = 1.5
+            elif timeframe == "daily":
+                trend_threshold = 1.2  # 20% above average for daily
+                z_score_threshold = 2.0
+            else:  # hourly
+                trend_threshold = 1.3  # 30% above average for hourly
+                z_score_threshold = 2.5
             
-            # Score from -1 to 1
-            score = min(1.0, max(-1.0, z_score / 2))
+            # Determine volume characteristics
+            is_favorable = volume_trend > trend_threshold and z_score > -z_score_threshold
+            
+            # Score from -1 to 1 with timeframe consideration
+            score = min(1.0, max(-1.0, z_score / z_score_threshold))
             
             # Get descriptive strength
-            if abs(z_score) > 2:
+            if abs(z_score) > z_score_threshold:
                 strength = "Very High" if z_score > 0 else "Very Low"
-            elif abs(z_score) > 1:
+            elif abs(z_score) > z_score_threshold / 2:
                 strength = "High" if z_score > 0 else "Low"
             else:
                 strength = "Average"
             
             # Get trend description
-            if volume_trend > 1.2:
+            if volume_trend > trend_threshold * 1.2:
                 description = "Strongly Increasing"
-            elif volume_trend > 1.0:
+            elif volume_trend > trend_threshold:
                 description = "Moderately Increasing"
-            elif volume_trend < 0.8:
+            elif volume_trend < 1 / trend_threshold:
                 description = "Strongly Decreasing"
-            elif volume_trend < 1.0:
+            elif volume_trend < 1:
                 description = "Moderately Decreasing"
             else:
                 description = "Stable"
@@ -581,7 +665,9 @@ class TechnicalAnalyzer:
                 'strength': strength,
                 'description': description,
                 'is_favorable': is_favorable,
-                'trend': description.split()[0].lower()  # For compatibility
+                'trend': description.split()[0].lower(),
+                'z_score': float(z_score),
+                'volume_trend': float(volume_trend)
             }
             
         except Exception as e:
@@ -591,7 +677,9 @@ class TechnicalAnalyzer:
                 'strength': "Average",
                 'description': "Stable",
                 'is_favorable': False,
-                'trend': "stable"
+                'trend': "stable",
+                'z_score': 0.0,
+                'volume_trend': 1.0
             }
 
     async def _calculate_pivot_points(self, data: pd.DataFrame) -> Dict[str, List[float]]:
@@ -647,93 +735,39 @@ class TechnicalAnalyzer:
             await self.trading_bot.log(f"Swing level identification error: {str(e)}", level="error")
             return {'resistance': [], 'support': []}
 
-    async def calculate_rsi(self, prices: pd.Series, period: int = None) -> pd.Series:
+    async def calculate_rsi(
+        self, 
+        prices: pd.Series,
+        timeframe: str = "daily"
+    ) -> pd.Series:
         """
-        Calculate RSI using Wilder's exact method.
+        Calculate RSI with timeframe-specific parameters.
         
         Args:
-            prices: Price series data
-            period: RSI period (default: from config)
+            prices: Price series
+            timeframe: Analysis timeframe
             
         Returns:
-            Series containing RSI values
-            
-        Raises:
-            TradingError: If calculation fails
+            RSI values as Series
         """
         try:
-            if period is None:
-                period = self.rsi_period
-                
-            # Ensure we have a pandas Series
-            if not isinstance(prices, pd.Series):
-                prices = pd.Series(prices)
-            
-            # Convert to float series if needed
-            prices = pd.to_numeric(prices, errors='coerce')
-            
-            # Drop any NaN values and reset index
-            prices = prices.dropna().reset_index(drop=True)
-            
-            # Validate data length
-            if len(prices) < period + 1:
-                raise TradingError(
-                    f"Insufficient data for RSI calculation. Need at least {period + 1} data points.",
-                    "ANALYSIS"
-                )
+            settings = self.indicator_settings[timeframe]
+            period = settings['rsi_period']
             
             # Calculate price changes
             delta = prices.diff()
-            
-            # Drop the first NaN value from diff and reset index
-            delta = delta.dropna().reset_index(drop=True)
             
             # Separate gains and losses
             gains = delta.where(delta > 0, 0)
             losses = -delta.where(delta < 0, 0)
             
-            # First average - simple average for initial period
-            first_avg_gain = gains[:period].mean()
-            first_avg_loss = losses[:period].mean()
+            # Calculate average gains and losses
+            avg_gains = gains.ewm(com=period-1, min_periods=period).mean()
+            avg_losses = losses.ewm(com=period-1, min_periods=period).mean()
             
-            # Initialize lists for gains and losses
-            avg_gains = [first_avg_gain]
-            avg_losses = [first_avg_loss]
-            
-            # Calculate subsequent values using Wilder's smoothing
-            for i in range(period, len(gains)):
-                avg_gain = (avg_gains[-1] * (period - 1) + gains.iloc[i]) / period
-                avg_loss = (avg_losses[-1] * (period - 1) + losses.iloc[i]) / period
-                avg_gains.append(avg_gain)
-                avg_losses.append(avg_loss)
-            
-            # Create Series with proper index alignment
-            avg_gains_series = pd.Series(avg_gains)
-            avg_losses_series = pd.Series(avg_losses)
-            
-            # Calculate RS
-            rs = avg_gains_series / avg_losses_series
-            
-            # Handle special cases
-            rs[avg_losses_series == 0] = 100.0  # All gains
-            rs[(avg_losses_series == 0) & (avg_gains_series == 0)] = 0.0  # No movement
-            
-            # Calculate RSI
+            # Calculate RS and RSI
+            rs = avg_gains / avg_losses
             rsi = 100 - (100 / (1 + rs))
-            
-            # Handle edge cases
-            rsi[avg_gains_series == 0] = 0    # No gains = oversold
-            rsi[avg_losses_series == 0] = 100  # No losses = overbought
-            
-            # Fill any remaining NaN with neutral value
-            rsi = rsi.fillna(50)
-            
-            # Validate final output
-            if pd.isna(rsi.iloc[-1]):
-                raise TradingError("Invalid RSI calculation result", "ANALYSIS")
-            
-            # Restore the original index for the final values
-            rsi.index = prices.index[period:]
             
             return rsi
             
@@ -743,93 +777,50 @@ class TechnicalAnalyzer:
             await self.log(f"RSI calculation error: {str(e)}", level="error")
             raise TradingError(f"Failed to calculate RSI: {str(e)}", "ANALYSIS")
 
-    async def calculate_bollinger_bands(self, data_or_symbol: Union[pd.DataFrame, str], period: int = 20, std_dev: float = 2.0) -> Dict[str, Any]:
+    async def calculate_bollinger_bands(
+        self, 
+        data: pd.DataFrame,
+        timeframe: str = "daily"
+    ) -> Dict[str, Any]:
         """
-        Calculate Bollinger Bands for a symbol or price data.
+        Calculate Bollinger Bands with timeframe-specific parameters.
         
         Args:
-            data_or_symbol: Either a DataFrame with price data or a symbol string
-            period: Moving average period (default: 20)
-            std_dev: Standard deviation multiplier (default: 2.0)
+            data: Price data DataFrame
+            timeframe: Analysis timeframe
             
         Returns:
             Dict containing upper, middle, lower bands and bandwidth
-            
-        Raises:
-            TradingError: If calculation fails
         """
         try:
-            # Handle both DataFrame and symbol input
-            if isinstance(data_or_symbol, str):
-                # Get price data from data manager
-                data = await self.data_manager.get_price_data(
-                    self.data_manager._format_product_id(data_or_symbol.upper()),
-                    TimeFrame.DAY_1
-                )
-            else:
-                data = data_or_symbol
+            settings = self.indicator_settings[timeframe]
+            period = settings['bb_period']
             
-            # Use standardized validation helper
-            prices = await self._validate_price_data(
-                data=data,
-                min_periods=period + 1,
-                symbol=data_or_symbol if isinstance(data_or_symbol, str) else "price data",
-                indicator="Bollinger Bands"
-            )
+            # Calculate middle band (SMA)
+            middle = data['close'].rolling(window=period).mean()
             
-            # Calculate bands with proper minimum periods
-            ma = prices.rolling(window=period, min_periods=period).mean()
-            std = prices.rolling(window=period, min_periods=period).std()
+            # Calculate standard deviation
+            std = data['close'].rolling(window=period).std()
             
-            upper = ma + (std * std_dev)
-            lower = ma - (std * std_dev)
+            # Calculate bands
+            upper = middle + (std * 2)
+            lower = middle - (std * 2)
             
-            # Calculate bandwidth and %B
-            bandwidth = ((upper - lower) / ma) * 100
-            percent_b = (prices - lower) / (upper - lower) * 100
+            # Calculate bandwidth
+            bandwidth = (upper - lower) / middle
             
-            # Get latest values with proper error handling
-            try:
-                latest_values = {
-                    'upper': float(upper.iloc[-1]),
-                    'middle': float(ma.iloc[-1]),
-                    'lower': float(lower.iloc[-1]),
-                    'bandwidth': float(bandwidth.iloc[-1]),
-                    'percent_b': float(percent_b.iloc[-1])
-                }
-            except (IndexError, ValueError) as e:
-                raise TradingError(f"Failed to get latest values: {str(e)}", "ANALYSIS")
-            
-            # Validate output
-            if any(pd.isna(val) for val in latest_values.values()):
-                raise TradingError("Invalid results in Bollinger Bands calculation", "ANALYSIS")
-            
-            # Add analysis components
-            latest_values.update({
-                'volatility': 'High' if latest_values['bandwidth'] > 5 else 'Normal',
-                'signal': self._get_bb_signal(latest_values['percent_b'])
-            })
-            
-            return latest_values
+            return {
+                'upper': float(upper.iloc[-1]),
+                'middle': float(middle.iloc[-1]),
+                'lower': float(lower.iloc[-1]),
+                'bandwidth': float(bandwidth.iloc[-1])
+            }
             
         except Exception as e:
             if isinstance(e, TradingError):
                 raise
             await self.log(f"Bollinger Bands calculation error: {str(e)}", level="error")
             raise TradingError(f"Failed to calculate Bollinger Bands: {str(e)}", "ANALYSIS")
-            
-    def _get_bb_signal(self, percent_b: float) -> str:
-        """Get trading signal based on %B value"""
-        if percent_b > 100:
-            return "Strong Sell"
-        elif percent_b > 80:
-            return "Overbought"
-        elif percent_b < 0:
-            return "Strong Buy"
-        elif percent_b < 20:
-            return "Oversold"
-        else:
-            return "Neutral"
 
     async def get_ma_analysis(self, symbol: str) -> str:
         """
@@ -1154,7 +1145,8 @@ class TechnicalAnalyzer:
         """
         granularity_map = {
             TimeFrame.HOUR_1: "ONE_HOUR",
-            TimeFrame.DAY_1: "ONE_DAY"
+            TimeFrame.DAY_1: "ONE_DAY",
+            TimeFrame.DAY_30: "ONE_DAY"  # 30-day analysis uses daily candles
         }
         
         if timeframe not in granularity_map:
@@ -1163,56 +1155,100 @@ class TechnicalAnalyzer:
         return granularity_map[timeframe]
         
     async def get_price_data(self, symbol: str, timeframe: TimeFrame) -> pd.DataFrame:
-        """Get price data with proper error handling and validation"""
+        """
+        Get price data with proper error handling and validation.
+        
+        Args:
+            symbol: Trading pair symbol
+            timeframe: TimeFrame enum value
+            
+        Returns:
+            pd.DataFrame: Price data with OHLCV columns
+            
+        Raises:
+            TradingError: If data cannot be fetched or validated
+        """
         try:
             # Format symbol
             symbol = self.data_manager._format_product_id(symbol.upper())
             
             # Calculate time range based on timeframe
             end = datetime.now()
-            # Adjust days to stay under 350 candle limit
-            if timeframe == TimeFrame.HOUR_1:
-                days = 14  # 14 days * 24 hours = 336 candles
-            else:  # DAY_1
-                days = 200  # Daily candles, well under limit
+            
+            # Get timeframe configuration from constants
+            timeframe_config = TradingConstants.TIMEFRAMES.get(timeframe)
+            if not timeframe_config:
+                raise TradingError(f"Unsupported timeframe: {timeframe}", "CONFIG")
                 
+            days = timeframe_config['days']
             start = end - timedelta(days=days)
             
             # Use data manager to get price data
             data = await self.data_manager.get_price_data(
                 symbol,
-                timeframe,
-                start=start,
-                end=end
+                timeframe
             )
             
             if data is None or data.empty:
                 raise DataError(f"No data returned for {symbol}")
+            
+            # For 30-day analysis, we need to resample daily data
+            if timeframe == TimeFrame.DAY_30:
+                # Resample to 30-day periods
+                data = self._resample_for_monthly(data)
             
             return data
             
         except Exception as e:
             await self.log(f"Failed to get price data: {str(e)}", level="error")
             raise TradingError(f"Failed to get price data: {str(e)}", "DATA")
+            
+    def _resample_for_monthly(self, data: pd.DataFrame) -> pd.DataFrame:
+        """
+        Resample daily data to 30-day periods for monthly analysis.
+        
+        Args:
+            data: Daily price data
+            
+        Returns:
+            pd.DataFrame: Resampled data for 30-day analysis
+        """
+        try:
+            # Set proper datetime index if not already
+            if not isinstance(data.index, pd.DatetimeIndex):
+                data.index = pd.to_datetime(data.index)
+            
+            # Resample to 30-day periods
+            monthly = data.resample('30D').agg({
+                'open': 'first',
+                'high': 'max',
+                'low': 'min',
+                'close': 'last',
+                'volume': 'sum'
+            })
+            
+            return monthly.dropna()
+            
+        except Exception as e:
+            self.log(f"Error resampling data: {str(e)}", level="error")
+            return data  # Return original data if resampling fails
 
     async def _validate_price_data(
         self, 
         data: pd.DataFrame, 
-        min_periods: int,
-        symbol: str,
+        timeframe: str,
         indicator: str
-    ) -> pd.Series:
+    ) -> pd.DataFrame:
         """
         Validate and clean price data for indicator calculations.
         
         Args:
             data: Raw price data DataFrame
-            min_periods: Minimum required periods
-            symbol: Symbol being analyzed
+            timeframe: Analysis timeframe
             indicator: Name of indicator for error messages
             
         Returns:
-            pd.Series: Cleaned and validated price series
+            pd.DataFrame: Cleaned and validated price data
             
         Raises:
             TradingError: If data validation fails
@@ -1221,11 +1257,22 @@ class TechnicalAnalyzer:
             # Check for None or empty DataFrame
             if data is None or data.empty:
                 raise TradingError(
-                    f"No data available for {symbol}",
+                    f"No data available for {indicator} calculation",
                     "DATA"
                 )
             
-            # Check minimum length
+            # Get timeframe settings
+            settings = self.indicator_settings.get(timeframe)
+            if not settings:
+                raise TradingError(f"Invalid timeframe: {timeframe}", "CONFIG")
+            
+            # Check minimum length based on indicator requirements
+            min_periods = max(
+                settings['rsi_period'],
+                settings['macd_slow'],
+                settings['bb_period']
+            ) + 1
+            
             if len(data) < min_periods:
                 raise TradingError(
                     f"Insufficient data for {indicator} calculation. "
@@ -1233,49 +1280,173 @@ class TechnicalAnalyzer:
                     "ANALYSIS"
                 )
             
+            # Validate OHLCV data
+            required_columns = ['open', 'high', 'low', 'close', 'volume']
+            missing_columns = [col for col in required_columns if col not in data.columns]
+            if missing_columns:
+                raise TradingError(
+                    f"Missing required columns: {', '.join(missing_columns)}",
+                    "DATA"
+                )
+            
             # Convert to numeric and handle missing values
-            prices = pd.to_numeric(data['close'], errors='coerce')
-            prices = prices.dropna()
+            for col in required_columns:
+                data[col] = pd.to_numeric(data[col], errors='coerce')
+            
+            # Check for invalid values
+            invalid_rows = data[
+                data[required_columns].isna().any(axis=1) |
+                data[required_columns].isin([np.inf, -np.inf]).any(axis=1)
+            ]
+            
+            if not invalid_rows.empty:
+                await self.log(
+                    f"Found {len(invalid_rows)} invalid rows in {timeframe} data",
+                    level="warning"
+                )
+                # Remove invalid rows
+                data = data.drop(invalid_rows.index)
             
             # Validate after cleaning
-            if len(prices) < min_periods:
+            if len(data) < min_periods:
                 raise TradingError(
-                    f"Insufficient valid price data after cleaning for {indicator}. "
-                    f"Need at least {min_periods} points, got {len(prices)}.",
+                    f"Insufficient valid data after cleaning for {indicator}. "
+                    f"Need at least {min_periods} points, got {len(data)}.",
                     "ANALYSIS"
                 )
             
-            return prices
+            # Ensure proper datetime index
+            if not isinstance(data.index, pd.DatetimeIndex):
+                try:
+                    data.index = pd.to_datetime(data.index)
+                except Exception as e:
+                    raise TradingError(f"Invalid datetime index: {str(e)}", "DATA")
+            
+            # Sort index and remove duplicates
+            data = data.sort_index()
+            data = data[~data.index.duplicated(keep='last')]
+            
+            return data
             
         except Exception as e:
             if isinstance(e, TradingError):
                 raise
             await self.log(f"Data validation error: {str(e)}", level="error")
             raise TradingError(f"Failed to validate data: {str(e)}", "DATA")
-
-    def _calculate_macd(self, data: pd.DataFrame) -> Dict[str, pd.Series]:
+            
+    async def _validate_analysis_results(
+        self,
+        results: Dict[str, Any],
+        timeframe: str,
+        indicator: str
+    ) -> None:
         """
-        Calculate MACD indicator.
+        Validate analysis results for consistency and completeness.
+        
+        Args:
+            results: Analysis results to validate
+            timeframe: Analysis timeframe
+            indicator: Name of indicator for error messages
+            
+        Raises:
+            TradingError: If validation fails
+        """
+        try:
+            # Check for required components
+            required_components = {
+                'trend': [-1.0, 1.0],
+                'momentum': {
+                    'value': [-1.0, 1.0],
+                    'rsi': [0, 100],
+                    'macd': None,  # No specific range
+                    'signal': None
+                },
+                'strength': [0.0, 1.0],
+                'volume_confirmed': [False, True],
+                'indicators': {
+                    'rsi': [0, 100],
+                    'macd': {
+                        'value': None,
+                        'signal': None,
+                        'histogram': None
+                    },
+                    'bb': {
+                        'upper': None,
+                        'middle': None,
+                        'lower': None
+                    },
+                    'ema': {
+                        'short': None,
+                        'long': None
+                    }
+                }
+            }
+            
+            def validate_component(value, spec):
+                if spec is None:
+                    return pd.notna(value)
+                if isinstance(spec, list):
+                    return pd.notna(value) and (
+                        isinstance(value, bool) or
+                        (spec[0] <= float(value) <= spec[1])
+                    )
+                if isinstance(spec, dict):
+                    return isinstance(value, dict) and all(
+                        k in value and validate_component(value[k], v)
+                        for k, v in spec.items()
+                    )
+                return False
+            
+            # Validate each component
+            for component, spec in required_components.items():
+                if component not in results:
+                    raise TradingError(
+                        f"Missing required component '{component}' in {indicator} results",
+                        "ANALYSIS"
+                    )
+                if not validate_component(results[component], spec):
+                    raise TradingError(
+                        f"Invalid {component} value in {indicator} results for {timeframe}",
+                        "ANALYSIS"
+                    )
+            
+        except Exception as e:
+            if isinstance(e, TradingError):
+                raise
+            await self.log(f"Results validation error: {str(e)}", level="error")
+            raise TradingError(f"Failed to validate {indicator} results: {str(e)}", "ANALYSIS")
+
+    def _calculate_macd(
+        self, 
+        data: pd.DataFrame,
+        timeframe: str = "daily"
+    ) -> Dict[str, pd.Series]:
+        """
+        Calculate MACD indicator with timeframe-specific parameters.
         
         Args:
             data: Price data DataFrame
+            timeframe: Analysis timeframe
             
         Returns:
             Dict containing MACD line, signal line, and histogram
         """
         try:
+            # Get timeframe-specific settings
+            settings = self.indicator_settings[timeframe]
+            
             # Convert to numeric and handle missing values
             close = pd.to_numeric(data['close'], errors='coerce')
             
-            # Calculate EMAs
-            ema12 = close.ewm(span=12, adjust=False).mean()
-            ema26 = close.ewm(span=26, adjust=False).mean()
+            # Calculate EMAs with timeframe-specific periods
+            ema_fast = close.ewm(span=settings['macd_fast'], adjust=False).mean()
+            ema_slow = close.ewm(span=settings['macd_slow'], adjust=False).mean()
             
             # Calculate MACD line
-            macd_line = ema12 - ema26
+            macd_line = ema_fast - ema_slow
             
             # Calculate signal line
-            signal_line = macd_line.ewm(span=9, adjust=False).mean()
+            signal_line = macd_line.ewm(span=settings['macd_signal'], adjust=False).mean()
             
             # Calculate histogram
             histogram = macd_line - signal_line
@@ -1287,10 +1458,12 @@ class TechnicalAnalyzer:
             }
             
         except Exception as e:
-            self.trading_bot.log_sync(f"MACD calculation error: {str(e)}", level="error")
-            # Return empty series with same index as input data
-            empty = pd.Series(0, index=data.index)
-            return {'macd': empty, 'signal': empty, 'histogram': empty}
+            self.log(f"MACD calculation error: {str(e)}", level="error")
+            return {
+                'macd': pd.Series(0, index=data.index),
+                'signal': pd.Series(0, index=data.index),
+                'histogram': pd.Series(0, index=data.index)
+            }
 
     async def _calculate_ema(self, data: pd.Series, period: int) -> pd.Series:
         """
