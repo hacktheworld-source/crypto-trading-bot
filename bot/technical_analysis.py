@@ -962,7 +962,7 @@ class TechnicalAnalyzer:
             # Calculate market strength
             strength = {
                 'trend': signals['trend']['daily'],
-                'momentum': signals['signals']['daily']['momentum'],
+                'momentum': signals['signals']['daily']['momentum']['value'],  # Extract the momentum value
                 'volume': volume_trend['score']  # Use volume trend score
             }
             
