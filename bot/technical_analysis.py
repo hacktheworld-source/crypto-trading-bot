@@ -738,6 +738,7 @@ class TechnicalAnalyzer:
     async def calculate_rsi(
         self, 
         prices: pd.Series,
+        period: int = None,
         timeframe: str = "daily"
     ) -> pd.Series:
         """
@@ -745,6 +746,7 @@ class TechnicalAnalyzer:
         
         Args:
             prices: Price series
+            period: Optional override for RSI period
             timeframe: Analysis timeframe
             
         Returns:
@@ -752,7 +754,8 @@ class TechnicalAnalyzer:
         """
         try:
             settings = self.indicator_settings[timeframe]
-            period = settings['rsi_period']
+            # Use provided period if specified, otherwise use timeframe settings
+            rsi_period = period if period is not None else settings['rsi_period']
             
             # Calculate price changes
             delta = prices.diff()
@@ -762,8 +765,8 @@ class TechnicalAnalyzer:
             losses = -delta.where(delta < 0, 0)
             
             # Calculate average gains and losses
-            avg_gains = gains.ewm(com=period-1, min_periods=period).mean()
-            avg_losses = losses.ewm(com=period-1, min_periods=period).mean()
+            avg_gains = gains.ewm(com=rsi_period-1, min_periods=rsi_period).mean()
+            avg_losses = losses.ewm(com=rsi_period-1, min_periods=rsi_period).mean()
             
             # Calculate RS and RSI
             rs = avg_gains / avg_losses
