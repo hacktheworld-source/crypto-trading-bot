@@ -197,10 +197,7 @@ class TechnicalAnalyzer:
             )
             
             # Get volume analysis with timeframe consideration
-            volume_analysis = self._analyze_volume_trend(data, timeframe=settings_key)
-            
-            # Calculate volume score
-            volume_score = volume_analysis  # Already returns a float between -1 and 1
+            volume_score = self._analyze_volume_trend(data, timeframe=timeframe)
             
             # Determine signal strength with timeframe weights
             base_strength = (abs(trend_score) + abs(momentum_score) + abs(volume_score)) / 3
@@ -214,9 +211,9 @@ class TechnicalAnalyzer:
             return {
                 'trend': trend_score,
                 'momentum': momentum_score,
-                'volume': volume_score,  # Add actual volume score
+                'volume': volume_score,
                 'strength': signal_strength,
-                'volume_confirmed': volume_score > 0,  # Convert score to confirmation
+                'volume_confirmed': volume_score > 0.2,  # Require meaningful volume confirmation
                 'indicators': {
                     'rsi': current_rsi,
                     'macd': {
@@ -728,73 +725,59 @@ class TechnicalAnalyzer:
             print(f"\n=== Volume Analysis Debug ===")
             print(f"Timeframe: {timeframe}")
             print(f"Data points: {len(data)}")
-            print(f"Recent volume changes: {volume_changes.iloc[-5:].values}")
             
             # Adjust periods based on timeframe
             if timeframe == "hourly":
                 short_period = 6    # 6 hours
                 medium_period = 24  # 1 day
-                long_period = 72    # 3 days
             elif timeframe == "monthly":
                 short_period = 3    # 3 months
                 medium_period = 6   # 6 months
-                long_period = 12    # 1 year
             else:  # daily
                 short_period = 3    # 3 days
                 medium_period = 7   # 1 week
-                long_period = 20    # 1 month
             
-            # Calculate timeframe-adjusted averages
-            short_vol = volume_changes.iloc[-short_period:].mean() if len(volume_changes) >= short_period else volume_changes.mean()
-            medium_vol = volume_changes.iloc[-medium_period:].mean() if len(volume_changes) >= medium_period else short_vol
+            # Calculate volume trend scores
+            recent_volume = data['volume'].iloc[-short_period:].mean()
+            historical_volume = data['volume'].iloc[-medium_period:-short_period].mean()
             
-            print(f"Short-term volume change (last {short_period} periods): {short_vol:.4f}")
-            print(f"Medium-term volume change (last {medium_period} periods): {medium_vol:.4f}")
-            
-            # Calculate volume-price correlation
-            correlation = returns.iloc[-medium_period:].corr(volume_changes.iloc[-medium_period:]) if len(returns) >= medium_period else returns.corr(volume_changes)
-            print(f"Price-volume correlation: {correlation:.4f}")
-            
-            # Calculate volume trend score
-            base_score = (short_vol * 0.7 + medium_vol * 0.3)
-            print(f"Base score: {base_score:.4f}")
-            
-            # Adjust score based on correlation
-            if not np.isnan(correlation):
-                # Positive correlation (price up + volume up) is bullish
-                # Negative correlation (price down + volume up) is bearish
-                score = base_score * (correlation if abs(correlation) > 0.3 else 0.3)
-                print(f"Correlation-adjusted score: {score:.4f}")
+            if historical_volume == 0:
+                volume_change = 0
             else:
-                score = base_score
-                print("Using base score (correlation is NaN)")
+                volume_change = (recent_volume - historical_volume) / historical_volume
             
-            # Adjust based on absolute volume levels
-            recent_vol_ratio = (
-                data['volume'].iloc[-short_period:].mean() / 
-                data['volume'].iloc[-long_period:-short_period].mean() 
-                if len(data) >= long_period else 1.0
+            # Calculate price-volume correlation
+            correlation = returns.iloc[-medium_period:].corr(volume_changes.iloc[-medium_period:])
+            
+            # Calculate volume consistency
+            volume_std = data['volume'].iloc[-medium_period:].std()
+            volume_mean = data['volume'].iloc[-medium_period:].mean()
+            volume_cv = volume_std / volume_mean if volume_mean > 0 else 0
+            
+            print(f"Volume Change: {volume_change:.4f}")
+            print(f"Price-Volume Correlation: {correlation:.4f}")
+            print(f"Volume Consistency (CV): {volume_cv:.4f}")
+            
+            # Score components
+            trend_score = np.clip(volume_change * 2, -1, 1)  # Volume trend
+            corr_score = correlation * 0.5  # Price-volume correlation
+            consistency_score = -volume_cv  # Penalize high volatility
+            
+            # Combine scores with weights
+            final_score = (
+                trend_score * 0.5 +      # Volume trend (50%)
+                corr_score * 0.3 +       # Price correlation (30%)
+                consistency_score * 0.2   # Consistency (20%)
             )
-            print(f"Recent volume ratio: {recent_vol_ratio:.4f}")
             
-            # Volume surge detection
-            if recent_vol_ratio > 2.0:  # Significant volume surge
-                score *= 1.5
-                print("Volume surge detected (score * 1.5)")
-            elif recent_vol_ratio < 0.5:  # Volume dry-up
-                score *= 0.5
-                print("Volume dry-up detected (score * 0.5)")
+            # Clip final score to [-1, 1] range
+            final_score = np.clip(final_score, -1, 1)
             
-            # Normalize and clip
-            final_score = max(-1.0, min(1.0, score))
-            print(f"Final volume score: {final_score:.4f}")
-            
-            return final_score
+            print(f"Final Volume Score: {final_score:.4f}")
+            return float(final_score)
             
         except Exception as e:
-            print(f"Volume trend analysis error: {str(e)}")
-            print(f"Error type: {type(e)}")
-            print(f"Error location: {e.__traceback__.tb_lineno}")
+            print(f"Volume analysis error: {str(e)}")
             return 0.0
 
     async def _calculate_pivot_points(self, data: pd.DataFrame) -> Dict[str, List[float]]:
