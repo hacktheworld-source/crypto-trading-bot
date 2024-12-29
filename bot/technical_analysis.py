@@ -589,13 +589,30 @@ class TechnicalAnalyzer:
             significant_levels = await self._find_volume_nodes(volume_profile)
             
             # Volume trend analysis
-            volume_trend = self._analyze_volume_trend(data)
+            volume_score = self._analyze_volume_trend(data)
+            
+            # Convert score to descriptive format
+            volume_trend = {
+                'description': (
+                    'Strongly Increasing' if volume_score > 0.5 else
+                    'Increasing' if volume_score > 0.2 else
+                    'Strongly Decreasing' if volume_score < -0.5 else
+                    'Decreasing' if volume_score < -0.2 else
+                    'Neutral'
+                ),
+                'strength': (
+                    'Strong' if abs(volume_score) > 0.5 else
+                    'Moderate' if abs(volume_score) > 0.2 else
+                    'Weak'
+                ),
+                'score': float(volume_score)
+            }
             
             return {
                 'volume_profile': volume_profile,
                 'significant_levels': significant_levels,
                 'volume_trend': volume_trend,
-                'is_volume_confirmed': volume_trend['trend'] == 'increasing'
+                'is_volume_confirmed': volume_score > 0
             }
             
         except Exception as e:
