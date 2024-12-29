@@ -499,7 +499,7 @@ class TechnicalAnalyzer:
             
             # Get signals and volume analysis
             signals = await self.get_signals(symbol)
-            volume_analysis = self._analyze_volume_trend(data)
+            volume_score = self._analyze_volume_trend(data)
             
             # Extract trend information
             trend_info = signals['trend']
@@ -513,9 +513,21 @@ class TechnicalAnalyzer:
                 description = "Mixed Trend"
             
             # Add volume context
-            if volume_analysis['trend'] == "strongly":
-                volume_context = f" with {volume_analysis['description'].lower()} volume"
-                description += volume_context
+            volume_trend = (
+                'Strongly Increasing' if volume_score > 0.5 else
+                'Increasing' if volume_score > 0.2 else
+                'Strongly Decreasing' if volume_score < -0.5 else
+                'Decreasing' if volume_score < -0.2 else
+                'Neutral'
+            )
+            volume_strength = (
+                'Strong' if abs(volume_score) > 0.5 else
+                'Moderate' if abs(volume_score) > 0.2 else
+                'Weak'
+            )
+            
+            if abs(volume_score) > 0.2:
+                description += f" with {volume_trend.lower()} volume"
             
             return {
                 'trend': {
@@ -525,9 +537,9 @@ class TechnicalAnalyzer:
                 },
                 'strength': float(trend_info['strength']),
                 'volume': {
-                    'trend': volume_analysis['description'],
-                    'strength': volume_analysis['strength'],
-                    'score': volume_analysis['score']
+                    'trend': volume_trend,
+                    'strength': volume_strength,
+                    'score': float(volume_score)
                 },
                 'description': description
             }
