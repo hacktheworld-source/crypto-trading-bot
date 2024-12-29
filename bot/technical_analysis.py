@@ -140,7 +140,7 @@ class TechnicalAnalyzer:
             # Calculate technical indicators
             rsi = await self.calculate_rsi(data['close'], period=rsi_period)
             macd = self._calculate_macd(data)
-            bb = await self.calculate_bollinger_bands(data)
+            bb = await self.calculate_bollinger_bands(data, timeframe)
             ema_short = await self._calculate_ema(data['close'], 9)
             ema_long = await self._calculate_ema(data['close'], 21)
             
@@ -154,18 +154,15 @@ class TechnicalAnalyzer:
                 current_ema_long = float(ema_long.iloc[-1]) if ema_long is not None else current_price
                 
                 # Handle Bollinger Bands values properly
-                if bb is not None and isinstance(bb, dict):
-                    current_bb = {
-                        'upper': bb['upper'],
-                        'middle': bb['middle'],
-                        'lower': bb['lower']
-                    }
+                if bb is not None and isinstance(bb, dict) and all(k in bb for k in ['upper', 'middle', 'lower']):
+                    current_bb = bb  # Use BB values directly since they're already processed
                 else:
                     # Default values if BB calculation fails
                     current_bb = {
                         'upper': current_price * 1.02,
                         'middle': current_price,
-                        'lower': current_price * 0.98
+                        'lower': current_price * 0.98,
+                        'bandwidth': 0.02
                     }
             except (IndexError, ValueError, KeyError, AttributeError) as e:
                 await self.trading_bot.log(f"Error getting latest values: {str(e)}", level="error")
@@ -269,8 +266,15 @@ class TechnicalAnalyzer:
         """
         try:
             # Calculate price momentum relative to EMAs
-            ema_short_dist = (price - ema_short) / ema_short
-            ema_long_dist = (price - ema_long) / ema_long
+            if ema_short != 0:
+                ema_short_dist = (price - ema_short) / ema_short
+            else:
+                ema_short_dist = 0
+            
+            if ema_long != 0:
+                ema_long_dist = (price - ema_long) / ema_long
+            else:
+                ema_long_dist = 0
             
             # More granular EMA scoring
             ema_score = (
@@ -286,8 +290,11 @@ class TechnicalAnalyzer:
             )
             
             # BB score with more realistic distance scaling
-            bb_distance = abs(price - bb_middle) / bb_middle
-            bb_score = (1.0 if price > bb_middle else -1.0) * min(1.0, bb_distance * 5)
+            if bb_middle != 0:
+                bb_distance = abs(price - bb_middle) / bb_middle
+            else:
+                bb_distance = 0
+            bb_score = (1.0 if price > bb_middle else -1.0) 
             
             # MACD score with signal line consideration
             macd_abs = abs(macd)
@@ -320,7 +327,6 @@ class TechnicalAnalyzer:
                 rsi_score * 0.15        # Overbought/Oversold
             )
             
-            # Add minimum threshold for trend signals
             if abs(weighted_score) < 0.2:
                 weighted_score = 0.0  # Neutral if trend is too weak
             
@@ -340,31 +346,38 @@ class TechnicalAnalyzer:
         Returns:
             Float between -1 and 1 indicating momentum strength and direction
         """
-        # RSI momentum
-        rsi_score = 0
-        if rsi > 70:
-            rsi_score = -1
-        elif rsi < 30:
-            rsi_score = 1
-        else:
-            rsi_score = (rsi - 50) / 20  # Scaled score between -1 and 1
+        try:
+            # RSI momentum
+            rsi_score = 0
+            if rsi > 70:
+                rsi_score = -1
+            elif rsi < 30:
+                rsi_score = 1
+            else:
+                rsi_score = (rsi - 50) / 20  # Scaled score between -1 and 1
             
-        # MACD momentum
-        macd_score = 1 if macd > signal else -1 if macd < signal else 0
-        
-        # Price momentum (using returns)
-        returns = data['close'].pct_change()
-        recent_returns = returns.iloc[-3:]  # Last 3 periods
-        momentum_score = np.sign(recent_returns.mean()) * min(1.0, abs(recent_returns.mean() * 100))
-        
-        # Combine scores with weights
-        weighted_score = (
-            rsi_score * 0.4 +
-            macd_score * 0.3 +
-            momentum_score * 0.3
-        )
-        
-        return max(-1.0, min(1.0, weighted_score))
+            # MACD momentum
+            macd_score = 1 if macd > signal else -1 if macd < signal else 0
+            
+            # Price momentum (using returns)
+            returns = data['close'].pct_change().fillna(0)
+            recent_returns = returns.iloc[-3:]  # Last 3 periods
+            if len(recent_returns) > 0 and not recent_returns.isna().all():
+                momentum_score = np.sign(recent_returns.mean()) * min(1.0, abs(recent_returns.mean() * 100))
+            else:
+                momentum_score = 0.0
+            
+            # Combine scores with weights
+            weighted_score = (
+                rsi_score * 0.4 +
+                macd_score * 0.3 +
+                momentum_score * 0.3
+            )
+            
+            return max(-1.0, min(1.0, weighted_score))
+        except Exception as e:
+            self.log(f"Momentum score calculation error: {str(e)}", level="error")
+            return 0.0  # Return neutral score on error
         
     async def _calculate_trend_alignment(self, *trends: float) -> Dict[str, Any]:
         """
@@ -798,14 +811,28 @@ class TechnicalAnalyzer:
             Dict containing upper, middle, lower bands and bandwidth
         """
         try:
-            settings = self.indicator_settings[timeframe]
+            if data is None or data.empty:
+                raise ValueError("No data provided for Bollinger Bands calculation")
+
+            # Ensure we have the 'close' column
+            if 'close' not in data.columns:
+                raise ValueError("Price data missing 'close' column")
+
+            # Get timeframe settings
+            settings = self.indicator_settings.get(timeframe)
+            if not settings:
+                raise ValueError(f"Invalid timeframe: {timeframe}")
+
             period = settings['bb_period']
             
+            # Convert to numeric and handle missing values
+            close_prices = pd.to_numeric(data['close'], errors='coerce')
+            
             # Calculate middle band (SMA)
-            middle = data['close'].rolling(window=period).mean()
+            middle = close_prices.rolling(window=period, min_periods=1).mean()
             
             # Calculate standard deviation
-            std = data['close'].rolling(window=period).std()
+            std = close_prices.rolling(window=period, min_periods=1).std()
             
             # Calculate bands
             upper = middle + (std * 2)
@@ -815,10 +842,15 @@ class TechnicalAnalyzer:
             bandwidth = (upper - lower) / middle
             
             # Get the last values safely
-            last_upper = float(upper.iloc[-1]) if not pd.isna(upper.iloc[-1]) else float(data['close'].iloc[-1] * 1.02)
-            last_middle = float(middle.iloc[-1]) if not pd.isna(middle.iloc[-1]) else float(data['close'].iloc[-1])
-            last_lower = float(lower.iloc[-1]) if not pd.isna(lower.iloc[-1]) else float(data['close'].iloc[-1] * 0.98)
-            last_bandwidth = float(bandwidth.iloc[-1]) if not pd.isna(bandwidth.iloc[-1]) else 0.02
+            try:
+                last_close = float(close_prices.iloc[-1])
+                last_upper = float(upper.iloc[-1]) if not pd.isna(upper.iloc[-1]) else last_close * 1.02
+                last_middle = float(middle.iloc[-1]) if not pd.isna(middle.iloc[-1]) else last_close
+                last_lower = float(lower.iloc[-1]) if not pd.isna(lower.iloc[-1]) else last_close * 0.98
+                last_bandwidth = float(bandwidth.iloc[-1]) if not pd.isna(bandwidth.iloc[-1]) else 0.02
+            except (IndexError, ValueError) as e:
+                await self.log(f"Error getting last BB values: {str(e)}", level="error")
+                raise ValueError(f"Failed to get last BB values: {str(e)}")
             
             return {
                 'upper': last_upper,
@@ -828,17 +860,19 @@ class TechnicalAnalyzer:
             }
             
         except Exception as e:
-            if isinstance(e, TradingError):
-                raise
             await self.log(f"Bollinger Bands calculation error: {str(e)}", level="error")
             # Return safe default values based on current price
-            current_price = float(data['close'].iloc[-1])
-            return {
-                'upper': current_price * 1.02,
-                'middle': current_price,
-                'lower': current_price * 0.98,
-                'bandwidth': 0.02
-            }
+            try:
+                current_price = float(data['close'].iloc[-1])
+                return {
+                    'upper': current_price * 1.02,
+                    'middle': current_price,
+                    'lower': current_price * 0.98,
+                    'bandwidth': 0.02
+                }
+            except Exception as nested_e:
+                await self.log(f"Failed to get fallback price: {str(nested_e)}", level="error")
+                raise TradingError("Failed to calculate Bollinger Bands", "ANALYSIS")
 
     async def get_ma_analysis(self, symbol: str) -> str:
         """
@@ -921,78 +955,92 @@ class TechnicalAnalyzer:
 
     async def check_market_conditions(self, symbol: str) -> Dict[str, Any]:
         """
-        Check market conditions for trading.
+        Check market conditions with improved error handling and edge cases.
         
         Args:
             symbol: Trading pair symbol
             
         Returns:
-            Dict containing market condition analysis
+            Dict containing market analysis
             
         Raises:
             TradingError: If analysis fails
         """
         try:
-            # Format symbol and get price data
-            symbol = self.data_manager._format_product_id(symbol.upper())
-            data = await self.data_manager.get_price_data(symbol, TimeFrame.DAY_1)
+            # Get price data with validation
+            data = await self.data_manager.get_price_data(symbol.upper(), TimeFrame.DAY_1)
+            if data is None or len(data) < 30:  # Require minimum data points
+                raise TradingError("Insufficient price data for market analysis", "DATA")
             
-            if data is None or len(data) < 30:  # Need at least 30 days for proper analysis
-                raise TradingError(
-                    f"Insufficient data for market analysis. Need at least 30 days of data.",
-                    "ANALYSIS"
+            # Convert price data to numeric
+            prices = pd.to_numeric(data['close'], errors='coerce')
+            volumes = pd.to_numeric(data['volume'], errors='coerce')
+            
+            # Handle missing values
+            if prices.isna().all() or volumes.isna().all():
+                raise TradingError("Invalid price or volume data", "DATA")
+            
+            # Get current values safely
+            try:
+                current_price = float(prices.iloc[-1])
+                current_volume = float(volumes.iloc[-1])
+            except (IndexError, ValueError) as e:
+                raise TradingError(f"Failed to get current values: {str(e)}", "DATA")
+            
+            # Calculate volatility with error handling
+            try:
+                returns = prices.pct_change().dropna()
+                volatility = returns.std() * np.sqrt(252)  # Annualized
+                volatility_threshold = returns.std().mean() * 2  # Dynamic threshold
+                is_volatile = volatility > volatility_threshold
+            except Exception as e:
+                self.log(f"Volatility calculation error: {str(e)}", level="warning")
+                volatility = 0
+                is_volatile = False
+            
+            # Calculate price ranges safely
+            try:
+                week_high = float(prices.iloc[-7:].max())
+                week_low = float(prices.iloc[-7:].min())
+                price_range_7d = ((week_high - week_low) / week_low) * 100 if week_low > 0 else 0
+            except Exception as e:
+                self.log(f"Price range calculation error: {str(e)}", level="warning")
+                price_range_7d = 0
+            
+            # Calculate ATR
+            atr = self._calculate_atr(data)
+            
+            # Volume analysis with error handling
+            try:
+                avg_volume = volumes.rolling(window=20, min_periods=1).mean()
+                volume_ratio = current_volume / float(avg_volume.iloc[-1]) if not pd.isna(avg_volume.iloc[-1]) and avg_volume.iloc[-1] > 0 else 1.0
+                
+                volume_trend = self._analyze_volume_trend(data)
+            except Exception as e:
+                self.log(f"Volume analysis error: {str(e)}", level="warning")
+                volume_ratio = 1.0
+                volume_trend = {'description': 'Neutral', 'strength': 'Normal', 'is_favorable': True}
+            
+            # Market alignment check
+            try:
+                signals = await self.get_signals(symbol)
+                trend_score = signals['trend']['daily']
+                momentum_score = signals['signals']['daily']['momentum']
+                
+                market_score = (trend_score + momentum_score) / 2
+                market_aligned = (
+                    trend_score > 0 and momentum_score > 0 and volume_trend['is_favorable'] and not is_volatile
                 )
-            
-            # Calculate volatility (30-day)
-            returns = data['close'].pct_change().dropna()
-            volatility = returns.std() * np.sqrt(252)  # Annualized
-            
-            # Define volatility thresholds based on market type
-            is_crypto = symbol.endswith('-USD')
-            volatility_threshold = 0.8 if is_crypto else 0.4  # Higher threshold for crypto
-            is_volatile = volatility > volatility_threshold
-            
-            # Calculate price ranges
-            week_high = data['high'][-7:].max()
-            week_low = data['low'][-7:].min()
-            price_range_7d = ((week_high - week_low) / week_low) * 100 if week_low > 0 else 0
-            
-            # Get current price and ATR
-            current_price = float(data['close'].iloc[-1])
-            atr = self._calculate_atr(data, period=14)
-            
-            # Calculate volume analysis
-            volume_ma = data['volume'].rolling(window=20).mean()
-            current_volume = float(data['volume'].iloc[-1])
-            volume_ma_last = float(volume_ma.iloc[-1])
-            volume_ratio = current_volume / volume_ma_last if volume_ma_last > 0 else 1.0
-            
-            # Volume trend analysis (more sophisticated than just high/low)
-            volume_trend = self._analyze_volume_trend(data)
-            
-            # Get market alignment
-            signals = await self.get_signals(symbol)
-            market_aligned = signals['trend']['aligned']
-            
-            # Calculate market strength
-            strength = {
-                'trend': signals['trend']['daily'],
-                'momentum': signals['signals']['daily']['momentum']['value'],  # Extract the momentum value
-                'volume': volume_trend['score']  # Use volume trend score
-            }
-            
-            # Overall market score (-1 to 1)
-            market_score = (
-                strength['trend'] * 0.4 +
-                strength['momentum'] * 0.4 +
-                strength['volume'] * 0.2
-            )
+            except Exception as e:
+                self.log(f"Market alignment check error: {str(e)}", level="warning")
+                market_score = 0
+                market_aligned = False
             
             return {
                 'volatility': {
                     'value': float(volatility),
                     'is_high': is_volatile,
-                    'threshold': volatility_threshold
+                    'threshold': float(volatility_threshold)
                 },
                 'price_action': {
                     'range_7d': float(price_range_7d),
@@ -1020,17 +1068,39 @@ class TechnicalAnalyzer:
             raise TradingError(f"Failed to check market conditions: {str(e)}", "ANALYSIS")
             
     def _calculate_atr(self, data: pd.DataFrame, period: int = 14) -> pd.Series:
-        """Calculate Average True Range"""
-        high = data['high']
-        low = data['low']
-        close = data['close']
+        """
+        Calculate Average True Range with proper error handling.
         
-        tr1 = high - low
-        tr2 = abs(high - close.shift())
-        tr3 = abs(low - close.shift())
-        
-        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-        return tr.rolling(window=period).mean()
+        Args:
+            data: DataFrame with high, low, close prices
+            period: ATR period
+            
+        Returns:
+            Series containing ATR values
+        """
+        try:
+            # Convert price data to numeric and handle missing values
+            high = pd.to_numeric(data['high'], errors='coerce')
+            low = pd.to_numeric(data['low'], errors='coerce')
+            close = pd.to_numeric(data['close'], errors='coerce')
+            
+            # Calculate true range components
+            tr1 = high - low
+            tr2 = abs(high - close.shift())
+            tr3 = abs(low - close.shift())
+            
+            # Get maximum of the three components
+            tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+            
+            # Calculate ATR with proper minimum periods
+            atr = tr.rolling(window=period, min_periods=1).mean()
+            
+            # Fill any remaining NaN values with 0
+            return atr.fillna(0)
+            
+        except Exception as e:
+            self.log(f"ATR calculation error: {str(e)}", level="error")
+            return pd.Series(0, index=data.index)
         
     def _get_market_recommendation(self, score: float, is_volatile: bool) -> str:
         """Get market recommendation based on score and volatility"""
