@@ -196,12 +196,14 @@ class TechnicalAnalyzer:
                 timeframe=timeframe
             )
             
-            # Get volume confirmation with timeframe consideration
+            # Get volume analysis with timeframe consideration
             volume_analysis = self._analyze_volume_trend(data, timeframe=settings_key)
-            volume_confirmed = volume_analysis.get('is_favorable', False)
+            
+            # Calculate volume score
+            volume_score = volume_analysis  # Already returns a float between -1 and 1
             
             # Determine signal strength with timeframe weights
-            base_strength = abs(trend_score + momentum_score) / 2
+            base_strength = (abs(trend_score) + abs(momentum_score) + abs(volume_score)) / 3
             timeframe_weight = (
                 1.2 if timeframe == "monthly" else
                 1.0 if timeframe == "daily" else
@@ -212,8 +214,9 @@ class TechnicalAnalyzer:
             return {
                 'trend': trend_score,
                 'momentum': momentum_score,
+                'volume': volume_score,  # Add actual volume score
                 'strength': signal_strength,
-                'volume_confirmed': volume_confirmed,
+                'volume_confirmed': volume_score > 0,  # Convert score to confirmation
                 'indicators': {
                     'rsi': current_rsi,
                     'macd': {
@@ -235,6 +238,7 @@ class TechnicalAnalyzer:
             return {
                 'trend': 0.0,
                 'momentum': 0.0,
+                'volume': 0.0,
                 'strength': 0.0,
                 'volume_confirmed': False,
                 'indicators': {
@@ -339,77 +343,121 @@ class TechnicalAnalyzer:
                                 signal: float, data: pd.DataFrame,
                                 timeframe: str = "daily") -> float:
         """
-        Calculate momentum score based on multiple indicators.
+        Calculate momentum score with improved context awareness.
         
         Returns:
             Float between -1 and 1 indicating momentum strength and direction
         """
         try:
-            # RSI momentum
-            rsi_score = 0
-            if rsi > 70:
-                rsi_score = -1
-            elif rsi < 30:
-                rsi_score = 1
-            else:
-                rsi_score = (rsi - 50) / 20  # Scaled score between -1 and 1
+            # RSI momentum with more granular zones
+            rsi_score = (
+                -1.0 if rsi > 80 else    # Extremely overbought
+                -0.75 if rsi > 70 else   # Very overbought
+                -0.5 if rsi > 65 else    # Moderately overbought
+                -0.25 if rsi > 60 else   # Slightly overbought
+                0.25 if rsi < 40 else    # Slightly oversold
+                0.5 if rsi < 35 else     # Moderately oversold
+                0.75 if rsi < 30 else    # Very oversold
+                1.0 if rsi < 20 else     # Extremely oversold
+                (rsi - 50) / 40          # Scaled score between -0.25 and 0.25 for middle range
+            )
             
-            # MACD momentum
-            macd_score = 1 if macd > signal else -1 if macd < signal else 0
+            # MACD momentum with sensitivity adjustment
+            macd_diff = macd - signal
+            macd_score = np.clip(macd_diff / abs(signal) if abs(signal) > 0 else 0, -1, 1)
             
-            # Price momentum (using returns)
+            # Price momentum using multiple timeframes
             returns = data['close'].pct_change().fillna(0)
-            recent_returns = returns.iloc[-3:]  # Last 3 periods
-            if len(recent_returns) > 0 and not recent_returns.isna().all():
-                momentum_score = np.sign(recent_returns.mean()) * min(1.0, abs(recent_returns.mean() * 100))
-            else:
-                momentum_score = 0.0
             
-            # Combine scores with weights
+            # Calculate short-term and medium-term momentum
+            short_term = returns.iloc[-3:].mean()  # 3 periods
+            medium_term = returns.iloc[-7:].mean() # 7 periods
+            
+            # Weight recent momentum more heavily
+            momentum_score = (short_term * 0.7 + medium_term * 0.3) * 100
+            momentum_score = np.clip(momentum_score, -1, 1)
+            
+            # Combine scores with adjusted weights based on timeframe
+            if timeframe == "monthly":
+                weights = [0.4, 0.3, 0.3]  # More weight on RSI for longer timeframes
+            elif timeframe == "daily":
+                weights = [0.3, 0.4, 0.3]  # Balanced weights
+            else:  # hourly
+                weights = [0.3, 0.3, 0.4]  # More weight on price momentum
+            
             weighted_score = (
-                rsi_score * 0.4 +
-                macd_score * 0.3 +
-                momentum_score * 0.3
+                rsi_score * weights[0] +
+                macd_score * weights[1] +
+                momentum_score * weights[2]
             )
             
             return max(-1.0, min(1.0, weighted_score))
         except Exception as e:
-            # Use synchronous logging for non-async methods
             print(f"Momentum score calculation error: {str(e)}")
             return 0.0  # Return neutral score on error
         
     async def _calculate_trend_alignment(self, *trends: float) -> Dict[str, Any]:
         """
-        Calculate trend alignment across multiple timeframes.
+        Calculate trend alignment across multiple timeframes with improved weighting.
         
         Args:
-            *trends: Trend scores for different timeframes
+            *trends: Trend scores for different timeframes (monthly, daily, hourly)
             
         Returns:
             Dict containing alignment analysis
         """
         try:
             if not trends:
-                return {'aligned': False, 'strength': 0.0}
+                return {'aligned': False, 'strength': 0.0, 'direction': 'unknown'}
             
-            # All trends should be in the same direction
-            all_positive = all(t > 0 for t in trends)
-            all_negative = all(t < 0 for t in trends)
-            aligned = all_positive or all_negative
+            # Assign weights to different timeframes
+            weights = [0.5, 0.3, 0.2]  # Monthly (50%), Daily (30%), Hourly (20%)
+            weighted_trends = [t * w for t, w in zip(trends, weights)]
             
-            # Calculate average strength
-            avg_strength = sum(abs(t) for t in trends) / len(trends)
+            # Calculate weighted average trend
+            weighted_avg = sum(weighted_trends)
             
-            # Weight longer timeframes more heavily
-            weighted_strength = 0.0
-            weights = [0.5, 0.3, 0.2]  # Monthly, Daily, Hourly
-            for trend, weight in zip(trends, weights):
-                weighted_strength += abs(trend) * weight
+            # Check trend alignment with more granular thresholds
+            monthly, daily, hourly = trends if len(trends) == 3 else (0, 0, 0)
+            
+            # Strong trend if monthly and daily align
+            strong_bullish = monthly > 0.2 and daily > 0.1
+            strong_bearish = monthly < -0.2 and daily < -0.1
+            
+            # Moderate trend if daily and hourly align
+            moderate_bullish = daily > 0.1 and hourly > 0
+            moderate_bearish = daily < -0.1 and hourly < 0
+            
+            # Determine alignment status
+            if strong_bullish or strong_bearish:
+                aligned = True
+                strength = abs(weighted_avg)
+                direction = 'bullish' if weighted_avg > 0 else 'bearish'
+            elif moderate_bullish or moderate_bearish:
+                aligned = True
+                strength = abs(weighted_avg) * 0.8  # Slightly reduce strength for moderate trends
+                direction = 'bullish' if weighted_avg > 0 else 'bearish'
+            else:
+                # Mixed signals - check if there's still a dominant trend
+                if abs(weighted_avg) > 0.15:  # Reduced threshold for mixed signals
+                    aligned = True
+                    strength = abs(weighted_avg) * 0.6  # Further reduce strength for mixed trends
+                    direction = 'bullish' if weighted_avg > 0 else 'bearish'
+                else:
+                    aligned = False
+                    strength = abs(weighted_avg)
+                    direction = 'mixed'
             
             return {
                 'aligned': aligned,
-                'strength': weighted_strength,
-                'direction': 'bullish' if all_positive else 'bearish' if all_negative else 'mixed'
+                'strength': float(strength),
+                'direction': direction,
+                'components': {
+                    'monthly': float(monthly),
+                    'daily': float(daily),
+                    'hourly': float(hourly),
+                    'weighted_avg': float(weighted_avg)
+                }
             }
             
         except Exception as e:
@@ -606,97 +654,58 @@ class TechnicalAnalyzer:
             await self.trading_bot.log(f"Volume node analysis error: {str(e)}", level="error")
             return []
 
-    def _analyze_volume_trend(self, data: pd.DataFrame, timeframe: str = "daily") -> Dict[str, Any]:
+    def _analyze_volume_trend(self, data: pd.DataFrame, timeframe: str = "daily") -> float:
         """
-        Analyze volume trend with timeframe-specific thresholds.
+        Analyze volume trend with price correlation and volatility consideration.
         
-        Args:
-            data: Price and volume data
-            timeframe: Analysis timeframe
-            
         Returns:
-            Dict containing volume analysis
+            Float between -1 and 1 indicating volume trend strength
         """
         try:
-            settings = self.indicator_settings[timeframe]
+            if len(data) < 2:
+                return 0.0
             
-            # Calculate volume metrics
-            volume = data['volume']
-            volume_ma = volume.rolling(window=settings['volume_ma']).mean()
-            volume_std = volume.rolling(window=settings['volume_ma']).std()
+            # Calculate returns and volume changes
+            returns = data['close'].pct_change().fillna(0)
+            volume_changes = data['volume'].pct_change().fillna(0)
             
-            # Get recent volume data
-            current_volume = float(volume.iloc[-1])
-            recent_volumes = volume.iloc[-settings['volume_ma']:]
+            # Calculate different timeframe averages
+            short_vol = volume_changes.iloc[-3:].mean()  # 3 periods
+            medium_vol = volume_changes.iloc[-7:].mean() if len(volume_changes) >= 7 else short_vol
             
-            # Calculate z-score with timeframe consideration
-            current_ma = float(volume_ma.iloc[-1])
-            current_std = float(volume_std.iloc[-1])
-            z_score = (current_volume - current_ma) / current_std if current_std != 0 else 0
+            # Calculate volume-price correlation
+            correlation = returns.corr(volume_changes)
             
-            # Adjust volume trend calculation for timeframe
-            volume_trend = float(recent_volumes.mean() / current_ma) if current_ma != 0 else 1.0
+            # Calculate volume trend score
+            base_score = (short_vol * 0.7 + medium_vol * 0.3)
             
-            # Adjust thresholds based on timeframe
-            if timeframe == "monthly":
-                trend_threshold = 1.1  # 10% above average for monthly
-                z_score_threshold = 1.5
-            elif timeframe == "daily":
-                trend_threshold = 1.2  # 20% above average for daily
-                z_score_threshold = 2.0
-            else:  # hourly
-                trend_threshold = 1.3  # 30% above average for hourly
-                z_score_threshold = 2.5
-            
-            # Determine volume characteristics
-            is_favorable = volume_trend > trend_threshold and z_score > -z_score_threshold
-            
-            # Score from -1 to 1 with timeframe consideration
-            score = min(1.0, max(-1.0, z_score / z_score_threshold))
-            
-            # Get descriptive strength
-            if abs(z_score) > z_score_threshold:
-                strength = "Very High" if z_score > 0 else "Very Low"
-            elif abs(z_score) > z_score_threshold / 2:
-                strength = "High" if z_score > 0 else "Low"
+            # Adjust score based on correlation
+            if not np.isnan(correlation):
+                # Positive correlation (price up + volume up) is bullish
+                # Negative correlation (price down + volume up) is bearish
+                score = base_score * (correlation if abs(correlation) > 0.3 else 0.3)
             else:
-                strength = "Average"
+                score = base_score
             
-            # Get trend description
-            if volume_trend > trend_threshold * 1.2:
-                description = "Strongly Increasing"
-            elif volume_trend > trend_threshold:
-                description = "Moderately Increasing"
-            elif volume_trend < 1 / trend_threshold:
-                description = "Strongly Decreasing"
-            elif volume_trend < 1:
-                description = "Moderately Decreasing"
-            else:
-                description = "Stable"
+            # Adjust based on absolute volume levels
+            recent_vol_ratio = (
+                data['volume'].iloc[-3:].mean() / 
+                data['volume'].iloc[-10:-3].mean() 
+                if len(data) >= 10 else 1.0
+            )
             
-            return {
-                'score': float(score),
-                'strength': strength,
-                'description': description,
-                'is_favorable': is_favorable,
-                'trend': description.split()[0].lower(),
-                'z_score': float(z_score),
-                'volume_trend': float(volume_trend)
-            }
+            # Volume surge detection
+            if recent_vol_ratio > 2.0:  # Significant volume surge
+                score *= 1.5
+            elif recent_vol_ratio < 0.5:  # Volume dry-up
+                score *= 0.5
+            
+            # Normalize and clip
+            return max(-1.0, min(1.0, score))
             
         except Exception as e:
-            # Use synchronous logging for non-async methods
             print(f"Volume trend analysis error: {str(e)}")
-            # Return neutral values on error
-            return {
-                'score': 0.0,
-                'strength': "Average",
-                'description': "Stable",
-                'is_favorable': False,
-                'trend': "stable",
-                'z_score': 0.0,
-                'volume_trend': 1.0
-            }
+            return 0.0
 
     async def _calculate_pivot_points(self, data: pd.DataFrame) -> Dict[str, List[float]]:
         """Calculate pivot points and support/resistance levels"""

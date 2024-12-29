@@ -1536,7 +1536,7 @@ class TradingBot:
             momentum_signal = (momentum_base + macd_signal) * 0.25
             
             # 3. Volume Component (20% weight)
-            volume_signal = float(analysis['signals']['daily'].get('volume_confirmed', False)) * 0.2
+            volume_signal = analysis['signals']['daily'].get('volume', 0) * 0.2
             
             # 4. Bollinger Bands Component (10% weight)
             bb_signal = 0.0
@@ -1569,6 +1569,16 @@ class TradingBot:
                 'risk': risk_signal
             }
             
+            # Add volume trend information
+            volume_trend = market_conditions['volume']['trend']
+            volume_ratio = market_conditions['volume']['ratio']
+            
+            # Adjust total score based on volume confirmation
+            if volume_trend == "Strongly Increasing" and volume_ratio > 1.5:
+                total_score *= 1.2  # Boost score for strong volume confirmation
+            elif volume_trend == "Strongly Decreasing" and volume_ratio < 0.5:
+                total_score *= 0.8  # Reduce score for weak volume
+            
             return {
                 'symbol': symbol,
                 'price': current_price,
@@ -1578,7 +1588,9 @@ class TradingBot:
                 'indicators': {
                     'macd': analysis['signals']['daily'].get('macd_histogram', 0),
                     'bb_bandwidth': bb['bandwidth'],
-                    'bb_position': 'oversold' if current_price < bb['lower'] else 'overbought' if current_price > bb['upper'] else 'neutral'
+                    'bb_position': 'oversold' if current_price < bb['lower'] else 'overbought' if current_price > bb['upper'] else 'neutral',
+                    'volume_trend': volume_trend,
+                    'volume_ratio': volume_ratio
                 }
             }
             
