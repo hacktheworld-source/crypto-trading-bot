@@ -807,14 +807,16 @@ class TradingBot:
             
             # 4. Market Structure Requirements
             
-            # Trend Alignment
-            if not analysis['trend']['aligned']:
+            # Trend Alignment - Only block on negative trends
+            if analysis['trend']['daily'] < 0:  # Modified from strict alignment check
+                await self.log(f"Rejecting entry due to negative daily trend: {analysis['trend']['daily']:.2f}", level="info")
                 return False
-            
+
             # Volatility Check
             if market_conditions['volatility']['is_high']:
-                # Require stronger signals in high volatility
-                if signal_score < 0.3:
+                # Require less strict signals in high volatility for crypto
+                if signal_score < 0.25:  # Reduced from 0.3
+                    await self.log(f"Rejecting entry due to high volatility with insufficient signal strength: {signal_score:.2f}", level="info")
                     return False
             
             # 5. Risk Management

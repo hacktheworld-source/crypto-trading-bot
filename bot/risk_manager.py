@@ -79,10 +79,14 @@ class RiskManager:
     async def _check_daily_drawdown(self) -> bool:
         """Check if daily drawdown limit exceeded"""
         try:
-            daily_pnl = await self.trading_bot.get_daily_pnl()
-            account_value = await self.trading_bot.get_account_balance()
+            daily_pnl = float(await self.trading_bot.get_daily_pnl())
+            account_value = float(await self.trading_bot.get_account_balance())
             
-            return (daily_pnl / account_value) < -self.daily_var
+            if account_value == 0:
+                return True  # Fail safe if account value is zero
+                
+            drawdown = daily_pnl / account_value
+            return drawdown < -self.daily_var
             
         except Exception as e:
             await self.trading_bot.log(f"Drawdown check error: {str(e)}", level="error")
