@@ -658,6 +658,10 @@ class TechnicalAnalyzer:
         """
         Analyze volume trend with price correlation and volatility consideration.
         
+        Args:
+            data: Price and volume data
+            timeframe: Analysis timeframe (hourly/daily/monthly)
+            
         Returns:
             Float between -1 and 1 indicating volume trend strength
         """
@@ -669,12 +673,26 @@ class TechnicalAnalyzer:
             returns = data['close'].pct_change().fillna(0)
             volume_changes = data['volume'].pct_change().fillna(0)
             
-            # Calculate different timeframe averages
-            short_vol = volume_changes.iloc[-3:].mean()  # 3 periods
-            medium_vol = volume_changes.iloc[-7:].mean() if len(volume_changes) >= 7 else short_vol
+            # Adjust periods based on timeframe
+            if timeframe == "hourly":
+                short_period = 6    # 6 hours
+                medium_period = 24  # 1 day
+                long_period = 72    # 3 days
+            elif timeframe == "monthly":
+                short_period = 3    # 3 months
+                medium_period = 6   # 6 months
+                long_period = 12    # 1 year
+            else:  # daily
+                short_period = 3    # 3 days
+                medium_period = 7   # 1 week
+                long_period = 20    # 1 month
+            
+            # Calculate timeframe-adjusted averages
+            short_vol = volume_changes.iloc[-short_period:].mean() if len(volume_changes) >= short_period else volume_changes.mean()
+            medium_vol = volume_changes.iloc[-medium_period:].mean() if len(volume_changes) >= medium_period else short_vol
             
             # Calculate volume-price correlation
-            correlation = returns.corr(volume_changes)
+            correlation = returns.iloc[-medium_period:].corr(volume_changes.iloc[-medium_period:]) if len(returns) >= medium_period else returns.corr(volume_changes)
             
             # Calculate volume trend score
             base_score = (short_vol * 0.7 + medium_vol * 0.3)
@@ -689,9 +707,9 @@ class TechnicalAnalyzer:
             
             # Adjust based on absolute volume levels
             recent_vol_ratio = (
-                data['volume'].iloc[-3:].mean() / 
-                data['volume'].iloc[-10:-3].mean() 
-                if len(data) >= 10 else 1.0
+                data['volume'].iloc[-short_period:].mean() / 
+                data['volume'].iloc[-long_period:-short_period].mean() 
+                if len(data) >= long_period else 1.0
             )
             
             # Volume surge detection
@@ -1106,7 +1124,19 @@ class TechnicalAnalyzer:
                 avg_volume = volumes.rolling(window=20, min_periods=1).mean()
                 volume_ratio = current_volume / float(avg_volume.iloc[-1]) if not pd.isna(avg_volume.iloc[-1]) and avg_volume.iloc[-1] > 0 else 1.0
                 
-                volume_trend = self._analyze_volume_trend(data)
+                volume_score = self._analyze_volume_trend(data)
+                # Convert volume score to descriptive format
+                volume_trend = {
+                    'description': 'Strongly Increasing' if volume_score > 0.5 else
+                                 'Increasing' if volume_score > 0.2 else
+                                 'Strongly Decreasing' if volume_score < -0.5 else
+                                 'Decreasing' if volume_score < -0.2 else
+                                 'Neutral',
+                    'strength': 'Strong' if abs(volume_score) > 0.5 else
+                               'Moderate' if abs(volume_score) > 0.2 else
+                               'Weak',
+                    'is_favorable': volume_score > 0
+                }
             except Exception as e:
                 self.log(f"Volume analysis error: {str(e)}", level="warning")
                 volume_ratio = 1.0
