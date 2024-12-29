@@ -384,7 +384,8 @@ class TechnicalAnalyzer:
             
             return max(-1.0, min(1.0, weighted_score))
         except Exception as e:
-            self.log(f"Momentum score calculation error: {str(e)}", level="error")
+            # Use synchronous logging for non-async methods
+            print(f"Momentum score calculation error: {str(e)}")
             return 0.0  # Return neutral score on error
         
     async def _calculate_trend_alignment(self, *trends: float) -> Dict[str, Any]:
@@ -694,6 +695,8 @@ class TechnicalAnalyzer:
             }
             
         except Exception as e:
+            # Use synchronous logging for non-async methods
+            print(f"Volume trend analysis error: {str(e)}")
             # Return neutral values on error
             return {
                 'score': 0.0,
@@ -805,36 +808,88 @@ class TechnicalAnalyzer:
 
     async def calculate_bollinger_bands(
         self, 
-        data: pd.DataFrame,
+        data: Union[pd.DataFrame, str],
         timeframe: str = "daily"
     ) -> Dict[str, Any]:
         """
         Calculate Bollinger Bands with timeframe-specific parameters.
         
         Args:
-            data: Price data DataFrame
-            timeframe: Analysis timeframe
+            data: Price data DataFrame or symbol string
+            timeframe: Analysis timeframe ('monthly', 'daily', 'hourly')
             
         Returns:
             Dict containing upper, middle, lower bands and bandwidth
+            
+        Raises:
+            TradingError: If calculation fails
         """
         try:
-            if data is None or data.empty:
-                raise ValueError("No data provided for Bollinger Bands calculation")
+            print(f"\n=== Debug: Bollinger Bands Input ===")
+            print(f"Input type: {type(data)}")
+            print(f"Timeframe: {timeframe}")
+            
+            # Handle case where data is a symbol string
+            if isinstance(data, str):
+                symbol = data
+                print(f"Converting symbol {symbol} to DataFrame...")
+                data = await self.data_manager.get_price_data(symbol.upper(), TimeFrame.DAY_1)
+                if data is None:
+                    raise ValueError(f"No data available for {symbol}")
+                print(f"Converted data type: {type(data)}")
+                if isinstance(data, pd.DataFrame):
+                    print(f"DataFrame columns: {data.columns.tolist()}")
+                    print(f"DataFrame shape: {data.shape}")
+
+            # Validate DataFrame
+            if not isinstance(data, pd.DataFrame):
+                raise ValueError(f"Invalid data type: {type(data)}")
+
+            if len(data) == 0:
+                raise ValueError("Empty DataFrame provided")
 
             # Ensure we have the 'close' column
             if 'close' not in data.columns:
                 raise ValueError("Price data missing 'close' column")
 
-            # Get timeframe settings
-            settings = self.indicator_settings.get(timeframe)
-            if not settings:
+            # Map timeframe to settings key
+            timeframe_map = {
+                'hourly': 'hourly',
+                '1h': 'hourly',
+                'daily': 'daily',
+                '1d': 'daily',
+                'monthly': 'monthly',
+                '30d': 'monthly'
+            }
+            
+            print(f"\n=== Debug: Timeframe Mapping ===")
+            print(f"Input timeframe: {timeframe}")
+            settings_key = timeframe_map.get(timeframe.lower())
+            print(f"Mapped to settings key: {settings_key}")
+            
+            if not settings_key:
                 raise ValueError(f"Invalid timeframe: {timeframe}")
 
+            # Get settings
+            settings = self.indicator_settings.get(settings_key)
+            if not settings:
+                raise ValueError(f"No settings found for timeframe: {settings_key}")
+
             period = settings['bb_period']
+            print(f"Using BB period: {period}")
             
             # Convert to numeric and handle missing values
+            print("\n=== Debug: Price Data ===")
+            print(f"First few rows of close prices:\n{data['close'].head()}")
+            
             close_prices = pd.to_numeric(data['close'], errors='coerce')
+            close_prices = close_prices.fillna(method='ffill').fillna(method='bfill')
+            
+            print(f"After numeric conversion and NA handling:\n{close_prices.head()}")
+            print(f"Any NaN values: {close_prices.isna().any()}")
+            
+            if close_prices.isna().all():
+                raise ValueError("No valid price data available")
             
             # Calculate middle band (SMA)
             middle = close_prices.rolling(window=period, min_periods=1).mean()
@@ -847,7 +902,15 @@ class TechnicalAnalyzer:
             lower = middle - (std * 2)
             
             # Calculate bandwidth
-            bandwidth = (upper - lower) / middle
+            bandwidth = ((upper - lower) / middle).replace([np.inf, -np.inf], 0)
+            
+            print("\n=== Debug: Calculated Values ===")
+            print(f"Last values:")
+            print(f"Close: {close_prices.iloc[-1]}")
+            print(f"Upper: {upper.iloc[-1]}")
+            print(f"Middle: {middle.iloc[-1]}")
+            print(f"Lower: {lower.iloc[-1]}")
+            print(f"Bandwidth: {bandwidth.iloc[-1]}")
             
             # Get the last values safely
             try:
@@ -856,31 +919,52 @@ class TechnicalAnalyzer:
                 last_middle = float(middle.iloc[-1]) if not pd.isna(middle.iloc[-1]) else last_close
                 last_lower = float(lower.iloc[-1]) if not pd.isna(lower.iloc[-1]) else last_close * 0.98
                 last_bandwidth = float(bandwidth.iloc[-1]) if not pd.isna(bandwidth.iloc[-1]) else 0.02
+                
+                print("\n=== Debug: Final Values ===")
+                print(f"Final results:")
+                print(f"Upper: {last_upper}")
+                print(f"Middle: {last_middle}")
+                print(f"Lower: {last_lower}")
+                print(f"Bandwidth: {last_bandwidth}")
+                
             except (IndexError, ValueError) as e:
                 await self.log(f"Error getting last BB values: {str(e)}", level="error")
                 raise ValueError(f"Failed to get last BB values: {str(e)}")
             
-            return {
+            result = {
                 'upper': last_upper,
                 'middle': last_middle,
                 'lower': last_lower,
                 'bandwidth': last_bandwidth
             }
             
+            print("\n=== Debug: Returning Result ===")
+            print(f"Final result dictionary: {result}")
+            
+            return result
+            
         except Exception as e:
+            print(f"\n=== Debug: Error Occurred ===")
+            print(f"Error type: {type(e)}")
+            print(f"Error message: {str(e)}")
+            
             await self.log(f"Bollinger Bands calculation error: {str(e)}", level="error")
-            # Return safe default values based on current price
-            try:
-                current_price = float(data['close'].iloc[-1])
-                return {
-                    'upper': current_price * 1.02,
-                    'middle': current_price,
-                    'lower': current_price * 0.98,
-                    'bandwidth': 0.02
-                }
-            except Exception as nested_e:
-                await self.log(f"Failed to get fallback price: {str(nested_e)}", level="error")
-                raise TradingError("Failed to calculate Bollinger Bands", "ANALYSIS")
+            if isinstance(data, pd.DataFrame) and len(data) > 0 and 'close' in data.columns:
+                try:
+                    current_price = float(data['close'].iloc[-1])
+                    fallback_result = {
+                        'upper': current_price * 1.02,
+                        'middle': current_price,
+                        'lower': current_price * 0.98,
+                        'bandwidth': 0.02
+                    }
+                    print(f"\n=== Debug: Using Fallback Values ===")
+                    print(f"Fallback result: {fallback_result}")
+                    return fallback_result
+                except Exception as nested_e:
+                    print(f"Fallback error: {str(nested_e)}")
+                    await self.log(f"Failed to get fallback price: {str(nested_e)}", level="error")
+            raise TradingError("Failed to calculate Bollinger Bands", "ANALYSIS")
 
     async def get_ma_analysis(self, symbol: str) -> str:
         """
@@ -1107,7 +1191,8 @@ class TechnicalAnalyzer:
             return atr.fillna(0)
             
         except Exception as e:
-            self.log(f"ATR calculation error: {str(e)}", level="error")
+            # Use synchronous logging for non-async methods
+            print(f"ATR calculation error: {str(e)}")
             return pd.Series(0, index=data.index)
         
     def _get_market_recommendation(self, score: float, is_volatile: bool) -> str:
