@@ -937,7 +937,7 @@ class TechnicalAnalyzer:
             # Calculate price ranges
             week_high = data['high'][-7:].max()
             week_low = data['low'][-7:].min()
-            price_range_7d = ((week_high - week_low) / week_low) * 100
+            price_range_7d = ((week_high - week_low) / week_low) * 100 if week_low > 0 else 0
             
             # Get current price and ATR
             current_price = float(data['close'].iloc[-1])
@@ -946,7 +946,8 @@ class TechnicalAnalyzer:
             # Calculate volume analysis
             volume_ma = data['volume'].rolling(window=20).mean()
             current_volume = float(data['volume'].iloc[-1])
-            volume_ratio = current_volume / float(volume_ma.iloc[-1])
+            volume_ma_last = float(volume_ma.iloc[-1])
+            volume_ratio = current_volume / volume_ma_last if volume_ma_last > 0 else 1.0
             
             # Volume trend analysis (more sophisticated than just high/low)
             volume_trend = self._analyze_volume_trend(data)
@@ -1296,7 +1297,7 @@ class TechnicalAnalyzer:
             # Check for invalid values
             invalid_rows = data[
                 data[required_columns].isna().any(axis=1) |
-                data[required_columns].isin([np.inf, -np.inf]).any(axis=1)
+                data[required_columns].apply(lambda x: np.isinf(x)).any(axis=1)
             ]
             
             if not invalid_rows.empty:

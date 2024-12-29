@@ -214,7 +214,7 @@ class DataManager:
                     candle_time = datetime.fromtimestamp(float(candle.start))
                     
                     # Skip invalid candles
-                    if any(pd.isna(x) or pd.isinf(x) for x in [
+                    if any(pd.isna(x) or np.isinf(x) for x in [
                         float(candle.open),
                         float(candle.high),
                         float(candle.low),

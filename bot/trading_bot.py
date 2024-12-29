@@ -858,11 +858,11 @@ class TradingBot:
             
             # Calculate conditions
             near_resistance = any(
-                abs(current_price - level) / level < 0.02  # 2% buffer
+                abs(current_price - level) / level < 0.02 if level > 0 else False  # 2% buffer
                 for level in resistance['resistance_levels']
             )
             
-            up_from_low = (current_price - daily_low) / daily_low
+            up_from_low = (current_price - daily_low) / daily_low if daily_low > 0 else 0
             
             # Get RSI
             rsi = await self.technical_analyzer.calculate_rsi(daily_data['close'])
