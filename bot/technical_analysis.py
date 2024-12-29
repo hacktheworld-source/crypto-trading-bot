@@ -267,6 +267,14 @@ class TechnicalAnalyzer:
             Float between -1 and 1 indicating trend strength and direction
         """
         try:
+            print(f"\n=== Trend Score Calculation ===")
+            print(f"Timeframe: {timeframe}")
+            print(f"Current price: {price:.2f}")
+            print(f"EMAs - Short: {ema_short:.2f}, Long: {ema_long:.2f}")
+            print(f"BB Middle: {bb_middle:.2f}")
+            print(f"MACD: {macd:.4f}")
+            print(f"RSI: {rsi:.2f}")
+            
             # Calculate price momentum relative to EMAs
             if ema_short != 0:
                 ema_short_dist = (price - ema_short) / ema_short
@@ -277,6 +285,8 @@ class TechnicalAnalyzer:
                 ema_long_dist = (price - ema_long) / ema_long
             else:
                 ema_long_dist = 0
+            
+            print(f"EMA distances - Short: {ema_short_dist:.4f}, Long: {ema_long_dist:.4f}")
             
             # More granular EMA scoring
             ema_score = (
@@ -290,13 +300,16 @@ class TechnicalAnalyzer:
                 -0.25 if price < ema_long else
                 0.0
             )
+            print(f"EMA Score: {ema_score:.4f}")
             
             # BB score with more realistic distance scaling
             if bb_middle != 0:
                 bb_distance = abs(price - bb_middle) / bb_middle
             else:
                 bb_distance = 0
-            bb_score = (1.0 if price > bb_middle else -1.0) 
+            bb_score = (1.0 if price > bb_middle else -1.0)
+            print(f"BB Distance: {bb_distance:.4f}")
+            print(f"BB Score: {bb_score:.4f}")
             
             # MACD score with signal line consideration
             macd_abs = abs(macd)
@@ -307,6 +320,7 @@ class TechnicalAnalyzer:
                 -0.5 if macd < 0 else
                 0.0
             )
+            print(f"MACD Score: {macd_score:.4f}")
             
             # RSI score with more zones for better accuracy
             rsi_score = (
@@ -320,6 +334,7 @@ class TechnicalAnalyzer:
                 -0.25 if rsi < 40 else   # Slight oversold
                 0.0                      # Neutral
             )
+            print(f"RSI Score: {rsi_score:.4f}")
             
             # Weight and combine scores
             weighted_score = (
@@ -328,15 +343,22 @@ class TechnicalAnalyzer:
                 macd_score * 0.25 +     # Momentum
                 rsi_score * 0.15        # Overbought/Oversold
             )
+            print(f"Initial weighted score: {weighted_score:.4f}")
             
             if abs(weighted_score) < 0.2:
                 weighted_score = 0.0  # Neutral if trend is too weak
+                print("Score too weak, setting to neutral (0.0)")
             
             # Ensure the score is between -1 and 1
-            return max(-1.0, min(1.0, weighted_score))
+            final_score = max(-1.0, min(1.0, weighted_score))
+            print(f"Final trend score: {final_score:.4f}")
+            
+            return final_score
             
         except Exception as e:
             await self.log(f"Trend score calculation error: {str(e)}", level="error")
+            print(f"Error type: {type(e)}")
+            print(f"Error location: {e.__traceback__.tb_lineno}")
             return 0.0  # Neutral score on error
             
     def _calculate_momentum_score(self, rsi: float, macd: float, 
@@ -696,11 +718,17 @@ class TechnicalAnalyzer:
         """
         try:
             if len(data) < 2:
+                print(f"Volume Analysis: Insufficient data points ({len(data)})")
                 return 0.0
             
             # Calculate returns and volume changes
             returns = data['close'].pct_change().fillna(0)
             volume_changes = data['volume'].pct_change().fillna(0)
+            
+            print(f"\n=== Volume Analysis Debug ===")
+            print(f"Timeframe: {timeframe}")
+            print(f"Data points: {len(data)}")
+            print(f"Recent volume changes: {volume_changes.iloc[-5:].values}")
             
             # Adjust periods based on timeframe
             if timeframe == "hourly":
@@ -720,19 +748,26 @@ class TechnicalAnalyzer:
             short_vol = volume_changes.iloc[-short_period:].mean() if len(volume_changes) >= short_period else volume_changes.mean()
             medium_vol = volume_changes.iloc[-medium_period:].mean() if len(volume_changes) >= medium_period else short_vol
             
+            print(f"Short-term volume change (last {short_period} periods): {short_vol:.4f}")
+            print(f"Medium-term volume change (last {medium_period} periods): {medium_vol:.4f}")
+            
             # Calculate volume-price correlation
             correlation = returns.iloc[-medium_period:].corr(volume_changes.iloc[-medium_period:]) if len(returns) >= medium_period else returns.corr(volume_changes)
+            print(f"Price-volume correlation: {correlation:.4f}")
             
             # Calculate volume trend score
             base_score = (short_vol * 0.7 + medium_vol * 0.3)
+            print(f"Base score: {base_score:.4f}")
             
             # Adjust score based on correlation
             if not np.isnan(correlation):
                 # Positive correlation (price up + volume up) is bullish
                 # Negative correlation (price down + volume up) is bearish
                 score = base_score * (correlation if abs(correlation) > 0.3 else 0.3)
+                print(f"Correlation-adjusted score: {score:.4f}")
             else:
                 score = base_score
+                print("Using base score (correlation is NaN)")
             
             # Adjust based on absolute volume levels
             recent_vol_ratio = (
@@ -740,18 +775,26 @@ class TechnicalAnalyzer:
                 data['volume'].iloc[-long_period:-short_period].mean() 
                 if len(data) >= long_period else 1.0
             )
+            print(f"Recent volume ratio: {recent_vol_ratio:.4f}")
             
             # Volume surge detection
             if recent_vol_ratio > 2.0:  # Significant volume surge
                 score *= 1.5
+                print("Volume surge detected (score * 1.5)")
             elif recent_vol_ratio < 0.5:  # Volume dry-up
                 score *= 0.5
+                print("Volume dry-up detected (score * 0.5)")
             
             # Normalize and clip
-            return max(-1.0, min(1.0, score))
+            final_score = max(-1.0, min(1.0, score))
+            print(f"Final volume score: {final_score:.4f}")
+            
+            return final_score
             
         except Exception as e:
             print(f"Volume trend analysis error: {str(e)}")
+            print(f"Error type: {type(e)}")
+            print(f"Error location: {e.__traceback__.tb_lineno}")
             return 0.0
 
     async def _calculate_pivot_points(self, data: pd.DataFrame) -> Dict[str, List[float]]:
