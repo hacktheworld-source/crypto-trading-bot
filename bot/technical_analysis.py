@@ -812,18 +812,31 @@ class TechnicalAnalyzer:
             # Calculate bandwidth
             bandwidth = (upper - lower) / middle
             
+            # Get the last values safely
+            last_upper = float(upper.iloc[-1]) if not pd.isna(upper.iloc[-1]) else float(data['close'].iloc[-1] * 1.02)
+            last_middle = float(middle.iloc[-1]) if not pd.isna(middle.iloc[-1]) else float(data['close'].iloc[-1])
+            last_lower = float(lower.iloc[-1]) if not pd.isna(lower.iloc[-1]) else float(data['close'].iloc[-1] * 0.98)
+            last_bandwidth = float(bandwidth.iloc[-1]) if not pd.isna(bandwidth.iloc[-1]) else 0.02
+            
             return {
-                'upper': float(upper.iloc[-1]),
-                'middle': float(middle.iloc[-1]),
-                'lower': float(lower.iloc[-1]),
-                'bandwidth': float(bandwidth.iloc[-1])
+                'upper': last_upper,
+                'middle': last_middle,
+                'lower': last_lower,
+                'bandwidth': last_bandwidth
             }
             
         except Exception as e:
             if isinstance(e, TradingError):
                 raise
             await self.log(f"Bollinger Bands calculation error: {str(e)}", level="error")
-            raise TradingError(f"Failed to calculate Bollinger Bands: {str(e)}", "ANALYSIS")
+            # Return safe default values based on current price
+            current_price = float(data['close'].iloc[-1])
+            return {
+                'upper': current_price * 1.02,
+                'middle': current_price,
+                'lower': current_price * 0.98,
+                'bandwidth': 0.02
+            }
 
     async def get_ma_analysis(self, symbol: str) -> str:
         """
