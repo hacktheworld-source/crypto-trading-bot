@@ -197,7 +197,7 @@ class TechnicalAnalyzer:
             )
             
             # Get volume confirmation with timeframe consideration
-            volume_analysis = self._analyze_volume_trend(data, timeframe=timeframe)
+            volume_analysis = self._analyze_volume_trend(data, timeframe=settings_key)
             volume_confirmed = volume_analysis.get('is_favorable', False)
             
             # Determine signal strength with timeframe weights
@@ -211,12 +211,7 @@ class TechnicalAnalyzer:
             
             return {
                 'trend': trend_score,
-                'momentum': {
-                    'value': momentum_score,
-                    'rsi': current_rsi,
-                    'macd': current_macd,
-                    'signal': current_signal
-                },
+                'momentum': momentum_score,
                 'strength': signal_strength,
                 'volume_confirmed': volume_confirmed,
                 'indicators': {
@@ -239,12 +234,7 @@ class TechnicalAnalyzer:
             # Return neutral signals on error
             return {
                 'trend': 0.0,
-                'momentum': {
-                    'value': 0.0,
-                    'rsi': 50.0,
-                    'macd': 0.0,
-                    'signal': 0.0
-                },
+                'momentum': 0.0,
                 'strength': 0.0,
                 'volume_confirmed': False,
                 'indicators': {
