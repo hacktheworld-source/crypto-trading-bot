@@ -1274,7 +1274,7 @@ class TechnicalAnalyzer:
             
     def _calculate_atr(self, data: pd.DataFrame, period: int = 14) -> pd.Series:
         """
-        Calculate Average True Range with proper error handling.
+        Calculate Average True Range with improved smoothing and validation.
         
         Args:
             data: DataFrame with high, low, close prices
@@ -1289,22 +1289,39 @@ class TechnicalAnalyzer:
             low = pd.to_numeric(data['low'], errors='coerce')
             close = pd.to_numeric(data['close'], errors='coerce')
             
+            # Forward fill then backward fill any missing values
+            high = high.fillna(method='ffill').fillna(method='bfill')
+            low = low.fillna(method='ffill').fillna(method='bfill')
+            close = close.fillna(method='ffill').fillna(method='bfill')
+            
+            if len(data) < period:
+                print(f"Insufficient data for ATR calculation. Need {period} points, got {len(data)}")
+                return pd.Series(0, index=data.index)
+            
             # Calculate true range components
-            tr1 = high - low
-            tr2 = abs(high - close.shift())
-            tr3 = abs(low - close.shift())
+            tr1 = high - low  # Current high - current low
+            tr2 = abs(high - close.shift())  # Current high - previous close
+            tr3 = abs(low - close.shift())  # Current low - previous close
             
             # Get maximum of the three components
-            tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+            true_range = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
             
-            # Calculate ATR with proper minimum periods
-            atr = tr.rolling(window=period, min_periods=1).mean()
+            # Calculate initial ATR using SMA
+            atr = true_range.rolling(window=period, min_periods=1).mean()
             
-            # Fill any remaining NaN values with 0
-            return atr.fillna(0)
+            # Apply Wilder's smoothing
+            atr = true_range.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
+            
+            # Handle edge cases
+            atr = atr.fillna(method='ffill').fillna(true_range)
+            
+            # Validate results
+            if atr.isna().any():
+                print("Warning: NaN values in ATR calculation")
+            
+            return atr
             
         except Exception as e:
-            # Use synchronous logging for non-async methods
             print(f"ATR calculation error: {str(e)}")
             return pd.Series(0, index=data.index)
         
@@ -1731,20 +1748,51 @@ class TechnicalAnalyzer:
             
             # Convert to numeric and handle missing values
             close = pd.to_numeric(data['close'], errors='coerce')
+            close = close.fillna(method='ffill').fillna(method='bfill')
             
-            # Calculate EMAs with timeframe-specific periods
-            ema_fast = close.ewm(span=settings['macd_fast'], adjust=False).mean()
-            ema_slow = close.ewm(span=settings['macd_slow'], adjust=False).mean()
+            if len(close) < settings['macd_slow']:
+                print(f"Insufficient data for MACD calculation. Need {settings['macd_slow']} points, got {len(close)}")
+                return {
+                    'macd': pd.Series(0, index=data.index),
+                    'signal': pd.Series(0, index=data.index),
+                    'histogram': pd.Series(0, index=data.index)
+                }
+            
+            # Calculate EMAs with proper minimum periods
+            ema_fast = close.ewm(
+                span=settings['macd_fast'],
+                min_periods=settings['macd_fast'],
+                adjust=False
+            ).mean()
+            
+            ema_slow = close.ewm(
+                span=settings['macd_slow'],
+                min_periods=settings['macd_slow'],
+                adjust=False
+            ).mean()
             
             # Calculate MACD line
             macd_line = ema_fast - ema_slow
             
-            # Calculate signal line
-            signal_line = macd_line.ewm(span=settings['macd_signal'], adjust=False).mean()
+            # Calculate signal line with proper minimum periods
+            signal_line = macd_line.ewm(
+                span=settings['macd_signal'],
+                min_periods=settings['macd_signal'],
+                adjust=False
+            ).mean()
             
             # Calculate histogram
             histogram = macd_line - signal_line
             
+            # Handle any remaining NaN values
+            macd_line = macd_line.fillna(0)
+            signal_line = signal_line.fillna(0)
+            histogram = histogram.fillna(0)
+            
+            # Validate results
+            if macd_line.isna().any() or signal_line.isna().any() or histogram.isna().any():
+                print("Warning: NaN values in MACD calculation")
+                
             return {
                 'macd': macd_line,
                 'signal': signal_line,
@@ -1752,7 +1800,7 @@ class TechnicalAnalyzer:
             }
             
         except Exception as e:
-            self.log(f"MACD calculation error: {str(e)}", level="error")
+            print(f"MACD calculation error: {str(e)}")
             return {
                 'macd': pd.Series(0, index=data.index),
                 'signal': pd.Series(0, index=data.index),
@@ -1761,7 +1809,7 @@ class TechnicalAnalyzer:
 
     async def _calculate_ema(self, data: pd.Series, period: int) -> pd.Series:
         """
-        Calculate Exponential Moving Average.
+        Calculate Exponential Moving Average with improved validation.
         
         Args:
             data: Price series
@@ -1771,10 +1819,36 @@ class TechnicalAnalyzer:
             Series containing EMA values
         """
         try:
-            return data.ewm(span=period, adjust=False).mean()
+            # Convert to numeric and handle missing values
+            prices = pd.to_numeric(data, errors='coerce')
+            prices = prices.fillna(method='ffill').fillna(method='bfill')
+            
+            if len(prices) < period:
+                await self.trading_bot.log(
+                    f"Insufficient data for EMA calculation. Need {period} points, got {len(prices)}",
+                    level="warning"
+                )
+                return pd.Series(prices, index=data.index)
+            
+            # Calculate EMA with proper minimum periods
+            ema = prices.ewm(
+                span=period,
+                min_periods=period,
+                adjust=False
+            ).mean()
+            
+            # Handle any remaining NaN values
+            ema = ema.fillna(method='ffill').fillna(prices)
+            
+            # Validate results
+            if ema.isna().any():
+                await self.trading_bot.log("Warning: NaN values in EMA calculation", level="warning")
+            
+            return ema
+            
         except Exception as e:
             await self.trading_bot.log(f"EMA calculation error: {str(e)}", level="error")
-            return pd.Series(0, index=data.index)
+            return pd.Series(data, index=data.index)  # Return original data on error
 
     def _consolidate_levels(self, *level_lists: List[float], tolerance: float = 0.01) -> List[float]:
         """
