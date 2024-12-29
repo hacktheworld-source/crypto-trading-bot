@@ -1117,6 +1117,42 @@ class TechnicalAnalyzer:
             await self.log(f"MA analysis error: {str(e)}", level="error")
             raise TradingError(f"Failed to get MA analysis: {str(e)}", "ANALYSIS")
 
+    def _calculate_volatility(self, prices: pd.Series, window: int = 20) -> Tuple[float, float, bool]:
+        """
+        Calculate volatility metrics with proper statistical methods.
+        
+        Args:
+            prices: Price series
+            window: Rolling window size for volatility calculation
+            
+        Returns:
+            Tuple containing:
+            - volatility: Annualized volatility as a percentage
+            - threshold: Volatility threshold for high volatility detection
+            - is_volatile: Boolean indicating if current volatility is high
+        """
+        try:
+            # Calculate rolling returns
+            returns = prices.pct_change().dropna()
+            
+            # Calculate rolling volatility
+            rolling_vol = returns.rolling(window=window).std() * np.sqrt(252) * 100
+            
+            # Get current volatility
+            current_vol = rolling_vol.iloc[-1] if not rolling_vol.empty else 0
+            
+            # Calculate threshold using rolling volatility
+            vol_threshold = rolling_vol.mean() + (2 * rolling_vol.std())
+            
+            # Determine if current volatility is high
+            is_volatile = current_vol > vol_threshold
+            
+            return float(current_vol), float(vol_threshold), bool(is_volatile)
+            
+        except Exception as e:
+            print(f"Volatility calculation error: {str(e)}")
+            return 0.0, 0.0, False
+
     async def check_market_conditions(self, symbol: str) -> Dict[str, Any]:
         """
         Check market conditions with improved error handling and edge cases.
@@ -1151,16 +1187,8 @@ class TechnicalAnalyzer:
             except (IndexError, ValueError) as e:
                 raise TradingError(f"Failed to get current values: {str(e)}", "DATA")
             
-            # Calculate volatility with error handling
-            try:
-                returns = prices.pct_change().dropna()
-                volatility = returns.std() * np.sqrt(252)  # Annualized
-                volatility_threshold = returns.std().mean() * 2  # Dynamic threshold
-                is_volatile = volatility > volatility_threshold
-            except Exception as e:
-                self.log(f"Volatility calculation error: {str(e)}", level="warning")
-                volatility = 0
-                is_volatile = False
+            # Calculate volatility with improved method
+            volatility, volatility_threshold, is_volatile = self._calculate_volatility(prices)
             
             # Calculate price ranges safely
             try:
@@ -1214,9 +1242,10 @@ class TechnicalAnalyzer:
             
             return {
                 'volatility': {
-                    'value': float(volatility),
+                    'value': volatility,
                     'is_high': is_volatile,
-                    'threshold': float(volatility_threshold)
+                    'threshold': volatility_threshold,
+                    'window': 20  # Make the window size transparent
                 },
                 'price_action': {
                     'range_7d': float(price_range_7d),
@@ -1352,9 +1381,8 @@ class TechnicalAnalyzer:
             # Calculate price change
             price_change_24h = ((current_price - float(prices.iloc[-2])) / float(prices.iloc[-2])) * 100
             
-            # Calculate volatility
-            returns = prices.pct_change().dropna()
-            volatility = returns.std() * np.sqrt(252) * 100  # Annualized
+            # Calculate volatility using the improved method
+            volatility, _, is_volatile = self._calculate_volatility(prices)
             
             # Get technical signals
             signals = await self.get_signals(symbol)
