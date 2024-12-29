@@ -562,18 +562,35 @@ class TradingBot:
                             await self.log(f"  • Calculating Bollinger Bands for {symbol}", level="info")
                             bb = await self.technical_analyzer.calculate_bollinger_bands(symbol)
                             
-                            # Calculate volume signal properly
+                            # Calculate volume signal with proper volume-price analysis
                             volume_signal = 0.0
-                            if full_analysis['volume_confirmed']:
-                                volume_trend = market_conditions['volume']['trend']
-                                if volume_trend == "Strongly Increasing":
-                                    volume_signal = 0.2
-                                elif volume_trend == "Increasing":
-                                    volume_signal = 0.1
-                                elif volume_trend == "Strongly Decreasing":
-                                    volume_signal = -0.2
-                                elif volume_trend == "Decreasing":
-                                    volume_signal = -0.1
+                            volume_trend = market_conditions['volume']['trend']
+                            volume_ratio = market_conditions['volume']['ratio']
+                            price_change = full_analysis['price_change_24h']
+                            
+                            # 1. Volume-Price Confirmation
+                            if abs(price_change) > 0:  # There is price movement
+                                if price_change > 0:  # Upward price movement
+                                    if volume_trend == "Strongly Increasing" and volume_ratio > 1.5:
+                                        volume_signal = 0.3  # Strong bullish confirmation
+                                    elif volume_trend == "Increasing" and volume_ratio > 1.2:
+                                        volume_signal = 0.2  # Moderate bullish confirmation
+                                    elif volume_trend == "Strongly Decreasing":
+                                        volume_signal = -0.1  # Weak upward move
+                                else:  # Downward price movement
+                                    if volume_trend == "Strongly Increasing" and volume_ratio > 1.5:
+                                        volume_signal = -0.3  # Strong bearish confirmation
+                                    elif volume_trend == "Increasing" and volume_ratio > 1.2:
+                                        volume_signal = -0.2  # Moderate bearish confirmation
+                                    elif volume_trend == "Strongly Decreasing":
+                                        volume_signal = 0.1  # Weak downward move
+                            
+                            # 2. Volume Divergence
+                            if abs(price_change) > 2.0:  # Significant price movement
+                                if price_change > 0 and volume_ratio < 0.8:
+                                    volume_signal -= 0.2  # Bearish divergence
+                                elif price_change < 0 and volume_ratio < 0.8:
+                                    volume_signal += 0.2  # Bullish divergence
                             
                             # Update signals with proper volume signal
                             signals['signals']['volume'] = volume_signal
@@ -722,44 +739,107 @@ class TradingBot:
             raise TradingError(f"Failed to update positions: {str(e)}", "STATE")
 
     async def _should_enter_position(self, symbol: str) -> bool:
-        """Enhanced position entry logic with position count consideration"""
+        """Enhanced position entry logic with comprehensive indicator analysis"""
         try:
             current_positions = len(self.positions)
             
-            # Get analysis components
+            # Get all analysis components
             analysis = await self.technical_analyzer.analyze_trend(symbol)
             current_price = await self.data_manager.get_current_price(symbol)
             market_conditions = await self.technical_analyzer.check_market_conditions(symbol)
             full_analysis = await self.technical_analyzer.get_full_analysis(symbol)
+            signals = await self.technical_analyzer.get_signals(symbol)
+            bb = await self.technical_analyzer.calculate_bollinger_bands(symbol)
             
-            # Safely check volume confirmation
-            volume_confirmed = (
-                full_analysis.get('volume_confirmed', False) 
-                if isinstance(full_analysis, dict) else False
-            )
+            # 1. Core Signal Requirements
+            signal_score = 0.0
             
-            # Adjust entry criteria based on position count
+            # Trend Component (35% weight)
+            trend_score = analysis['trend']['daily'] * 0.35
+            signal_score += trend_score
+            
+            # Momentum Component (25% weight)
+            momentum_score = signals['signals']['daily']['momentum'] * 0.25
+            if signals['signals']['daily'].get('macd_histogram', 0) > 0:
+                momentum_score += 0.1  # MACD confirmation bonus
+            signal_score += momentum_score
+            
+            # Volume Component (20% weight)
+            volume_score = 0.0
+            if market_conditions['volume']['trend'] == "Strongly Increasing":
+                volume_score = 0.2
+            elif market_conditions['volume']['trend'] == "Increasing":
+                volume_score = 0.1
+            signal_score += volume_score
+            
+            # Risk Component (20% weight)
+            risk_score = market_conditions['market_alignment']['score'] * 0.2
+            signal_score += risk_score
+            
+            # 2. Position Count Based Requirements
             if current_positions >= self.risk_manager.target_positions:
-                # Require stronger signals above target
-                if not (analysis['trend']['aligned'] and 
-                       analysis['trend']['daily'] > 0.5 and  # Stronger trend required
-                       volume_confirmed):
+                # Require stronger signals when near position limit
+                if signal_score < 0.4:  # 40% confidence minimum
                     return False
             else:
-                # Normal entry criteria
-                if not (analysis['trend']['aligned'] and 
-                       analysis['trend']['daily'] > 0 and
-                       volume_confirmed):
+                # Normal signal requirement
+                if signal_score < 0.2:  # 20% confidence minimum
                     return False
             
-            # Check risk management
+            # 3. Technical Indicator Checks
+            
+            # Bollinger Bands Position
+            if current_price > bb['upper']:
+                return False  # Don't enter when price is above upper band
+            
+            # RSI Conditions
+            rsi = full_analysis.get('rsi', 50)
+            if rsi > 70:  # Overbought
+                return False
+            
+            # Volume-Price Relationship
+            price_change = full_analysis.get('price_change_24h', 0)
+            volume_ratio = market_conditions['volume']['ratio']
+            
+            # Require strong volume on up moves
+            if price_change > 0 and volume_ratio < 1.2:
+                return False
+            
+            # 4. Market Structure Requirements
+            
+            # Trend Alignment
+            if not analysis['trend']['aligned']:
+                return False
+            
+            # Volatility Check
+            if market_conditions['volatility']['is_high']:
+                # Require stronger signals in high volatility
+                if signal_score < 0.3:
+                    return False
+            
+            # 5. Risk Management
             if not await self.risk_manager.can_open_position(symbol):
                 return False
             
-            # Check price conditions
+            # 6. Price Position
             price_checks = await self._check_price_conditions(symbol, current_price)
             if not price_checks['valid']:
                 return False
+            
+            # Log comprehensive entry analysis
+            await self.log(
+                f"Entry Analysis for {symbol}:\n"
+                f"Signal Score: {signal_score:.2f}\n"
+                f"• Trend: {trend_score:.2f}\n"
+                f"• Momentum: {momentum_score:.2f}\n"
+                f"• Volume: {volume_score:.2f}\n"
+                f"• Risk: {risk_score:.2f}\n"
+                f"Technical Levels:\n"
+                f"• RSI: {rsi:.1f}\n"
+                f"• Volume Ratio: {volume_ratio:.2f}\n"
+                f"• BB Position: {'Below' if current_price < bb['middle'] else 'Above'} middle band",
+                level="info"
+            )
             
             return True
             
@@ -807,42 +887,137 @@ class TradingBot:
 
     async def _should_exit_position(self, position: Position) -> bool:
         """
-        Check if position should be exited based on:
-        1. Stop loss/take profit levels
-        2. Trailing stop
-        3. Trend reversal
+        Enhanced exit condition checking with comprehensive analysis.
+        Evaluates multiple factors:
+        1. Stop loss/take profit/trailing stop
+        2. Trend reversal signals
+        3. Technical indicator signals
         4. Risk management
+        5. Market structure changes
         """
         try:
-            current_price = await self.data_manager.get_current_price(position.symbol)
-            
-            # 1. Check stop levels
-            if await position.should_exit(current_price):
-                return True
-            
-            # 2. Check trend reversal with multiple timeframes
-            signals = await self.technical_analyzer.get_signals(position.symbol)
-            
-            # Exit on strong trend reversal
-            trend_reversal = (
-                signals['trend']['daily'] < -0.5 and position.side == 'long'
-                or signals['trend']['daily'] > 0.5 and position.side == 'short'
-            )
-            
-            if trend_reversal and position.unrealized_pnl > 0:
-                await self.log(f"Trend reversal exit signal for {position.symbol}", level="info")
-                return True
-            
-            # 3. Check risk metrics
-            risk_check = await self.risk_manager.check_position_risk(position)
-            if not risk_check['acceptable']:
+            # Use position's symbol as mutex key to prevent race conditions
+            async with asyncio.Lock() as exit_lock:
+                current_price = await self.data_manager.get_current_price(position.symbol)
+                
+                # Get analysis components
+                signals = await self.technical_analyzer.get_signals(position.symbol)
+                market_conditions = await self.technical_analyzer.check_market_conditions(position.symbol)
+                full_analysis = await self.technical_analyzer.get_full_analysis(position.symbol)
+                bb = await self.technical_analyzer.calculate_bollinger_bands(position.symbol)
+                
+                # Calculate current P/L before any decisions
+                profit_pct = (current_price - position.entry_price) / position.entry_price
+                
+                # Log position status
                 await self.log(
-                    f"Risk-based exit for {position.symbol}: {risk_check['reason']}", 
-                    level="info"
+                    f"Checking exit conditions for {position.symbol}:\n"
+                    f"Current P/L: {profit_pct*100:+.2f}%\n"
+                    f"Current Price: ${current_price:.2f}\n"
+                    f"Entry Price: ${position.entry_price:.2f}\n"
+                    f"Stop Loss: ${position.stop_loss:.2f}\n"
+                    f"Trailing Stop: ${position.trailing_stop_price if position.trailing_stop_price else 0:.2f}",
+                    level="debug"
                 )
-                return True
-            
-            return False
+                
+                # 1. Core Exit Signals (Priority Checks)
+                
+                # Stop loss check
+                if current_price <= position.stop_loss:
+                    await self.log(f"Stop loss triggered for {position.symbol} at ${current_price:.2f}", level="warning")
+                    return True
+                
+                # Trailing stop check
+                if position.trailing_stop_price and current_price <= position.trailing_stop_price:
+                    await self.log(f"Trailing stop triggered for {position.symbol} at ${current_price:.2f}", level="info")
+                    return True
+                
+                # Take profit check
+                if current_price >= position.take_profit:
+                    await self.log(f"Take profit triggered for {position.symbol} at ${current_price:.2f}", level="info")
+                    return True
+                
+                # 2. Technical Signal Based Exit (Weighted Score)
+                exit_score = 0.0
+                
+                # Trend Component (35% weight)
+                trend_signal = signals['trend']['daily'] * -0.35  # Inverse for exit
+                exit_score += trend_signal
+                
+                # Momentum Component (25% weight)
+                momentum_signal = signals['signals']['daily']['momentum'] * -0.25  # Inverse for exit
+                if signals['signals']['daily'].get('macd_histogram', 0) < 0:
+                    momentum_signal -= 0.1  # MACD confirmation for exit
+                exit_score += momentum_signal
+                
+                # Volume Component (20% weight)
+                volume_signal = 0.0
+                if market_conditions['volume']['trend'] == "Strongly Decreasing":
+                    volume_signal = 0.2
+                elif market_conditions['volume']['trend'] == "Decreasing":
+                    volume_signal = 0.1
+                exit_score += volume_signal
+                
+                # Risk Component (20% weight)
+                risk_signal = -market_conditions['market_alignment']['score'] * 0.2  # Inverse for exit
+                exit_score += risk_signal
+                
+                # 3. Technical Indicator Checks
+                
+                # Bollinger Bands Exit Signals
+                if current_price > bb['upper'] and position.unrealized_pnl > 0:
+                    exit_score += 0.1  # Potential overbought exit signal
+                
+                # RSI Divergence
+                rsi = full_analysis.get('rsi', 50)
+                if rsi > 70 and position.unrealized_pnl > 0:
+                    exit_score += 0.1  # Overbought exit signal
+                elif rsi < 30 and position.unrealized_pnl < 0:
+                    exit_score += 0.1  # Oversold exit signal for losing positions
+                
+                # 4. Profit Protection Rules
+                if profit_pct > 0.1:  # 10%+ profit
+                    if exit_score > 0.2:  # Lower threshold for exit when in profit
+                        await self.log(f"Profit protection exit triggered for {position.symbol} at {profit_pct*100:.1f}% gain", level="info")
+                        return True
+                
+                # 5. Loss Management Rules
+                if profit_pct < -0.02:  # -2% or worse
+                    if exit_score > 0.3:  # Higher threshold for exit when in loss
+                        await self.log(f"Loss management exit triggered for {position.symbol} at {profit_pct*100:.1f}% loss", level="warning")
+                        return True
+                
+                # 6. Strong Exit Signals
+                if exit_score > 0.4:  # Strong exit signal threshold
+                    await self.log(
+                        f"Strong exit signal for {position.symbol}:\n"
+                        f"Exit Score: {exit_score:.2f}\n"
+                        f"• Trend: {trend_signal:.2f}\n"
+                        f"• Momentum: {momentum_signal:.2f}\n"
+                        f"• Volume: {volume_signal:.2f}\n"
+                        f"• Risk: {risk_signal:.2f}\n"
+                        f"Technical Levels:\n"
+                        f"• RSI: {rsi:.1f}\n"
+                        f"• BB Position: {'Above' if current_price > bb['middle'] else 'Below'} middle band\n"
+                        f"P/L: {profit_pct*100:+.2f}%",
+                        level="info"
+                    )
+                    return True
+                
+                # 7. Risk Check
+                risk_check = await self.risk_manager.check_position_risk(position)
+                if not risk_check['acceptable']:
+                    await self.log(f"Risk-based exit for {position.symbol}: {risk_check['reason']}", level="warning")
+                    return True
+                
+                # Log if we're staying in the position
+                await self.log(
+                    f"Maintaining position in {position.symbol} - "
+                    f"Exit Score: {exit_score:.2f}, P/L: {profit_pct*100:+.2f}%",
+                    level="debug"
+                )
+                
+                return False
             
         except Exception as e:
             await self.log(f"Exit analysis error: {str(e)}", level="error")
@@ -1346,34 +1521,64 @@ class TradingBot:
             # Get technical analysis
             analysis = await self.technical_analyzer.get_signals(symbol)
             current_price = await self.data_manager.get_current_price(symbol)
-            
-            # Component signals (normalized to -1 to 1 scale)
-            trend_signal = analysis['trend']['daily'] * 0.4  # 40% weight
-            momentum_signal = analysis['signals']['daily']['momentum'] * 0.3  # 30% weight
-            volume_signal = float(analysis['signals']['daily'].get('volume_confirmed', False)) * 0.2  # 20% weight
-            
-            # Risk component based on volatility and market conditions
             market_conditions = await self.technical_analyzer.check_market_conditions(symbol)
-            risk_signal = market_conditions['market_alignment']['score'] * 0.1  # 10% weight
+            bb = await self.technical_analyzer.calculate_bollinger_bands(symbol)
             
-            # Combine signals
+            # 1. Trend Component (35% weight)
+            trend_signal = analysis['trend']['daily'] * 0.35
+            
+            # 2. Momentum Component (25% weight)
+            momentum_base = analysis['signals']['daily']['momentum']
+            # Add MACD confirmation
+            macd_signal = 0.0
+            if analysis['signals']['daily'].get('macd_histogram', 0) > 0:
+                macd_signal = 0.1 if momentum_base > 0 else -0.05  # Confirmation or divergence
+            momentum_signal = (momentum_base + macd_signal) * 0.25
+            
+            # 3. Volume Component (20% weight)
+            volume_signal = float(analysis['signals']['daily'].get('volume_confirmed', False)) * 0.2
+            
+            # 4. Bollinger Bands Component (10% weight)
+            bb_signal = 0.0
+            if current_price < bb['lower']:
+                bb_signal = 0.1  # Potential oversold
+            elif current_price > bb['upper']:
+                bb_signal = -0.1  # Potential overbought
+            # Add volatility consideration
+            if bb['bandwidth'] > 0.2:  # High volatility
+                bb_signal *= 0.5  # Reduce signal strength in high volatility
+            
+            # 5. Risk Component (10% weight)
+            risk_signal = market_conditions['market_alignment']['score'] * 0.1
+            
+            # Combine all signals
             total_score = (
                 trend_signal +
                 momentum_signal +
                 volume_signal +
+                bb_signal +
                 risk_signal
             )
+            
+            # Store component signals for analysis
+            signals = {
+                'trend': trend_signal,
+                'momentum': momentum_signal,
+                'volume': volume_signal,
+                'bollinger': bb_signal,
+                'risk': risk_signal
+            }
             
             return {
                 'symbol': symbol,
                 'price': current_price,
                 'action': 'buy' if total_score > 0.2 else 'sell' if total_score < -0.2 else 'hold',
                 'score': total_score,
-                'signals': {
-                    'trend': trend_signal,
-                    'momentum': momentum_signal,
-                    'volume': volume_signal,
-                    'risk': risk_signal
+                'signals': signals,
+                'indicators': {
+                    'macd': analysis['signals']['daily'].get('macd_histogram', 0),
+                    'bb_bandwidth': bb['bandwidth'],
+                    'bb_position': 'oversold' if current_price < bb['lower'] else 'overbought' if current_price > bb['upper'] else 'neutral'
                 }
             }
             
